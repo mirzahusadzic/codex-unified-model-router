@@ -1,10 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-const [existingFile, codexHome, outputFile] = process.argv.slice(2);
-if (!codexHome || !outputFile) {
-  console.error('Usage: merge-config.mjs <existing-config-or-empty> <codex-home> <output>');
+const [existingFile, codexHome, outputFile, routerEnvFile] = process.argv.slice(2);
+if (!codexHome || !outputFile || !routerEnvFile) {
+  console.error('Usage: merge-config.mjs <existing-config-or-empty> <codex-home> <output> <router-env>');
   process.exit(2);
 }
+const routerToken = readFileSync(routerEnvFile, 'utf8').match(/^CODEX_ROUTER_TOKEN=([a-f0-9]{64})\r?$/m)?.[1];
+if (!routerToken) throw new Error('Prepare router credentials before merging the Codex configuration');
 
 const managedKeysMarker = '# BEGIN codex-unified-router managed keys';
 const managedKeysEnd = '# END codex-unified-router managed keys';
@@ -18,6 +20,7 @@ const preserved = [];
 let insideManagedKeys = false;
 let insideManagedProvider = false;
 let insideUnmanagedUnifiedProvider = false;
+let topLevel = true;
 
 for (const line of lines) {
   if (line.trim() === managedKeysMarker) {
@@ -38,8 +41,9 @@ for (const line of lines) {
   }
   if (insideManagedKeys || insideManagedProvider) continue;
 
-  const tableName = line.trim().match(/^\[([^\]]+)\]$/)?.[1]?.trim();
-  if (tableName === 'model_providers.unified') {
+  const tableName = line.trim().match(/^\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/)?.[1]?.trim();
+  if (tableName) topLevel = false;
+  if (tableName === 'model_providers.unified' || tableName?.startsWith('model_providers.unified.')) {
     insideUnmanagedUnifiedProvider = true;
     continue;
   }
@@ -48,8 +52,8 @@ for (const line of lines) {
     else continue;
   }
 
-  const key = line.match(/^([A-Za-z0-9_-]+)\s*=/)?.[1];
-  if (key && managedTopLevelKeys.has(key)) continue;
+  const key = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1];
+  if (topLevel && key && managedTopLevelKeys.has(key)) continue;
   preserved.push(line);
 }
 
@@ -73,6 +77,7 @@ const provider = [
   'wire_api = "responses"',
   'requires_openai_auth = true',
   'supports_websockets = false',
+  `http_headers = { "X-Codex-Router-Token" = "${routerToken}" }`,
   managedProviderEnd,
 ];
 
@@ -80,4 +85,4 @@ const sections = [keys.join('\n')];
 if (preserved.length > 0) sections.push(preserved.join('\n'));
 sections.push(provider.join('\n'));
 
-writeFileSync(outputFile, `${sections.join('\n\n')}\n`, 'utf8');
+writeFileSync(outputFile, `${sections.join('\n\n')}\n`, { encoding: 'utf8', mode: 0o600 });

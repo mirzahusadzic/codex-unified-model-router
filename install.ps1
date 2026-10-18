@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $RepoDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $RepoDir 'scripts\private-path.ps1')
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $CodexHome "backups\codex-unified-router-$Stamp-$PID"
@@ -45,6 +46,11 @@ if (-not $Force -and (Test-Path $ExistingConfig) -and -not $Managed) {
 }
 
 New-Item -ItemType Directory -Force -Path $CodexHome, $BackupDir, $RouterDir | Out-Null
+Set-PrivatePath $BackupDir
+Set-PrivatePath $RouterDir
+foreach ($SensitiveFile in @($ExistingConfig, $RouterEnv)) {
+    if (Test-Path -LiteralPath $SensitiveFile) { Set-PrivatePath $SensitiveFile }
+}
 foreach ($Name in @('config.toml', 'deepseek.config.toml', 'models.json')) {
     $ExistingFile = Join-Path $CodexHome $Name
     if (Test-Path $ExistingFile) {
@@ -54,6 +60,7 @@ foreach ($Name in @('config.toml', 'deepseek.config.toml', 'models.json')) {
 
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-unified-router-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+Set-PrivatePath $TempDir
 
 try {
     $BundledFile = Join-Path $TempDir 'bundled-models.json'
@@ -73,7 +80,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
 
     $ConfigOut = Join-Path $TempDir 'config.toml'
-    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut
+    & node (Join-Path $RepoDir 'scripts\prepare-credentials.mjs') $RouterEnv
+    if ($LASTEXITCODE -ne 0) { throw 'Router credential setup failed.' }
+    Set-PrivatePath $RouterEnv
+    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $RouterEnv
     if ($LASTEXITCODE -ne 0) { throw 'Codex config merge failed.' }
 
     $CatalogText = [System.IO.File]::ReadAllText($ModelsFile, $Utf8NoBom)
@@ -83,22 +93,13 @@ try {
         throw 'The generated catalog is missing the expected DeepSeek entry.'
     }
 
-    Copy-Item -Force $ConfigOut (Join-Path $CodexHome 'config.toml')
+    if (-not (Test-Path -LiteralPath $ExistingConfig)) {
+        [System.IO.File]::WriteAllText($ExistingConfig, '', $Utf8NoBom)
+    }
+    Set-PrivatePath $ExistingConfig
+    [System.IO.File]::WriteAllText($ExistingConfig, [System.IO.File]::ReadAllText($ConfigOut, $Utf8NoBom), $Utf8NoBom)
     Copy-Item -Force $ModelsFile (Join-Path $CodexHome 'models.json')
     Copy-Item -Force (Join-Path $RepoDir 'router\unified-router.mjs') $RouterFile
-
-    if (-not [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY)) {
-        [System.IO.File]::WriteAllText(
-            $RouterEnv,
-            "OPENROUTER_API_KEY=$($env:OPENROUTER_API_KEY)`r`n",
-            $Utf8NoBom
-        )
-        $CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        & icacls.exe $RouterEnv /inheritance:r /grant:r "${CurrentUser}:F" | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not restrict access to $RouterEnv."
-        }
-    }
 
     $LegacyProfile = Join-Path $CodexHome 'deepseek.config.toml'
     if (Test-Path $LegacyProfile) {
@@ -148,7 +149,7 @@ goto run
         for ($Attempt = 0; $Attempt -lt 25; $Attempt += 1) {
             try {
                 $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:18766/health' -TimeoutSec 2
-                if ($Health.ok -and $Health.openai -and $Health.openrouter) {
+                if ($Health.ok -and $Health.openai -and $Health.openrouter -and $Health.clientAuth) {
                     $Healthy = $true
                     break
                 }

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 service_label="com.mirza.codex-unified-router"
 linux_service="codex-unified-router.service"
 platform="$(uname -s)"
@@ -24,6 +25,7 @@ fi
 test -f "$codex_home/config.toml"
 test -f "$codex_home/models.json"
 test -f "$codex_home/unified-router/router.mjs"
+node "$script_dir/verify-credentials.mjs" "$codex_home"
 
 grep -q '# BEGIN codex-unified-router managed keys' "$codex_home/config.toml"
 grep -q '^model_provider = "unified"$' "$codex_home/config.toml"
@@ -51,7 +53,7 @@ if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .ba
 fi
 
 if [[ "$check_service" -eq 1 ]]; then
-  curl --silent --fail --max-time 2 http://127.0.0.1:18766/health | jq -e '.ok == true and .openai == true and .openrouter == true' >/dev/null
+  curl --silent --fail --max-time 2 http://127.0.0.1:18766/health | jq -e '.ok == true and .openai == true and .openrouter == true and .clientAuth == true' >/dev/null
   case "$platform" in
     Darwin)
       if ! launchctl print "gui/$(id -u)/$service_label" >/dev/null; then

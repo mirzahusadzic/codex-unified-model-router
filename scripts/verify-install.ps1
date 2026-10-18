@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'private-path.ps1')
 
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $ConfigPath = Join-Path $CodexHome 'config.toml'
@@ -20,6 +21,12 @@ if (-not $NoService) {
 
 foreach ($Path in $RequiredPaths) {
     if (-not (Test-Path $Path)) { throw "Missing required file: $Path" }
+}
+
+& node (Join-Path $PSScriptRoot 'verify-credentials.mjs') $CodexHome
+if ($LASTEXITCODE -ne 0) { throw 'Router credential verification failed.' }
+foreach ($Path in @($ConfigPath, (Join-Path $CodexHome 'unified-router'), (Join-Path $CodexHome 'unified-router\openrouter.env'))) {
+    Assert-PrivatePath $Path
 }
 
 $Config = [System.IO.File]::ReadAllText($ConfigPath, $Utf8NoBom)
@@ -46,7 +53,7 @@ if ($DeepSeek.base_instructions -ne $DeepSeek.model_messages.instructions_templa
 
 if (-not $NoService) {
     $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:18766/health' -TimeoutSec 2
-    if (-not ($Health.ok -and $Health.openai -and $Health.openrouter)) {
+    if (-not ($Health.ok -and $Health.openai -and $Health.openrouter -and $Health.clientAuth)) {
         throw 'The unified router health check failed.'
     }
 }

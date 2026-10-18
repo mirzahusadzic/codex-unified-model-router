@@ -58,4 +58,4 @@ CI tests Linux, macOS, and Windows, checks script syntax, and validates the mode
 
 ---
 
-[Setup & configuration](docs/setup.md) · [Services & troubleshooting](docs/operations.md) · [CI workflow](.github/workflows/ci.yml)
+[Setup & configuration](docs/setup.md) · [Services & troubleshooting](docs/operations.md) · [CI workflow](.github/workflows/ci.yml) · [Apache-2.0](LICENSE) · [Notices](NOTICE)

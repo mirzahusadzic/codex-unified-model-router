@@ -1,5 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
+import { timingSafeEqual } from 'node:crypto';
+import { pipeline } from 'node:stream';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -31,6 +33,32 @@ function readEnvironmentFile(file) {
 
 const fileEnvironment = readEnvironmentFile(envFile);
 const openrouterApiKey = process.env.OPENROUTER_API_KEY || fileEnvironment.OPENROUTER_API_KEY || '';
+const routerToken = process.env.CODEX_ROUTER_TOKEN || fileEnvironment.CODEX_ROUTER_TOKEN || '';
+if (!/^[a-f0-9]{64}$/.test(routerToken)) {
+  throw new Error('A 64-character hex CODEX_ROUTER_TOKEN is required; rerun the installer');
+}
+
+function isAuthenticated(headers) {
+  const supplied = headers['x-codex-router-token'];
+  return typeof supplied === 'string'
+    && Buffer.byteLength(supplied) === Buffer.byteLength(routerToken)
+    && timingSafeEqual(Buffer.from(supplied), Buffer.from(routerToken));
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validRequest(body) {
+  return isObject(body)
+    && typeof body.model === 'string' && body.model.trim().length > 0
+    && (body.input == null || typeof body.input === 'string' || Array.isArray(body.input))
+    && (body.reasoning == null || (isObject(body.reasoning)
+      && (body.reasoning.effort == null || typeof body.reasoning.effort === 'string')))
+    && (body.text == null || (isObject(body.text)
+      && (body.text.format == null || (isObject(body.text.format)
+        && (body.text.format.type == null || typeof body.text.format.type === 'string')))));
+}
 
 function routeFor(model) {
   if (typeof model === 'string' && (model.startsWith('deepseek/') || model.startsWith('openrouter/'))) {
@@ -83,13 +111,19 @@ function normalizeInputForOpenAI(input) {
 }
 
 function upstreamHeaders(requestHeaders, provider, bodyLength) {
-  const headers = { ...requestHeaders };
-  for (const name of ['host', 'connection', 'content-length', 'transfer-encoding', 'accept-encoding']) {
-    delete headers[name];
+  const allowed = ['accept', 'user-agent'];
+  if (provider === 'openai') {
+    allowed.push('authorization', 'chatgpt-account-id', 'openai-beta', 'originator',
+      'version', 'session_id', 'conversation_id', 'x-request-id', 'x-client-request-id',
+      'x-codex-turn-metadata', 'x-codex-turn-state', 'x-codex-beta-features',
+      'x-openai-internal-codex-responses-lite');
   }
+  const headers = Object.fromEntries(allowed
+    .filter(name => requestHeaders[name] !== undefined)
+    .map(name => [name, requestHeaders[name]]));
   headers['content-length'] = String(bodyLength);
   headers['accept-encoding'] = 'identity';
-  headers['content-type'] = headers['content-type'] || 'application/json';
+  headers['content-type'] = 'application/json';
 
   if (provider === 'openrouter') {
     if (!openrouterApiKey) {
@@ -98,8 +132,6 @@ function upstreamHeaders(requestHeaders, provider, bodyLength) {
       throw error;
     }
     headers.authorization = `Bearer ${openrouterApiKey}`;
-    delete headers['chatgpt-account-id'];
-    delete headers['x-openai-internal-codex-responses-lite'];
   } else if (!headers.authorization) {
     const error = new Error('The OpenAI request did not include Codex authentication');
     error.statusCode = 401;
@@ -138,12 +170,26 @@ function modelList() {
 }
 
 const server = http.createServer((request, response) => {
+  request.on('error', () => response.destroy());
+  const localPort = request.socket?.localPort || port;
+  if (![`127.0.0.1:${localPort}`, `localhost:${localPort}`].includes(request.headers.host)
+      || request.headers.origin !== undefined
+      || (request.headers['sec-fetch-site'] !== undefined && request.headers['sec-fetch-site'] !== 'none')) {
+    sendJson(response, 403, { error: { message: 'Only local CLI requests are supported' } });
+    return;
+  }
   if (request.method === 'GET' && ['/health', '/v1/health'].includes(request.url)) {
     sendJson(response, 200, {
       ok: true,
       openai: true,
       openrouter: Boolean(openrouterApiKey),
+      clientAuth: true,
     });
+    return;
+  }
+
+  if (!isAuthenticated(request.headers)) {
+    sendJson(response, 401, { error: { message: 'Invalid or missing router token; rerun the installer and restart Codex' } });
     return;
   }
 
@@ -154,6 +200,11 @@ const server = http.createServer((request, response) => {
 
   if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(request.url)) {
     sendJson(response, 404, { error: { message: `Unsupported route: ${request.method} ${request.url}` } });
+    return;
+  }
+
+  if (!/^application\/json(?:\s*;.*)?$/i.test(request.headers['content-type'] || '')) {
+    sendJson(response, 415, { error: { message: 'Content-Type must be application/json' } });
     return;
   }
 
@@ -173,13 +224,18 @@ const server = http.createServer((request, response) => {
   });
 
   request.on('end', () => {
-    if (rejected) return;
+    if (rejected || response.destroyed) return;
     const startedAt = Date.now();
     let parsed;
     try {
       parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch (error) {
       sendJson(response, 400, { error: { message: `Invalid JSON request: ${error.message}` } });
+      return;
+    }
+
+    if (!validRequest(parsed)) {
+      sendJson(response, 400, { error: { message: 'Expected a JSON object with a model string and valid input, reasoning, and text fields' } });
       return;
     }
 
@@ -234,46 +290,59 @@ const server = http.createServer((request, response) => {
       bytes: body.length,
     }));
 
-    const upstream = target.protocol.request({
-      hostname: target.hostname,
-      path: target.path,
-      method: 'POST',
-      headers,
-      timeout: 300000,
-    }, upstreamResponse => {
-      response.writeHead(upstreamResponse.statusCode || 502, responseHeaders(upstreamResponse.headers));
-      upstreamResponse.pipe(response);
-      console.log(JSON.stringify({
-        provider: target.provider,
-        model,
-        status: upstreamResponse.statusCode || null,
-        timeToHeadersMs: Date.now() - startedAt,
-      }));
-      upstreamResponse.on('end', () => {
+    let upstream;
+    const upstreamError = error => {
+      console.error(JSON.stringify({ provider: target.provider, model,
+        error: error.code || 'upstream_error', durationMs: Date.now() - startedAt }));
+      if (response.destroyed) return;
+      if (response.headersSent) response.destroy();
+      else sendJson(response, 502, { error: { message: 'Unified router upstream request failed' } });
+    };
+    try {
+      upstream = target.protocol.request({
+        hostname: target.hostname,
+        path: target.path,
+        method: 'POST',
+        headers,
+        timeout: 300000,
+      }, upstreamResponse => {
+        if (response.destroyed) {
+          upstreamResponse.destroy();
+          return;
+        }
+        response.writeHead(upstreamResponse.statusCode || 502, responseHeaders(upstreamResponse.headers));
+        pipeline(upstreamResponse, response, error => {
+          if (error) {
+            upstream.destroy();
+            upstreamError(error);
+          }
+        });
         console.log(JSON.stringify({
           provider: target.provider,
           model,
           status: upstreamResponse.statusCode || null,
-          durationMs: Date.now() - startedAt,
+          timeToHeadersMs: Date.now() - startedAt,
         }));
+        upstreamResponse.on('end', () => {
+          console.log(JSON.stringify({
+            provider: target.provider,
+            model,
+            status: upstreamResponse.statusCode || null,
+            durationMs: Date.now() - startedAt,
+          }));
+        });
       });
-    });
 
-    upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
-    upstream.on('error', error => {
-      console.error(JSON.stringify({
-        provider: target.provider,
-        model,
-        error: error.message,
-        durationMs: Date.now() - startedAt,
-      }));
-      if (response.headersSent) response.destroy(error);
-      else sendJson(response, 502, { error: { message: `Unified router upstream error: ${error.message}` } });
-    });
-    response.on('close', () => {
-      if (!response.writableFinished && !upstream.destroyed) upstream.destroy();
-    });
-    upstream.end(body);
+      upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
+      upstream.on('error', upstreamError);
+      response.on('close', () => {
+        if (!response.writableFinished && !upstream.destroyed) upstream.destroy();
+      });
+      upstream.end(body);
+    } catch (error) {
+      upstream?.destroy();
+      upstreamError(error);
+    }
   });
 });
 

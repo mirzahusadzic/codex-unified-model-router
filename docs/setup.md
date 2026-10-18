@@ -42,9 +42,10 @@ base_url = "http://127.0.0.1:18766/v1"
 wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = false
+http_headers = { "X-Codex-Router-Token" = "<generated-by-installer>" }
 ```
 
-The installer supplies the actual catalog path. Rerunning it reapplies these managed values.
+The installer supplies the actual catalog path and a random local router token. Rerunning it reapplies these managed values and retains the token.
 
 ## DeepSeek context window
 
@@ -101,7 +102,13 @@ The installer also injects these instructions into its generated catalog.
 
 The router binds only to `127.0.0.1`. OpenAI requests carry the incoming Codex authentication to `https://chatgpt.com/backend-api/codex/responses`. OpenRouter requests use the OpenRouter key and go to `https://openrouter.ai/api/v1/responses`.
 
-The key is stored in `unified-router/openrouter.env` under your Codex home directory, outside this repository. The Unix installer restricts the file to mode `600`; the Windows installer applies a current-user ACL when writing it.
+The OpenRouter key and a random local router token are stored in `unified-router/openrouter.env` under your Codex home directory, outside this repository. Codex sends the local token through its provider `http_headers` setting in `config.toml`; the router removes it before forwarding. Model requests and model listings require that token. The health endpoint remains available without authentication.
+
+Both credential files are private: the Unix installer uses mode `600` and a private router directory; the Windows installer replaces inherited and explicit access rules with a current-user-only ACL before writing or reusing credentials. Configuration backups and temporary installation directories are also private. These permissions do not isolate software running as your own user or an administrator.
+
+The router rejects browser origins, unexpected Host headers, and non-JSON model requests. Provider-specific header allowlists prevent unrelated credentials from being forwarded. Request bodies are limited to 64 MiB each; this is a local single-user service, not a shared network gateway.
+
+To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks that the stored and configured tokens match.
 
 Logs contain routing metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged.
 
@@ -110,3 +117,13 @@ Logs contain routing metadata, status codes, and timings. Request and response b
 The [workflow](../.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch. It tests Linux with Node.js 20, 22, and 24, plus macOS and Windows with Node.js 24. It also checks JavaScript, Bash, and Windows PowerShell syntax, and validates model definitions and prompt consistency.
 
 Tests use synthetic upstream responses and need no API credentials. Live provider compatibility and installation of background services require separate manual verification.
+
+## License and template provenance
+
+This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
+
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. Keep the license and applicable notices when redistributing this entry or a modified copy; record your own changes as well.
+
+The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in that installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
+
+The software license does not grant access to models or hosted services. OpenAI and OpenRouter access remains subject to their respective service terms.

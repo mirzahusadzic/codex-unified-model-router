@@ -1,0 +1,16 @@
+Codex Unified Model Router
+Copyright 2026 Mirza Husadzic
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This project includes model-message templates in catalog/deepseek-model.json
+from the bundled model catalog of @openai/codex 0.163.0 (Apache-2.0):
+
+OpenAI Codex
+Copyright 2025 OpenAI
+https://github.com/openai/codex
+
+The catalog entry has been modified for DeepSeek model identity, capabilities,
+context limits, reasoning settings, and locally maintained main and persistent
+instructions. File attribution and modification details are recorded in
+catalog/deepseek-model.json.license.

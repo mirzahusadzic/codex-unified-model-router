@@ -69,6 +69,8 @@ Restarting either service interrupts its active requests. Changing models inside
 
 ## Install without automatic startup
 
+After upgrading to router token authentication, rerun the installer and restart Codex, including its shared daemon if used. Start a new thread so Codex loads the generated provider header. A `401` about a missing router token usually means the client still has the previous configuration.
+
 Use `./install.sh --no-service` on macOS/Linux or `.\install.ps1 -NoService` on Windows. These options write the configuration and router files but do not register or launch a background service.
 
 Use `./scripts/verify-install.sh --no-service` or `.\scripts\verify-install.ps1 -NoService` to validate those files. The installer still requires Codex and an OpenRouter key.

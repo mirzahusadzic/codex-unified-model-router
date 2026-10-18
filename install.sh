@@ -59,7 +59,7 @@ if [[ "$force" -eq 0 ]] && [[ -f "$existing_config" ]] && [[ "$managed" -eq 0 ]]
 fi
 
 mkdir -p "$codex_home" "$backup_dir" "$router_dir"
-chmod 700 "$router_dir"
+chmod 700 "$router_dir" "$backup_dir"
 
 for existing_file in config.toml deepseek.config.toml models.json; do
   if [[ -f "$codex_home/$existing_file" ]]; then
@@ -79,7 +79,8 @@ node "$repo_dir/scripts/build-catalog.mjs" \
   --persistent "$repo_dir/prompts/deepseek-persistent.md" \
   --output "$tmp_dir/models.json"
 
-node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml"
+node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
+node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env"
 
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000' \
   "$tmp_dir/models.json" >/dev/null
@@ -88,15 +89,6 @@ install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
 install -m 600 "$repo_dir/router/unified-router.mjs" "$router_file"
 
-if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-  (
-    umask 077
-    printf 'OPENROUTER_API_KEY=%s\n' "$OPENROUTER_API_KEY" > "$router_env"
-  )
-elif [[ "$(stat -f '%Lp' "$router_env" 2>/dev/null || stat -c '%a' "$router_env" 2>/dev/null || printf '600')" != "600" ]]; then
-  chmod 600 "$router_env"
-fi
-
 if [[ -f "$codex_home/deepseek.config.toml" ]]; then
   mv "$codex_home/deepseek.config.toml" "$backup_dir/deepseek.config.toml.retired"
 fi
@@ -104,7 +96,7 @@ fi
 wait_for_router() {
   local healthy=0
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-    if curl --silent --fail --max-time 1 http://127.0.0.1:18766/health 2>/dev/null | jq -e '.ok == true and .openai == true and .openrouter == true' >/dev/null; then
+    if curl --silent --fail --max-time 1 http://127.0.0.1:18766/health 2>/dev/null | jq -e '.ok == true and .openai == true and .openrouter == true and .clientAuth == true' >/dev/null; then
       healthy=1
       break
     fi

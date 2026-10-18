@@ -72,7 +72,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $files = @('install.ps1') + @(Get-ChildItem scripts -Filter '*.ps1' | ForEach-Object { $_.FullName })
+          $files = @('install.ps1') + @(Get-ChildItem scripts, tests -Filter '*.ps1' | ForEach-Object { $_.FullName })
           foreach ($file in $files) {
             $tokens = $null
             $parseErrors = $null
@@ -83,3 +83,7 @@ jobs:
               throw ($parseErrors | Out-String)
             }
           }
+      - name: Test Windows credential permissions
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\tests\private-path.test.ps1

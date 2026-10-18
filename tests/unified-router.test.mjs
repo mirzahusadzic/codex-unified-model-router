@@ -10,9 +10,19 @@ import { fileURLToPath } from 'node:url';
 process.env.CODEX_ROUTER_ENV_FILE = fileURLToPath(new URL('./missing.env', import.meta.url));
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
+process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
+process.env.CODEX_ROUTER_PORT = '18766';
+const clientHeaders = {
+  host: '127.0.0.1:18766',
+  'content-type': 'application/json',
+  'x-codex-router-token': process.env.CODEX_ROUTER_TOKEN,
+  authorization: 'Bearer test-codex-token',
+  'chatgpt-account-id': 'test-account',
+};
 let handleRequest;
 const forwarded = [];
 mock.method(console, 'log', () => {});
+mock.method(console, 'error', () => {});
 mock.method(http, 'createServer', handler => {
   handleRequest = handler;
   return { listen: (_port, _host, ready) => ready() };
@@ -46,15 +56,15 @@ mock.method(https, 'request', (options, onResponse) => {
 await import('../router/unified-router.mjs');
 after(() => mock.restoreAll());
 
-async function send(body) {
+async function exchange(rawBody, headers = {}, { method = 'POST', url = '/v1/responses' } = {}) {
   const request = new PassThrough();
   Object.assign(request, {
-    method: 'POST',
-    url: '/v1/responses',
+    method,
+    url,
     headers: {
-      authorization: 'Bearer test-codex-token',
-      'chatgpt-account-id': 'test-account',
+      ...clientHeaders,
       'content-length': '1',
+      ...headers,
     },
   });
   const response = new PassThrough();
@@ -67,9 +77,14 @@ async function send(body) {
   response.on('data', chunk => chunks.push(chunk));
   const done = once(response, 'end');
   handleRequest(request, response);
-  request.end(JSON.stringify(body));
+  request.end(rawBody);
   await done;
-  assert.equal(response.statusCode, 200, Buffer.concat(chunks).toString('utf8'));
+  return { status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+}
+
+async function send(body, headers) {
+  const result = await exchange(JSON.stringify(body), headers);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
   const upstream = forwarded.at(-1);
   assert.equal(Number(upstream.headers['content-length']), upstream.byteLength);
   return upstream;
@@ -181,7 +196,7 @@ for (const phase of ['before headers', 'after headers', 'during streaming', 'aft
     Object.assign(request, {
       method: 'POST',
       url: '/v1/responses',
-      headers: { authorization: 'Bearer test-codex-token' },
+      headers: { ...clientHeaders },
     });
     const response = new PassThrough();
     response.headersSent = false;
@@ -209,5 +224,100 @@ for (const phase of ['before headers', 'after headers', 'during streaming', 'aft
     else response.destroy();
     await closed;
     assert.equal(upstream.destroyed, phase !== 'after completion');
+  });
+}
+
+test('router authentication is required even with a Codex bearer token', async () => {
+  const count = forwarded.length;
+  for (const token of [undefined, '', 'wrong', 'b'.repeat(64), 'é'.repeat(64)]) {
+    for (const model of ['gpt-6-astra', 'deepseek/example']) {
+      const result = await exchange(JSON.stringify({ model }), { 'x-codex-router-token': token });
+      assert.equal(result.status, 401);
+    }
+  }
+  const models = await exchange('', { 'x-codex-router-token': undefined }, { method: 'GET', url: '/v1/models' });
+  assert.equal(models.status, 401);
+  const health = await exchange('', { 'x-codex-router-token': undefined }, { method: 'GET', url: '/health' });
+  assert.equal(health.status, 200);
+  assert.equal(health.body.clientAuth, true);
+  assert.equal(forwarded.length, count);
+});
+
+test('rejects browser origins, foreign hosts, and non-JSON content before forwarding', async () => {
+  const count = forwarded.length;
+  for (const headers of [
+    { host: 'evil.example:18766' }, { host: undefined }, { host: '127.0.0.1:1234' },
+    { origin: 'https://evil.example' }, { origin: 'null' },
+    { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-origin' },
+  ]) {
+    assert.equal((await exchange('{"model":"deepseek/example"}', headers)).status, 403);
+  }
+  for (const contentType of [undefined, 'text/plain', 'application/jsonp']) {
+    assert.equal((await exchange('{"model":"deepseek/example"}', { 'content-type': contentType })).status, 415);
+  }
+  assert.equal(forwarded.length, count);
+});
+
+test('malformed JSON and invalid body shapes return 400 and subsequent requests work', async () => {
+  const count = forwarded.length;
+  const invalid = [null, [], 1, true, 'hello', {}, { model: 1 }, { model: ' ' },
+    { model: 'deepseek/example', input: {} }, { model: 'deepseek/example', reasoning: [] },
+    { model: 'deepseek/example', reasoning: { effort: { toString: null } } },
+    { model: 'deepseek/example', text: { format: 'json' } }];
+  for (const body of ['{broken', ...invalid.map(value => JSON.stringify(value))]) {
+    assert.equal((await exchange(body)).status, 400);
+  }
+  assert.equal(forwarded.length, count);
+  await send({ model: 'gpt-6-astra' });
+});
+
+test('only provider-specific headers go upstream; local and unrelated credentials stay local', async () => {
+  for (const model of ['gpt-6-astra', 'openrouter/vendor/model']) {
+    const upstream = await send({ model }, {
+      cookie: 'private-cookie', 'proxy-authorization': 'private-proxy-token',
+      'x-private-header': 'private-value', 'openai-beta': 'responses=experimental',
+      session_id: 'native-session', 'x-codex-turn-state': 'native-state',
+      'content-type': 'application/json; charset=utf-8',
+    });
+    for (const name of ['cookie', 'proxy-authorization', 'x-private-header', 'x-codex-router-token', 'host']) {
+      assert.equal(upstream.headers[name], undefined);
+    }
+    assert.equal(upstream.headers.session_id, model.startsWith('gpt') ? 'native-session' : undefined);
+    assert.equal(upstream.headers['x-codex-turn-state'], model.startsWith('gpt') ? 'native-state' : undefined);
+  }
+});
+
+test('synchronous upstream failures return 502 without exposing error details', async t => {
+  t.mock.method(https, 'request', () => { throw new Error('private error details'); });
+  const result = await exchange('{"model":"gpt-6-astra"}');
+  assert.equal(result.status, 502);
+  assert.doesNotMatch(JSON.stringify(result.body), /private error details/);
+});
+
+for (const failure of ['error', 'premature close']) {
+  test(`upstream ${failure} closes the downstream stream`, async t => {
+    const upstream = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    const upstreamResponse = new PassThrough();
+    upstreamResponse.statusCode = 200;
+    upstreamResponse.headers = { 'content-type': 'text/event-stream' };
+    t.mock.method(https, 'request', (_options, onResponse) => {
+      queueMicrotask(() => onResponse(upstreamResponse));
+      return upstream;
+    });
+    const request = new PassThrough();
+    Object.assign(request, { method: 'POST', url: '/v1/responses', headers: { ...clientHeaders } });
+    const response = new PassThrough();
+    response.writeHead = () => { response.headersSent = true; };
+    response.resume();
+    const closed = new Promise(resolve => response.once('close', resolve));
+    t.after(() => { request.destroy(); response.destroy(); upstream.destroy(); upstreamResponse.destroy(); });
+    handleRequest(request, response);
+    request.end('{"model":"gpt-6-astra"}');
+    await new Promise(resolve => setImmediate(resolve));
+    upstreamResponse.write('data: first\n\n');
+    upstreamResponse.destroy(failure === 'error' ? new Error('upstream reset') : undefined);
+    await closed;
+    assert.equal(response.destroyed, true);
+    assert.equal(upstream.destroyed, true);
   });
 }
