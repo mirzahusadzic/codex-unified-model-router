@@ -46,6 +46,8 @@ codex -m deepseek/deepseek-v4.1-flash-1017
 
 Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. Structured-output requests on OpenRouter routes fall back to OpenAI.
 
+DeepSeek is preconfigured for **960,000 context tokens**, with a **912,000-token effective budget**. [How it is configured →](docs/setup.md#deepseek-context-window)
+
 ## Develop
 
 ```sh

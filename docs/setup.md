@@ -46,6 +46,21 @@ supports_websockets = false
 
 The installer supplies the actual catalog path. Rerunning it reapplies these managed values.
 
+## DeepSeek context window
+
+The entry for `deepseek/deepseek-v4.1-flash-1017` in [`catalog/deepseek-model.json`](../catalog/deepseek-model.json) preconfigures:
+
+| Catalog setting | Value | Meaning |
+| --- | --- | --- |
+| `context_window` | `960000` | Configured context window in tokens. |
+| `max_context_window` | `960000` | Maximum context window declared by this entry. |
+| `effective_context_window_percent` | `95` | Effective budget of **912,000 tokens** (`960,000 × 95%`). |
+| `auto_compact_token_limit` | `null` | No explicit compaction threshold supplied by the catalog. |
+
+Both installers merge this entry into `models.json` under your Codex home directory and configure `model_catalog_json` to load it. No manual context-window setting is needed. These values belong to the DeepSeek entry; native OpenAI models retain their bundled catalog limits.
+
+The effective budget covers the conversation context, including instructions, messages, and tool results; it is not a maximum output length. These are the project's configured limits, not a live measurement of upstream capacity. Start a fresh DeepSeek thread after installing or updating the catalog to check the effective window.
+
 ## Routing and compatibility
 
 | Requested model | Upstream service | Upstream model |
