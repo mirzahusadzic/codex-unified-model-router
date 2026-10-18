@@ -1,0 +1,6 @@
+.DS_Store
+*.bak
+*.tmp
+backups/
+*.env
+openrouter.env
