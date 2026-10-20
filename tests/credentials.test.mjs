@@ -61,7 +61,8 @@ test('config upgrades preserve unrelated tables and synchronize the local token'
   const unrelated = '[profiles.review] # keep this profile\nmodel = "review-model"\nmodel_provider = "other"';
   writeFileSync(config, 'model = "old-model"\n[model_providers.unified] # old provider\nname = "old"\n'
     + '[model_providers.unified.http_headers]\nOld-Token = "old"\n' + unrelated + '\n', { mode: 0o600 });
-  succeeds(run('scripts/merge-config.mjs', [config, home, config, envFile]));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  succeeds(run('scripts/merge-config.mjs', [config, home, config, envFile, profile]));
   const first = readFileSync(config, 'utf8');
   assert.ok(first.includes(unrelated));
   assert.doesNotMatch(first, /old-model|Old-Token|name = "old"/);
@@ -80,4 +81,77 @@ test('router refuses to start without a local authentication token', t => {
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /CODEX_ROUTER_TOKEN is required/);
+});
+
+test('OpenRouter-only profile supplies transport and strict routing without changing mixed-provider defaults', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  writeFileSync(config, 'developer_instructions = "private ambient instructions"\n');
+  succeeds(run('scripts/merge-config.mjs', [config, home, config, envFile, profile]));
+  const text = readFileSync(profile, 'utf8');
+  assert.match(text, /requires_openai_auth = false/);
+  assert.match(text, /X-Codex-Routing-Policy" = "preserve-model-v1"/);
+  assert.doesNotMatch(text, /ambient|developer_instructions|synthetic-key/);
+  const mixed = readFileSync(config, 'utf8');
+  assert.match(mixed, /requires_openai_auth = true/);
+  assert.match(mixed, /private ambient instructions/);
+  assert.doesNotMatch(mixed, /X-Codex-Routing-Policy/);
+  const token = readFileSync(envFile, 'utf8').match(/^CODEX_ROUTER_TOKEN=(.+)$/m)[1];
+  assert.ok(text.includes(token));
+  if (process.platform !== 'win32') assert.equal(statSync(profile).mode & 0o777, 0o600);
+});
+
+test('unmanaged profile collisions refuse both writes; explicit conversion preserves unrelated settings', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  const main = 'developer_instructions = "keep main instructions"\n';
+  const unrelated = 'model = "deepseek/custom"\nmodel_reasoning_effort = "high"\n'
+    + 'developer_instructions = "keep profile instructions"\n[features]\nshell_tool = false\n';
+  const original = 'model_provider = "old"\n' + unrelated + '[model_providers.unified]\nname = "old"\n';
+  writeFileSync(config, main, { mode: 0o600 });
+  writeFileSync(profile, original, { mode: 0o600 });
+  const args = [config, home, config, envFile, profile];
+  assert.notEqual(run('scripts/merge-config.mjs', args).status, 0);
+  assert.equal(readFileSync(profile, 'utf8'), original);
+  assert.equal(readFileSync(config, 'utf8'), main);
+  succeeds(run('scripts/merge-config.mjs', [...args, '--force']));
+  const first = readFileSync(profile, 'utf8');
+  assert.ok(first.includes(unrelated));
+  assert.doesNotMatch(first, /"old"/);
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.equal(readFileSync(profile, 'utf8'), first);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+});
+
+test('verifier rejects missing, drifted or non-private OpenRouter profiles', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  succeeds(run('scripts/merge-config.mjs', [config, home, config, envFile, profile]));
+  const original = readFileSync(profile, 'utf8');
+  for (const changed of [
+    original.replace('preserve-model-v1', 'unknown-policy'),
+    original.replace('requires_openai_auth = false', 'requires_openai_auth = true'),
+    original.replace('supports_websockets = false', 'supports_websockets = true'),
+    original.replace('http://127.0.0.1:18766/v1', 'http://127.0.0.1:9999/v1'),
+    original.replace('models.json', 'other-models.json'),
+    original.replace('wire_api = "responses"', 'wire_api = "chat"'),
+    original.replace(/X-Codex-Router-Token" = "[a-f0-9]{64}/, 'X-Codex-Router-Token" = "wrong'),
+  ]) {
+    writeFileSync(profile, changed);
+    const result = run('scripts/verify-credentials.mjs', [home]);
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout + result.stderr, /synthetic-key|[a-f0-9]{64}/);
+  }
+  writeFileSync(profile, original);
+  if (process.platform !== 'win32') {
+    chmodSync(profile, 0o644);
+    assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
+    chmodSync(profile, 0o600);
+  }
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+  rmSync(profile);
+  assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
 });

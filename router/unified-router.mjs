@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -12,6 +12,7 @@ const envFile = process.env.CODEX_ROUTER_ENV_FILE || join(homedir(), '.codex', '
 const modelCatalogFile = process.env.CODEX_MODEL_CATALOG || join(homedir(), '.codex', 'models.json');
 const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MODEL || 'gpt-6-astra';
 const maxBodyBytes = 64 * 1024 * 1024;
+const routerRevision = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 
 function readEnvironmentFile(file) {
   if (!existsSync(file)) return {};
@@ -184,6 +185,8 @@ const server = http.createServer((request, response) => {
       openai: true,
       openrouter: Boolean(openrouterApiKey),
       clientAuth: true,
+      revision: routerRevision,
+      capabilities: { routingPolicies: ['preserve-model-v1'], revisionPrecondition: true },
     });
     return;
   }
@@ -191,6 +194,18 @@ const server = http.createServer((request, response) => {
   if (!isAuthenticated(request.headers)) {
     sendJson(response, 401, { error: { message: 'Invalid or missing router token; rerun the installer and restart Codex' } });
     return;
+  }
+
+  const expectedRevision = request.headers['x-codex-router-revision'];
+  if (expectedRevision !== undefined) {
+    if (typeof expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(expectedRevision)) {
+      sendJson(response, 400, { error: { code: 'invalid_router_revision', message: 'Expected a lowercase SHA-256 router revision' } });
+      return;
+    }
+    if (expectedRevision !== routerRevision) {
+      sendJson(response, 409, { error: { code: 'router_revision_mismatch', message: 'The running router revision differs from the requested revision' } });
+      return;
+    }
   }
 
   if (request.method === 'GET' && ['/models', '/v1/models'].includes(request.url)) {
@@ -240,11 +255,23 @@ const server = http.createServer((request, response) => {
     }
 
     const requestedModel = parsed.model;
+    const routingPolicy = request.headers['x-codex-routing-policy'];
+    if (routingPolicy !== undefined && routingPolicy !== 'preserve-model-v1') {
+      sendJson(response, 400, { error: { message: 'Unsupported routing policy' } });
+      return;
+    }
     let model = requestedModel;
     let target = routeFor(model);
     let fallbackReason = null;
 
     if (target.provider === 'openrouter' && hasStructuredOutput(parsed)) {
+      if (routingPolicy === 'preserve-model-v1') {
+        sendJson(response, 422, { error: {
+          code: 'model_substitution_forbidden',
+          message: 'This route cannot honor structured output without substituting the model. Use text output and validate locally.',
+        } });
+        return;
+      }
       model = structuredFallbackModel;
       target = routeFor(model);
       if (target.provider !== 'openai') {
@@ -287,6 +314,7 @@ const server = http.createServer((request, response) => {
       upstreamModel,
       requestedModel,
       fallbackReason,
+      routingPolicy: routingPolicy || 'default',
       bytes: body.length,
     }));
 

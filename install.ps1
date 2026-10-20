@@ -17,6 +17,7 @@ $RouterEnv = Join-Path $RouterDir 'openrouter.env'
 $RouterLog = Join-Path $RouterDir 'router.log'
 $RouterErrorLog = Join-Path $RouterDir 'router.error.log'
 $ExistingConfig = Join-Path $CodexHome 'config.toml'
+$OpenRouterProfile = Join-Path $CodexHome 'unified-openrouter.config.toml'
 $StartCmd = Join-Path $RouterDir 'start-router.cmd'
 $StartupName = 'Codex Unified Router.vbs'
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
@@ -45,13 +46,19 @@ if (-not $Force -and (Test-Path $ExistingConfig) -and -not $Managed) {
     Fail-Install "An existing Codex configuration was found in $CodexHome. Rerun with -Force for the first conversion." 2
 }
 
+if (-not $Force -and (Test-Path $OpenRouterProfile)) {
+    if (-not (Select-String -Path $OpenRouterProfile -Pattern '^# BEGIN codex-unified-router managed keys$' -Quiet)) {
+        Fail-Install 'An unmanaged unified-openrouter profile already exists. Rerun with -Force to back it up and merge managed transport settings.' 2
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $CodexHome, $BackupDir, $RouterDir | Out-Null
 Set-PrivatePath $BackupDir
 Set-PrivatePath $RouterDir
-foreach ($SensitiveFile in @($ExistingConfig, $RouterEnv)) {
+foreach ($SensitiveFile in @($ExistingConfig, $OpenRouterProfile, $RouterEnv)) {
     if (Test-Path -LiteralPath $SensitiveFile) { Set-PrivatePath $SensitiveFile }
 }
-foreach ($Name in @('config.toml', 'deepseek.config.toml', 'models.json')) {
+foreach ($Name in @('config.toml', 'deepseek.config.toml', 'unified-openrouter.config.toml', 'models.json')) {
     $ExistingFile = Join-Path $CodexHome $Name
     if (Test-Path $ExistingFile) {
         Copy-Item -Force $ExistingFile (Join-Path $BackupDir $Name)
@@ -83,7 +90,10 @@ try {
     & node (Join-Path $RepoDir 'scripts\prepare-credentials.mjs') $RouterEnv
     if ($LASTEXITCODE -ne 0) { throw 'Router credential setup failed.' }
     Set-PrivatePath $RouterEnv
-    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $RouterEnv
+    $OpenRouterOut = Join-Path $TempDir 'unified-openrouter.config.toml'
+    $MergeFlags = @()
+    if ($Force) { $MergeFlags += '--force' }
+    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $RouterEnv $OpenRouterOut @MergeFlags
     if ($LASTEXITCODE -ne 0) { throw 'Codex config merge failed.' }
 
     $CatalogText = [System.IO.File]::ReadAllText($ModelsFile, $Utf8NoBom)
@@ -98,6 +108,11 @@ try {
     }
     Set-PrivatePath $ExistingConfig
     [System.IO.File]::WriteAllText($ExistingConfig, [System.IO.File]::ReadAllText($ConfigOut, $Utf8NoBom), $Utf8NoBom)
+    if (-not (Test-Path -LiteralPath $OpenRouterProfile)) {
+        [System.IO.File]::WriteAllText($OpenRouterProfile, '', $Utf8NoBom)
+    }
+    Set-PrivatePath $OpenRouterProfile
+    [System.IO.File]::WriteAllText($OpenRouterProfile, [System.IO.File]::ReadAllText($OpenRouterOut, $Utf8NoBom), $Utf8NoBom)
     Copy-Item -Force $ModelsFile (Join-Path $CodexHome 'models.json')
     Copy-Item -Force (Join-Path $RepoDir 'router\unified-router.mjs') $RouterFile
 
@@ -148,8 +163,8 @@ goto run
         $Healthy = $false
         for ($Attempt = 0; $Attempt -lt 25; $Attempt += 1) {
             try {
-                $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:18766/health' -TimeoutSec 2
-                if ($Health.ok -and $Health.openai -and $Health.openrouter -and $Health.clientAuth) {
+                & node (Join-Path $RepoDir 'scripts\verify-health.mjs') $RouterFile 'http://127.0.0.1:18766/health' 2>$null
+                if ($LASTEXITCODE -eq 0) {
                     $Healthy = $true
                     break
                 }

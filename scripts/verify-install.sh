@@ -23,6 +23,7 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 test -f "$codex_home/config.toml"
+test -f "$codex_home/unified-openrouter.config.toml"
 test -f "$codex_home/models.json"
 test -f "$codex_home/unified-router/router.mjs"
 node "$script_dir/verify-credentials.mjs" "$codex_home"
@@ -53,7 +54,7 @@ if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .ba
 fi
 
 if [[ "$check_service" -eq 1 ]]; then
-  curl --silent --fail --max-time 2 http://127.0.0.1:18766/health | jq -e '.ok == true and .openai == true and .openrouter == true and .clientAuth == true' >/dev/null
+  node "$script_dir/verify-health.mjs" "$codex_home/unified-router/router.mjs" http://127.0.0.1:18766/health
   case "$platform" in
     Darwin)
       if ! launchctl print "gui/$(id -u)/$service_label" >/dev/null; then

@@ -5,18 +5,41 @@ const [codexHome] = process.argv.slice(2);
 if (!codexHome) throw new Error('Usage: verify-credentials.mjs <codex-home>');
 const envFile = join(codexHome, 'unified-router', 'openrouter.env');
 const configFile = join(codexHome, 'config.toml');
+const profileFile = join(codexHome, 'unified-openrouter.config.toml');
 const env = readFileSync(envFile, 'utf8');
 const token = env.match(/^CODEX_ROUTER_TOKEN=([a-f0-9]{64})\r?$/m)?.[1];
 if (!token || !/^OPENROUTER_API_KEY=.+\r?$/m.test(env)) {
   throw new Error('Router credentials are missing; rerun the installer');
 }
-const config = readFileSync(configFile, 'utf8');
-const provider = config.split('# BEGIN codex-unified-router provider')[1]?.split('# END codex-unified-router provider')[0];
-if (!provider?.includes(`http_headers = { "X-Codex-Router-Token" = "${token}" }`)) {
-  throw new Error('Codex and router tokens differ; rerun the installer');
+function managedBlock(text, name) {
+  const sections = text.split(`# BEGIN codex-unified-router ${name}`);
+  if (sections.length !== 2) throw new Error('Missing or duplicate managed configuration block; rerun the installer');
+  const block = sections[1].split(`# END codex-unified-router ${name}`);
+  if (block.length !== 2) throw new Error('Unterminated or duplicate managed configuration block; rerun the installer');
+  return block[0].split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+}
+for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]]) {
+  const config = readFileSync(file, 'utf8');
+  const keys = managedBlock(config, 'managed keys');
+  if (!keys.includes('model_provider = "unified"')
+      || !keys.includes(`model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`)) {
+    throw new Error('Managed provider or catalog path differs; rerun the installer');
+  }
+  const provider = managedBlock(config, 'provider');
+  const expected = [
+    '[model_providers.unified]', 'name = "Codex Unified Router"',
+    'base_url = "http://127.0.0.1:18766/v1"', 'wire_api = "responses"',
+    `requires_openai_auth = ${!openrouterOnly}`, 'supports_websockets = false',
+    openrouterOnly
+      ? `http_headers = { "X-Codex-Router-Token" = "${token}", "X-Codex-Routing-Policy" = "preserve-model-v1" }`
+      : `http_headers = { "X-Codex-Router-Token" = "${token}" }`,
+  ];
+  if (JSON.stringify(provider) !== JSON.stringify(expected)) {
+    throw new Error('Managed transport settings or local tokens differ; rerun the installer');
+  }
 }
 if (process.platform !== 'win32') {
-  for (const file of [envFile, configFile, join(codexHome, 'unified-router')]) {
+  for (const file of [envFile, configFile, profileFile, join(codexHome, 'unified-router')]) {
     const stat = statSync(file);
     if ((stat.mode & 0o077) !== 0 || stat.uid !== process.getuid()) {
       throw new Error(`Expected a private, current-user-owned path: ${file}`);

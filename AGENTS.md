@@ -30,7 +30,7 @@ After editing the maintained DeepSeek prompts, run `./scripts/render-deepseek-en
 - Bind the router to loopback. Keep credentials and request/response bodies out of logs and committed files.
 - OpenRouter requests replace Codex authentication with the OpenRouter key; native OpenAI requests retain Codex authentication.
 - Mixed history preserves messages, tool calls, tool results, and encrypted reasoning while removing unsupported plaintext reasoning from OpenAI requests.
-- Structured-output requests on OpenRouter routes use a native OpenAI fallback.
+- Structured-output requests on OpenRouter routes use a native OpenAI fallback by default. Requests with `X-Codex-Routing-Policy: preserve-model-v1` must fail instead of substituting a model.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
 

@@ -58,10 +58,16 @@ if [[ "$force" -eq 0 ]] && [[ -f "$existing_config" ]] && [[ "$managed" -eq 0 ]]
   exit 2
 fi
 
+existing_profile="$codex_home/unified-openrouter.config.toml"
+if [[ "$force" -eq 0 ]] && [[ -f "$existing_profile" ]] && ! grep -q '^# BEGIN codex-unified-router managed keys$' "$existing_profile"; then
+  printf 'An unmanaged unified-openrouter profile already exists. Rerun with --force to back it up and merge managed transport settings.\n' >&2
+  exit 2
+fi
+
 mkdir -p "$codex_home" "$backup_dir" "$router_dir"
 chmod 700 "$router_dir" "$backup_dir"
 
-for existing_file in config.toml deepseek.config.toml models.json; do
+for existing_file in config.toml deepseek.config.toml unified-openrouter.config.toml models.json; do
   if [[ -f "$codex_home/$existing_file" ]]; then
     cp -p "$codex_home/$existing_file" "$backup_dir/$existing_file"
   fi
@@ -80,12 +86,15 @@ node "$repo_dir/scripts/build-catalog.mjs" \
   --output "$tmp_dir/models.json"
 
 node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
-node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env"
+merge_flags=()
+if [[ "$force" -eq 1 ]]; then merge_flags+=(--force); fi
+node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env" "$tmp_dir/unified-openrouter.config.toml" ${merge_flags[@]+"${merge_flags[@]}"}
 
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000' \
   "$tmp_dir/models.json" >/dev/null
 
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
+install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
 install -m 600 "$repo_dir/router/unified-router.mjs" "$router_file"
 
@@ -96,7 +105,7 @@ fi
 wait_for_router() {
   local healthy=0
   for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-    if curl --silent --fail --max-time 1 http://127.0.0.1:18766/health 2>/dev/null | jq -e '.ok == true and .openai == true and .openrouter == true and .clientAuth == true' >/dev/null; then
+    if node "$repo_dir/scripts/verify-health.mjs" "$router_file" http://127.0.0.1:18766/health 2>/dev/null; then
       healthy=1
       break
     fi

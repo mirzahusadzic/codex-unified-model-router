@@ -8,13 +8,14 @@ $ErrorActionPreference = 'Stop'
 
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $ConfigPath = Join-Path $CodexHome 'config.toml'
+$ProfilePath = Join-Path $CodexHome 'unified-openrouter.config.toml'
 $ModelsPath = Join-Path $CodexHome 'models.json'
 $RouterPath = Join-Path $CodexHome 'unified-router\router.mjs'
 $StartCmd = Join-Path $CodexHome 'unified-router\start-router.cmd'
 $StartupScript = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Unified Router.vbs'
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
-$RequiredPaths = @($ConfigPath, $ModelsPath, $RouterPath)
+$RequiredPaths = @($ConfigPath, $ProfilePath, $ModelsPath, $RouterPath)
 if (-not $NoService) {
     $RequiredPaths += @($StartCmd, $StartupScript)
 }
@@ -25,7 +26,7 @@ foreach ($Path in $RequiredPaths) {
 
 & node (Join-Path $PSScriptRoot 'verify-credentials.mjs') $CodexHome
 if ($LASTEXITCODE -ne 0) { throw 'Router credential verification failed.' }
-foreach ($Path in @($ConfigPath, (Join-Path $CodexHome 'unified-router'), (Join-Path $CodexHome 'unified-router\openrouter.env'))) {
+foreach ($Path in @($ConfigPath, $ProfilePath, (Join-Path $CodexHome 'unified-router'), (Join-Path $CodexHome 'unified-router\openrouter.env'))) {
     Assert-PrivatePath $Path
 }
 
@@ -52,8 +53,8 @@ if ($DeepSeek.base_instructions -ne $DeepSeek.model_messages.instructions_templa
 }
 
 if (-not $NoService) {
-    $Health = Invoke-RestMethod -Uri 'http://127.0.0.1:18766/health' -TimeoutSec 2
-    if (-not ($Health.ok -and $Health.openai -and $Health.openrouter -and $Health.clientAuth)) {
+    & node (Join-Path $PSScriptRoot 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
+    if ($LASTEXITCODE -ne 0) {
         throw 'The unified router health check failed.'
     }
 }

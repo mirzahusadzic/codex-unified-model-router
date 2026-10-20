@@ -132,6 +132,80 @@ test('structured-output fallback also normalizes DeepSeek history for OpenAI', a
   assert.deepEqual(upstream.body.text.format, format);
 });
 
+test('preserve-model policy refuses structured-output substitution without contacting an upstream', async () => {
+  const count = forwarded.length;
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/vendor/model']) {
+    for (const type of ['json_schema', 'json_object']) {
+      const result = await exchange(JSON.stringify({ model, text: { format: { type } } }),
+        { 'x-codex-routing-policy': 'preserve-model-v1' });
+      assert.equal(result.status, 422);
+      assert.equal(result.body.error.code, 'model_substitution_forbidden');
+    }
+  }
+  assert.equal(forwarded.length, count);
+});
+
+test('preserve-model text requests keep OpenRouter model selection without requiring OpenAI login', async () => {
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/vendor/model']) {
+    const upstream = await send({ model, input: 'Synthetic request', text: { format: { type: 'text' } } }, {
+      'x-codex-routing-policy': 'preserve-model-v1', authorization: undefined,
+    });
+    assert.equal(upstream.body.model, model.replace(/^openrouter\//, ''));
+    assert.equal(upstream.hostname, 'openrouter.ai');
+    assert.equal(upstream.headers['x-codex-routing-policy'], undefined);
+    assert.equal(upstream.headers['chatgpt-account-id'], undefined);
+  }
+});
+
+test('preserve-model policy leaves native structured output on the requested native model', async () => {
+  const format = { type: 'json_schema', name: 'result', schema: { type: 'object' } };
+  const upstream = await send({ model: 'gpt-6-astra', input: 'Synthetic request', text: { format } },
+    { 'x-codex-routing-policy': 'preserve-model-v1' });
+  assert.equal(upstream.hostname, 'chatgpt.com');
+  assert.equal(upstream.body.model, 'gpt-6-astra');
+  assert.deepEqual(upstream.body.text.format, format);
+  assert.equal(upstream.headers['x-codex-routing-policy'], undefined);
+});
+
+test('routing capabilities and implementation revision are discoverable; unknown policies fail closed', async () => {
+  const health = await exchange('', {}, { method: 'GET', url: '/health' });
+  assert.deepEqual(health.body.capabilities.routingPolicies, ['preserve-model-v1']);
+  assert.match(health.body.revision, /^[a-f0-9]{64}$/);
+  assert.equal(health.body.capabilities.revisionPrecondition, true);
+  const count = forwarded.length;
+  const result = await exchange(JSON.stringify({ model: 'deepseek/example' }),
+    { 'x-codex-routing-policy': 'typo' });
+  assert.equal(result.status, 400);
+  assert.equal(forwarded.length, count);
+});
+
+test('revision preconditions reject stale or malformed revisions before either upstream', async () => {
+  const health = await exchange('', {}, { method: 'GET', url: '/health' });
+  for (const model of ['gpt-6-astra', 'deepseek/example', 'openrouter/vendor/model']) {
+    const count = forwarded.length;
+    for (const [revision, status, code] of [
+      ['0'.repeat(64), 409, 'router_revision_mismatch'],
+      ['invalid', 400, 'invalid_router_revision'],
+      ['', 400, 'invalid_router_revision'],
+      [['a'.repeat(64), 'b'.repeat(64)], 400, 'invalid_router_revision'],
+    ]) {
+      const result = await exchange(JSON.stringify({ model }), { 'x-codex-router-revision': revision });
+      assert.equal(result.status, status);
+      assert.equal(result.body.error.code, code);
+      assert.equal(forwarded.length, count);
+    }
+    const upstream = await send({ model, input: 'Synthetic revision check' }, {
+      'x-codex-router-revision': health.body.revision, 'x-codex-routing-policy': 'preserve-model-v1',
+    });
+    assert.equal(forwarded.length, count + 1);
+    assert.equal(upstream.headers['x-codex-router-revision'], undefined);
+    assert.equal(upstream.body.model, model.replace(/^openrouter\//, ''));
+  }
+  assert.equal((await exchange('{}', {
+    'x-codex-router-token': undefined, 'x-codex-router-revision': 'invalid',
+  })).status, 401);
+});
+
 test('native reasoning, messages, tool calls, and tool results survive unchanged', async () => {
   const input = [
     nativeReasoning,

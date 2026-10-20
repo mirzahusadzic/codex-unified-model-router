@@ -10,7 +10,7 @@ The router and Codex's app-server daemon are separate processes. Restart the rou
 
 On Windows, run `.\scripts\verify-install.ps1`.
 
-The verifiers check configuration, the catalog, local health, and platform startup setup. A healthy endpoint confirms local configuration; it does not validate upstream credentials or model access.
+The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the catalog, local health, and platform startup setup. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
 
 ## Service management
 
@@ -114,5 +114,7 @@ cp -p "$backup_dir/models.json" "$HOME/.codex/models.json"
 ```
 
 On Windows, copy `config.toml` and `models.json` from the backup into your Codex home directory. If you installed with a custom `CODEX_HOME`, restore files there.
+
+Restore `unified-openrouter.config.toml` as well if it is present in the chosen backup and you use that profile.
 
 Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. Restart Codex, including its shared daemon if used, and start new threads to use the restored provider configuration.

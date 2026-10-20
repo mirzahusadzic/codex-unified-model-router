@@ -9,10 +9,11 @@ The installer uses `~/.codex` by default and respects `CODEX_HOME`. It:
 1. Backs up existing configuration and catalog files.
 2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/).
 3. Updates managed settings in `config.toml`, preserving unrelated sections.
-4. Installs the router and OpenRouter key under `unified-router/`.
-5. Configures automatic startup and checks the local health endpoint.
+4. Merges managed transport settings into `unified-openrouter.config.toml` for OpenRouter without ChatGPT authentication, preserving unrelated preferences.
+5. Installs the router and OpenRouter key under `unified-router/`.
+6. Configures automatic startup and checks the local health endpoint.
 
-The first conversion of an unmanaged configuration requires `--force` on macOS/Linux or `-Force` on Windows. Subsequent runs update the managed blocks without that flag.
+The first conversion of either an unmanaged main configuration or an existing unmanaged `unified-openrouter.config.toml` requires `--force` on macOS/Linux or `-Force` on Windows. Without it, the installer stops before modifying files or credentials. Both configurations are backed up before merging. Subsequent runs update the managed blocks without that flag. The sidecar's managed settings own only `model_provider`, `model_catalog_json` and `[model_providers.unified]`; keep custom model, reasoning, instructions and unrelated tables outside its managed blocks.
 
 Automatic startup uses launchd on macOS, `systemd --user` on Linux, and a hidden Startup-folder supervisor on Windows. If Linux has no working user service session, the installer prints a manual startup command.
 
@@ -74,8 +75,91 @@ The same catalog is available to main threads, child-thread model overrides, and
 
 - **Reasoning effort:** OpenRouter requests map `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Native OpenAI requests retain the requested effort.
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results.
-- **Structured output:** OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback.
+- **Structured output:** By default, OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback, or use the [model-preserving routing policy](#routing-policy) to reject substitution.
 - **Streaming:** Responses are piped through as they arrive. Client disconnects cancel unfinished upstream requests.
+
+## Routing policy
+
+Automatic fallback is convenient when switching between providers, but some
+callers need the selected model or an error, never a substituted model. Such
+requests can opt in with this local header:
+
+```http
+X-Codex-Routing-Policy: preserve-model-v1
+```
+
+| Request | Default policy (no header) | `preserve-model-v1` |
+| --- | --- | --- |
+| OpenRouter, ordinary text output | Requested model | Requested model |
+| OpenRouter, non-text response format | Configured native OpenAI fallback | HTTP 422, no upstream request |
+| Native OpenAI, including structured output | Requested model | Requested model |
+
+Unknown policy values receive HTTP 400. The policy controls this router's model
+substitution, not upstream provider implementation or identity. It does not add
+JSON Schema support to OpenRouter routes. Callers that need JSON without
+provider-enforced schemas can request ordinary text and validate it themselves.
+
+To opt in while retaining the normal mixed-provider authentication, add the
+header for one Codex invocation:
+
+```sh
+codex --model deepseek/deepseek-v4.1-flash-1017 \
+  --config 'model_providers.unified.http_headers.X-Codex-Routing-Policy="preserve-model-v1"'
+```
+
+The policy header and local authentication token are never forwarded to
+providers. Existing requests without the header retain the default fallback.
+
+## Router capabilities
+
+`GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the
+supported opt-in routing policies, and `revision`, the running router source's
+SHA-256. These fields let clients check compatibility and diagnose outdated
+installed copies without sending an inference request. They do not attest
+upstream model identity, account access or the entire runtime configuration.
+
+Clients that need to hold that revision across requests can require it with:
+
+```http
+X-Codex-Router-Revision: <lowercase-sha256-from-health>
+```
+
+Support is advertised as `capabilities.revisionPrecondition: true`. After local
+authentication, the router rejects malformed digests with HTTP 400 and mismatches
+with HTTP 409 (`router_revision_mismatch`), before contacting either upstream.
+Matching or absent headers leave routing unchanged. The header stays local and
+is never forwarded. Check the capability before relying on it: older routers
+may ignore unknown headers. This optional precondition detects a changed source
+revision, not a restart of identical code or changes to service configuration.
+
+## OpenRouter-only profile
+
+The installer writes `unified-openrouter.config.toml` beside `config.toml`, with
+the same private local router token and model catalog. It sets
+`requires_openai_auth = false`, so OpenRouter requests need no ChatGPT login,
+and enables `preserve-model-v1` to prevent fallback into a native OpenAI route.
+The default mixed-provider configuration is unchanged.
+
+Select this profile with an OpenRouter model:
+
+```sh
+codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
+```
+
+Use the normal mixed-provider configuration for native OpenAI models or for
+switching between OpenAI and OpenRouter in one thread. The OpenRouter-only
+profile supplies transport settings, not prompts, plugins or task policies.
+It still inherits base user and project settings; it is not a sandbox or an
+isolated execution mode. Codex 0.163.0 does not load the sidecar profile with
+`--ignore-user-config`.
+
+Clients that need isolated execution must manage their own Codex home,
+instructions, tools, permissions and output validation. The router remains a
+transport and compatibility layer.
+
+After updating sources, rerun the installer to install the profile and router;
+the repository copy alone does not change the running service. Installation and
+service activation should be scheduled around active requests.
 
 ## Add a model
 
@@ -104,11 +188,11 @@ The router binds only to `127.0.0.1`. OpenAI requests carry the incoming Codex a
 
 The OpenRouter key and a random local router token are stored in `unified-router/openrouter.env` under your Codex home directory, outside this repository. Codex sends the local token through its provider `http_headers` setting in `config.toml`; the router removes it before forwarding. Model requests and model listings require that token. The health endpoint remains available without authentication.
 
-Both credential files are private: the Unix installer uses mode `600` and a private router directory; the Windows installer replaces inherited and explicit access rules with a current-user-only ACL before writing or reusing credentials. Configuration backups and temporary installation directories are also private. These permissions do not isolate software running as your own user or an administrator.
+Credential-bearing files, including the OpenRouter-only profile, are private: the Unix installer uses mode `600` and a private router directory; the Windows installer replaces inherited and explicit access rules with a current-user-only ACL before writing or reusing credentials. Configuration backups and temporary installation directories are also private. These permissions do not isolate software running as your own user or an administrator.
 
 The router rejects browser origins, unexpected Host headers, and non-JSON model requests. Provider-specific header allowlists prevent unrelated credentials from being forwarded. Request bodies are limited to 64 MiB each; this is a local single-user service, not a shared network gateway.
 
-To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks that the stored and configured tokens match.
+To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks both configurations against the stored token, their managed transport settings, and private ownership/permissions. Readiness checks require the current capabilities and the installed source's SHA-256; a reachable older router is not a successful upgrade. Health redirects are rejected.
 
 Logs contain routing metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged.
 

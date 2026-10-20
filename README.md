@@ -10,7 +10,7 @@ Switch between native OpenAI and OpenRouter models in Codex through a lightweigh
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, Codex ChatGPT authentication, and an **OpenRouter API key**. macOS/Linux also need `jq` and `curl`.
+Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. The default mixed-provider setup uses Codex ChatGPT authentication; users without it can select the [OpenRouter-only profile](docs/setup.md#openrouter-only-profile). macOS/Linux also need `jq` and `curl`.
 
 ```sh
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
@@ -44,7 +44,12 @@ codex -m gpt-6-astra
 codex -m deepseek/deepseek-v4.1-flash-1017
 ```
 
-Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. Structured-output requests on OpenRouter routes fall back to OpenAI.
+Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. By default, structured-output requests on OpenRouter routes fall back to OpenAI.
+
+For OpenRouter without a ChatGPT login, select `--profile unified-openrouter`
+with an OpenRouter model. This profile refuses automatic model substitution.
+Other callers can opt into the same [routing policy](docs/setup.md#routing-policy)
+without changing their authentication setup.
 
 DeepSeek is preconfigured for **960,000 context tokens**, with a **912,000-token effective budget**. [How it is configured →](docs/setup.md#deepseek-context-window)
 
