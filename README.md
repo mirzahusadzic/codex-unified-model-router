@@ -2,15 +2,17 @@
 
 [![CI](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml)
 
-Switch between native OpenAI and OpenRouter models in Codex through a lightweight local router.
+Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
 
-- **One setup.** A shared model catalog for main threads and child threads.
-- **Switch in place.** Choose models with `/model`, including DeepSeek → OpenAI.
-- **Local and lightweight.** Streaming responses, automatic startup, zero npm dependencies.
+- **DeepSeek by default.** DeepSeek V4.1 Flash 1017 with a 960,000-token context. Prompts stay cache-friendly, so long agent sessions read most of each prompt from cache.
+- **Ultra Spark mode.** DeepSeek leads and up to 10 Muse workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
+- **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
+- **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
+- **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. The default mixed-provider setup uses Codex ChatGPT authentication; users without it can select the [OpenRouter-only profile](docs/setup.md#openrouter-only-profile). macOS/Linux also need `jq`.
+Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. macOS/Linux also need `jq`.
 
 ```sh
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
@@ -33,33 +35,29 @@ $env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
 
 </details>
 
-For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up.
+For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. To keep the ChatGPT connector tools or Codex's own agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0` or `CODEX_ROUTER_AGENT_THREADS=0` ([details](docs/setup.md#chatgpt-apps)).
 
-The installer also turns off Codex's ChatGPT apps (`[features] apps = false`). Their connector tools add about 65,000 tokens to every request, including OpenRouter requests. To keep them, install with `CODEX_ROUTER_DISABLE_APPS=0`. [Details →](docs/setup.md#chatgpt-apps)
-
-**Restart Codex and start a new thread after installation.** If you use the shared app-server daemon, [restart it once](docs/setup.md#activate-the-provider) to load the provider.
+**Restart Codex and start a new thread after installation.** If you use the shared app-server daemon, [restart it once](docs/setup.md#activate-the-provider).
 
 ## Use
 
 ```sh
-codex                 # DeepSeek V4.1 Flash 1017, the default
-codex -m gpt-6-astra  # native OpenAI; requires a ChatGPT plan
+codex                                                   # DeepSeek V4.1 Flash 1017
+codex -m openrouter/deepseek/deepseek-v4.1-flash-1017   # Ultra Spark mode
+codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contributor
 ```
 
-Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. Requests always stay on the model you selected. To prefer specific OpenRouter endpoints for a model, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
+| Model | Best for |
+| --- | --- |
+| **DeepSeek V4.1 Flash 1017** (default) | Everyday agentic coding with a long context. [Details](docs/setup.md#deepseek-context-window) |
+| **DeepSeek · Ultra Spark** | Broad tasks such as reviews, audits, and changes across many files. [Details](docs/setup.md#ultra-spark-mode) |
+| **Muse Spark 1.3 Contributor** | Fast, inexpensive work on public code. [Details](docs/setup.md#muse-spark-13-contributor) |
+| **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
+| **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 
-A pre-stream OpenRouter rejection gets one bounded recovery attempt; a context-window rejection is reported to Codex so it can compact the thread. If recovery fails, the router returns a completed diagnostic instead of breaking the Codex thread; the real status and identifiers remain in the router error log.
+Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives. Use them only for code you are willing to share, and start Ultra Spark in a fresh thread.
 
-For OpenRouter without a ChatGPT login, select `--profile unified-openrouter`
-with an OpenRouter model.
-Other callers can opt into the same [routing policy](docs/setup.md#routing-policy)
-without changing their authentication setup.
-
-DeepSeek is preconfigured for **960,000 context tokens**, with a **912,000-token effective budget**. [How it is configured →](docs/setup.md#deepseek-context-window)
-
-The catalog also includes `openrouter/meta/muse-spark-1.3-contributor`. Meta trains on this tier's prompts and completions, so use it only for code you are willing to share. [Details →](docs/setup.md#muse-spark-13-contributor)
-
-**Ultra Spark mode** (`openrouter/deepseek/deepseek-v4.1-flash-1017`) lets DeepSeek delegate quick chores to Muse workers; switch to it with `/model` in a fresh thread on share-safe code. [Details →](docs/setup.md#ultra-spark-mode)
+Without a ChatGPT login, use `--profile unified-openrouter` with an OpenRouter model ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
 ## Develop
 
