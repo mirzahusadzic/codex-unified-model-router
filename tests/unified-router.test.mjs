@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -9,10 +9,9 @@ import { PassThrough, Readable, Writable } from 'node:stream';
 import { after, mock, test } from 'node:test';
 
 // Exercise the router's request handler without network access or real credentials.
-// Captures sit beside the env file, as Windows requires for an inherited private ACL.
+// Captures go into the env file's directory, the only location Windows allows.
 const routerHome = mkdtempSync(join(tmpdir(), 'codex-router-home-'));
-const rejectedRequestDir = join(routerHome, 'rejections');
-mkdirSync(rejectedRequestDir);
+const rejectedRequestDir = routerHome;
 process.env.CODEX_ROUTER_ENV_FILE = join(routerHome, 'openrouter.env');
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
@@ -69,7 +68,7 @@ mock.method(https, 'request', (options, onResponse) => {
     },
   });
 });
-await import('../router/unified-router.mjs');
+const { captureDirectoryAllowed } = await import('../router/unified-router.mjs');
 after(() => {
   mock.restoreAll();
   rmSync(routerHome, { recursive: true, force: true });
@@ -429,12 +428,13 @@ test('OpenRouter tool history drops invalid records and keeps one ordered output
   ];
 
   const upstream = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input });
+  // The repeated call survives where its latest output answers it.
   assert.deepEqual(upstream.body.input, [
     deepseekReasoning,
-    firstCall,
     secondCall,
-    latestFirstOutput,
     secondOutput,
+    firstCall,
+    latestFirstOutput,
     { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Continue.' }] },
   ]);
 
@@ -664,6 +664,15 @@ test('a context overflow reported only through error_type also fails the respons
   assert.equal(forwarded.length, before + 1);
 });
 
+test('Windows rejection captures are limited to the private router directory itself', () => {
+  const routerDir = join(tmpdir(), 'codex-home', 'unified-router');
+  assert.equal(captureDirectoryAllowed(routerDir, routerDir, 'win32'), true);
+  assert.equal(captureDirectoryAllowed(routerDir.toUpperCase(), routerDir, 'win32'), true);
+  assert.equal(captureDirectoryAllowed(join(routerDir, 'rejections'), routerDir, 'win32'), false);
+  assert.equal(captureDirectoryAllowed(join(tmpdir(), 'shared'), routerDir, 'win32'), false);
+  assert.equal(captureDirectoryAllowed(join(tmpdir(), 'shared'), routerDir, 'darwin'), true);
+});
+
 test('an OpenRouter 400 that closes before ending returns 502 instead of hanging', async t => {
   t.mock.method(https, 'request', (options, onResponse) => new Writable({
     write(_chunk, _encoding, callback) {
@@ -685,7 +694,7 @@ test('an OpenRouter 400 that closes before ending returns 502 instead of hanging
   assert.equal(result.status, 502);
 });
 
-test('tool-history repair keeps an answered retry that reuses an unanswered call ID', async () => {
+test('tool-history repair keeps the answered retry, not the unanswered call that shares its ID', async () => {
   const call = args => ({ type: 'function_call', call_id: 'call_retry', name: 'exec_command', arguments: args });
   const output = { type: 'function_call_output', call_id: 'call_retry', output: 'done' };
   const message = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Retrying.' }] };
@@ -693,8 +702,8 @@ test('tool-history repair keeps an answered retry that reuses an unanswered call
     model: 'openrouter/vendor/model',
     input: [{ role: 'user', content: 'go' }, call('{"cmd":"first"}'), message, call('{"cmd":"second"}'), output],
   });
-  // One call/output pair survives; neither the call nor its output is lost.
-  assert.deepEqual(upstream.body.input, [{ role: 'user', content: 'go' }, call('{"cmd":"first"}'), output, message]);
+  // The output answers the second call, and the message keeps its place.
+  assert.deepEqual(upstream.body.input, [{ role: 'user', content: 'go' }, message, call('{"cmd":"second"}'), output]);
 });
 
 test('a repeated OpenRouter 400 completes with a router diagnostic instead of breaking Codex', async t => {

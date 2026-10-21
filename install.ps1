@@ -38,18 +38,20 @@ if ([string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and -not $HasStoredKe
     Fail-Install "OpenRouter is not configured. Set OPENROUTER_API_KEY before installing, or create $RouterEnv."
 }
 
-$ManagedMarker = '^\s*# BEGIN codex-unified-router managed keys\s*$'
+$ConfigManaged = Join-Path $RepoDir 'scripts\config-managed.mjs'
 $Managed = $false
 if (Test-Path $ExistingConfig) {
-    # Only an exact marker line counts; a comment that mentions it does not.
-    $Managed = Select-String -Path $ExistingConfig -Pattern $ManagedMarker -Quiet
+    # Only a real marker line counts, never one inside a TOML string or comment.
+    & node $ConfigManaged $ExistingConfig
+    $Managed = $LASTEXITCODE -eq 0
 }
 if (-not $Force -and (Test-Path $ExistingConfig) -and -not $Managed) {
     Fail-Install "An existing Codex configuration was found in $CodexHome. Rerun with -Force for the first conversion." 2
 }
 
 if (-not $Force -and (Test-Path $OpenRouterProfile)) {
-    if (-not (Select-String -Path $OpenRouterProfile -Pattern $ManagedMarker -Quiet)) {
+    & node $ConfigManaged $OpenRouterProfile
+    if ($LASTEXITCODE -ne 0) {
         Fail-Install 'An unmanaged unified-openrouter profile already exists. Rerun with -Force to back it up and merge managed transport settings.' 2
     }
 }

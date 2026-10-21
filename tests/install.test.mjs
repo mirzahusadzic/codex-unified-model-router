@@ -54,7 +54,7 @@ test('no-service installer guards collisions before mutation and preserves backe
   assert.notEqual(invoke(true).status, 0);
 });
 
-test('a comment that only mentions the managed marker still requires an explicit first conversion', t => {
+test('marker text in a comment or string still requires an explicit first conversion', t => {
   const directory = mkdtempSync(join(tmpdir(), 'router-install-marker-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const home = join(directory, 'codex-home');
@@ -65,7 +65,8 @@ test('a comment that only mentions the managed marker still requires an explicit
     ? '@echo off\r\necho {"models":[]}\r\n'
     : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
   const config = join(home, 'config.toml');
-  const original = 'model = "mine" # see # BEGIN codex-unified-router managed keys\n';
+  const original = 'model = "mine" # see # BEGIN codex-unified-router managed keys\n'
+    + 'developer_instructions = """\n# BEGIN codex-unified-router managed keys\nKeep these instructions.\n"""\n';
   writeFileSync(config, original);
   const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
     ? ['-NoProfile', '-File', join(root, 'install.ps1'), '-NoService']

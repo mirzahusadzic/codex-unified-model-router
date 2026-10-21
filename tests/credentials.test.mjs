@@ -164,6 +164,22 @@ test('config merges never parse inside TOML multi-line strings', t => {
   succeeds(run('scripts/verify-credentials.mjs', [home]));
 });
 
+test('config merges ignore triple quotes inside comments and single-line strings', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const unrelated = '[profiles.review]\nmodel = "review-model"';
+  writeFileSync(config, '# Documentation example: developer_instructions = """\n'
+    + 'note = "a \\"\\"\\" inside"\nmodel = "mine"\n' + unrelated + '\n', { mode: 0o600 });
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  // The user's top-level model is replaced, not duplicated next to the managed one.
+  assert.doesNotMatch(merged, /model = "mine"/);
+  assert.equal(merged.split('\n').filter(line => line === 'model = "gpt-6-astra"').length, 1);
+  assert.ok(merged.includes(unrelated));
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+});
+
 test('router refuses to start without a local authentication token', t => {
   const { envFile } = fixture(t);
   const result = spawnSync(process.execPath, [join(root, 'router/unified-router.mjs')], {

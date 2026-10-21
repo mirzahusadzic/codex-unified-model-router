@@ -4,7 +4,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const host = '127.0.0.1';
 const port = Number(process.env.CODEX_ROUTER_PORT || 18766);
@@ -174,44 +174,47 @@ function normalizeToolHistoryForOpenRouter(input) {
     runs.push(run);
   }
 
-  const retainedCallIndexes = new Set();
-  const retainedCallIds = new Set();
-  for (const run of runs) {
-    for (const call of run.calls) {
-      if (typeof call.item.call_id !== 'string' || call.item.call_id.length === 0) {
-        repairs.droppedInvalidCalls += 1;
-        continue;
-      }
-      if (retainedCallIds.has(call.item.call_id)) {
-        repairs.droppedDuplicateCalls += 1;
-        continue;
-      }
-      retainedCallIds.add(call.item.call_id);
-      retainedCallIndexes.add(call.index);
-    }
-  }
-
+  const validCallId = id => typeof id === 'string' && id.length > 0;
+  const callIds = new Set(runs.flatMap(run => run.calls.map(call => call.item.call_id)).filter(validCallId));
   const outputsByCallId = new Map();
-  for (const item of input) {
+  for (const [index, item] of input.entries()) {
     if (item?.type !== 'function_call_output') continue;
-    if (typeof item.call_id !== 'string' || !retainedCallIds.has(item.call_id)) {
+    if (!callIds.has(item.call_id)) {
       repairs.droppedOrphanOutputs += 1;
       continue;
     }
     if (outputsByCallId.has(item.call_id)) repairs.droppedDuplicateOutputs += 1;
     // The latest output is the most useful observation if an interrupted turn
     // left more than one result for the same call ID.
-    outputsByCallId.set(item.call_id, item);
+    outputsByCallId.set(item.call_id, { index, item });
   }
 
+  // When a call ID repeats, keep the occurrence the output answers: the last
+  // one before it. Other items stay in their original order.
+  const retainedByCallId = new Map();
   for (const run of runs) {
     for (const call of run.calls) {
-      if (retainedCallIndexes.has(call.index) && !outputsByCallId.has(call.item.call_id)) {
-        repairs.droppedUnansweredCalls += 1;
-        retainedCallIndexes.delete(call.index);
+      const id = call.item.call_id;
+      if (!validCallId(id)) {
+        repairs.droppedInvalidCalls += 1;
+        continue;
       }
+      if (!retainedByCallId.has(id)) {
+        retainedByCallId.set(id, call.index);
+        continue;
+      }
+      repairs.droppedDuplicateCalls += 1;
+      const output = outputsByCallId.get(id);
+      if (!output || call.index < output.index) retainedByCallId.set(id, call.index);
     }
   }
+  for (const id of retainedByCallId.keys()) {
+    if (!outputsByCallId.has(id)) {
+      repairs.droppedUnansweredCalls += 1;
+      retainedByCallId.delete(id);
+    }
+  }
+  const retainedCallIndexes = new Set(retainedByCallId.values());
 
   const normalized = [];
   const runsByStart = new Map(runs.map(run => [run.start, run]));
@@ -222,7 +225,7 @@ function normalizeToolHistoryForOpenRouter(input) {
       normalized.push(...calls.map(call => call.item));
       for (const call of calls) {
         const output = outputsByCallId.get(call.item.call_id);
-        if (output) normalized.push(output);
+        if (output) normalized.push(output.item);
       }
       index = run.end + 1;
       continue;
@@ -327,16 +330,21 @@ function payloadHash(body) {
   return createHash('sha256').update(body).digest('hex');
 }
 
+// File modes do not restrict access on Windows, so captures go only into the
+// router directory itself: the installer gives it a protected current-user ACL
+// that new files inherit, which a subdirectory could override.
+export function captureDirectoryAllowed(directory, routerDirectory, platform = process.platform) {
+  if (platform !== 'win32') return true;
+  return resolve(directory).toLowerCase() === resolve(routerDirectory).toLowerCase();
+}
+
 function captureRejectedRequest({
   requestId, attempt, requestBody, responseBody,
 }) {
   if (!rejectedRequestDir) return null;
-  // File modes do not restrict access on Windows. There, captures must stay in
-  // the router directory, whose current-user-only ACL new files inherit.
-  const fromRouterDir = relative(resolve(dirname(envFile)), resolve(rejectedRequestDir));
-  if (process.platform === 'win32' && (fromRouterDir.startsWith('..') || isAbsolute(fromRouterDir))) {
+  if (!captureDirectoryAllowed(rejectedRequestDir, dirname(envFile))) {
     logEvent('error', 'openrouter.rejection_capture_refused', {
-      requestId, attempt, reason: 'outside_private_router_directory',
+      requestId, attempt, reason: 'not_private_router_directory',
     });
     return null;
   }

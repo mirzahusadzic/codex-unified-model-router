@@ -47,10 +47,9 @@ if [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ ! -f "$router_env" ]]; then
 fi
 
 existing_config="$codex_home/config.toml"
-# Only an exact marker line counts; a comment that mentions it does not.
-managed_marker='^[[:space:]]*# BEGIN codex-unified-router managed keys[[:space:]]*$'
+# Only a real marker line counts, never one inside a TOML string or comment.
 managed=0
-if [[ -f "$existing_config" ]] && grep -Eq "$managed_marker" "$existing_config"; then
+if [[ -f "$existing_config" ]] && node "$repo_dir/scripts/config-managed.mjs" "$existing_config"; then
   managed=1
 fi
 
@@ -61,7 +60,7 @@ if [[ "$force" -eq 0 ]] && [[ -f "$existing_config" ]] && [[ "$managed" -eq 0 ]]
 fi
 
 existing_profile="$codex_home/unified-openrouter.config.toml"
-if [[ "$force" -eq 0 ]] && [[ -f "$existing_profile" ]] && ! grep -Eq "$managed_marker" "$existing_profile"; then
+if [[ "$force" -eq 0 ]] && [[ -f "$existing_profile" ]] && ! node "$repo_dir/scripts/config-managed.mjs" "$existing_profile"; then
   printf 'An unmanaged unified-openrouter profile already exists. Rerun with --force to back it up and merge managed transport settings.\n' >&2
   exit 2
 fi

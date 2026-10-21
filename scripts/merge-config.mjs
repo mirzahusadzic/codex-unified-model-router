@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { logicalLines } from './toml-lines.mjs';
+import { hasManagedKeysMarker, logicalLines, managedKeysMarker } from './toml-lines.mjs';
 
 const [existingFile, codexHome, outputFile, routerEnvFile, openrouterProfileFile, force] = process.argv.slice(2);
 if (!codexHome || !outputFile || !routerEnvFile || (force !== undefined && force !== '--force')) {
@@ -10,7 +10,6 @@ if (!codexHome || !outputFile || !routerEnvFile || (force !== undefined && force
 const routerToken = readFileSync(routerEnvFile, 'utf8').match(/^CODEX_ROUTER_TOKEN=([a-f0-9]{64})\r?$/m)?.[1];
 if (!routerToken) throw new Error('Prepare router credentials before merging the Codex configuration');
 
-const managedKeysMarker = '# BEGIN codex-unified-router managed keys';
 const managedKeysEnd = '# END codex-unified-router managed keys';
 const managedProviderMarker = '# BEGIN codex-unified-router provider';
 const managedProviderEnd = '# END codex-unified-router provider';
@@ -30,7 +29,7 @@ function readExisting(path) {
 const profilePath = join(codexHome, 'unified-openrouter.config.toml');
 const existingProfile = openrouterProfileFile ? readExisting(profilePath) : '';
 if (openrouterProfileFile && existsSync(profilePath) && force !== '--force'
-    && !existingProfile.split(/\r?\n/).some(line => line.trim() === managedKeysMarker)) {
+    && !hasManagedKeysMarker(existingProfile)) {
   throw new Error('Existing unmanaged unified-openrouter profile; rerun the installer with --force (Windows: -Force) to merge it');
 }
 
