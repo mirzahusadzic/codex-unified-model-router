@@ -228,9 +228,15 @@ Native OpenAI models and models whose provider trains on their inputs never shar
 | A native OpenAI model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
 | Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model |
 
-OpenAI output therefore never reaches a provider that trains on it, and training-tier output never reaches OpenAI. DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse, and spawned agents share their parent's session, so the rule covers whole agent trees. Requests without a Codex session ID are not tracked.
+DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
 
-The router keeps each session's side, without any content, in `unified-router/session-sides.json` for 30 days, so the rule survives restarts. There is no opt-out; `CODEX_ROUTER_TRAINING_MODELS` can only add models to the training tier.
+The router keeps each session's side, without any content, in `unified-router/session-sides.json`, so the rule survives restarts. A record expires 30 days after the session's last request. There is no opt-out; `CODEX_ROUTER_TRAINING_MODELS` can only add models to the training tier.
+
+The rule follows session IDs, not content, so these start a new record:
+
+- **Forked sessions.** `codex fork` copies a thread's history into a new session. Fork a thread that used native OpenAI models only onto DeepSeek or another neutral model.
+- **Sessions from before this router version.** Their first request after the upgrade decides their side.
+- **Requests without a session ID**, such as from clients other than Codex, are not tracked.
 
 ### Routing policy
 

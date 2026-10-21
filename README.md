@@ -20,7 +20,7 @@ Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between th
 
 Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI models and models that train on their inputs never share a session.
 
-**Key:** 🔵 router · 🟢 OpenRouter · 🔴 trains on its inputs · ⚪ Codex and native OpenAI.
+**Key:** 🟢 router · 🟡 OpenRouter · 🔵 DeepSeek · ⚪ OpenAI · 🔴 training tier, where Meta trains on the inputs.
 
 ```mermaid
 ---
@@ -48,12 +48,13 @@ config:
         background: var(--fill) !important; border-radius: 4px;
         box-shadow: 0 0 0 5px var(--fill), 0 0 0 7px var(--ring); }
         .label[data-id^="L_CX_RT_"] .labelBkg {
-        --ring: #3869ad; }
-        .label[data-id^="L_RT_OR_"] .labelBkg {
         --ring: #2e9e5b; }
+        .label[data-id^="L_RT_OR_"] .labelBkg {
+        --ring: #e3a008; }
         .label[data-id^="L_RT_OA_"] .labelBkg {
-        --ring: #8a96a8; }
-        .label[data-id^="L_OA_MU_"] .labelBkg {
+        --ring: #b5bcc6; }
+        .label[data-id^="L_US_MU_"] .labelBkg,
+        .label[data-id^="L_OA_TT_"] .labelBkg {
         --ring: #c94a4a; }
         .edgeLabel p, .edgeLabel span, .edgeLabel text {
         --halo: var(--fill, var(--vscode-editor-background,
@@ -70,24 +71,34 @@ flowchart LR
     RT["<b>Unified router</b><br/>127.0.0.1, local token"]
     OR["<b>OpenRouter</b><br/>your API key"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
-    DS["<b>DeepSeek V4.1 Flash</b><br/>default; leads Ultra Spark"]
-    MU["<b>Muse Spark 1.3</b><br/>Ultra Spark workers"]
+    DS["<b>DeepSeek V4.1 Flash</b><br/>default"]
     AM["<b>Any OpenRouter model</b><br/>with a catalog entry"]
+    subgraph TT["Training tier"]
+        US["<b>Ultra Spark</b><br/>DeepSeek leading workers"]
+        MU["<b>Muse Spark 1.3</b><br/>Meta, contributor tier"]
+    end
     CX -->|"Responses API"| RT
     RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
     RT -->|"native models"| OA
     OR --> DS
-    OR --> MU
     OR --> AM
-    OA -.-|"never in one session"| MU
+    OR --> US
+    US -->|"spawns up to 10 workers"| MU
+    OA -.-|"never in one session, spawned agents included"| TT
 
     classDef default fill:#8a96a82e,stroke:#8a96a8,stroke-width:1px
-    classDef router fill:#3869ad4d,stroke:#3869ad,stroke-width:2px
-    classDef openrouter fill:#2e9e5b4d,stroke:#2e9e5b,stroke-width:2px
+    classDef router fill:#2e9e5b4d,stroke:#2e9e5b,stroke-width:2px
+    classDef openrouter fill:#e3a0084d,stroke:#e3a008,stroke-width:2px
+    classDef deepseek fill:#4d6bfe4d,stroke:#4d6bfe,stroke-width:2px
+    classDef openai fill:#ffffff40,stroke:#b5bcc6,stroke-width:2px
     classDef training fill:#c94a4a4d,stroke:#c94a4a,stroke-width:2px
+    classDef trainingTier fill:#c94a4a14,stroke:#c94a4a,stroke-width:2px,stroke-dasharray:6 4
     class RT router
-    class OR,DS,AM openrouter
+    class OR,AM openrouter
+    class DS,US deepseek
+    class CX,OA openai
     class MU training
+    class TT trainingTier
 ```
 
 ## Install

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,12 @@ import { after, mock, test } from 'node:test';
 const routerHome = mkdtempSync(join(tmpdir(), 'codex-router-home-'));
 const rejectedRequestDir = routerHome;
 process.env.CODEX_ROUTER_ENV_FILE = join(routerHome, 'openrouter.env');
+// Isolation records from an earlier run: one inside the retention window, one past it.
+const dayMs = 24 * 60 * 60 * 1000;
+writeFileSync(join(routerHome, 'session-sides.json'), JSON.stringify({
+  'isolation-stale': { side: 'openai', at: Date.now() - 25 * dayMs },
+  'isolation-expired': { side: 'openai', at: Date.now() - 31 * dayMs },
+}));
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
@@ -442,6 +448,19 @@ test('native OpenAI and training-tier models never share a session, including it
   assert.equal(sides['isolation-training'].side, 'training');
   assert.doesNotMatch(readFileSync(sidesFile, 'utf8'), /Hello/);
   if (process.platform !== 'win32') assert.equal(statSync(sidesFile).mode & 0o777, 0o600);
+});
+
+test('isolation records survive restarts, refresh on use, and expire after 30 idle days', async () => {
+  const muse = { model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' };
+  // A record loaded from disk is enforced, and a neutral request refreshes it.
+  await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }, { 'session-id': 'isolation-stale' });
+  const refreshed = JSON.parse(readFileSync(join(routerHome, 'session-sides.json'), 'utf8'))['isolation-stale'];
+  assert.equal(refreshed.side, 'openai');
+  assert.ok(Date.now() - refreshed.at < 60000);
+  const blocked = await exchange(JSON.stringify(muse), { 'session-id': 'isolation-stale' });
+  assert.equal(blocked.status, 409);
+  // A record past the retention window was dropped when the router started.
+  await send(muse, { 'session-id': 'isolation-expired' });
 });
 
 test('OpenRouter continuation is stateless without forwarding the native session ID', async () => {

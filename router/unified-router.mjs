@@ -78,6 +78,8 @@ const trainingModels = new Set(['meta/muse-spark-1.3-contributor', ...String(
 ).split(',').map(model => model.trim()).filter(Boolean)]);
 const sessionSidesFile = join(dirname(envFile), 'session-sides.json');
 const sessionSideRetentionMs = 30 * 24 * 60 * 60 * 1000;
+// Requests refresh a session's record at most daily, so active sessions never expire.
+const sessionSideRefreshMs = 24 * 60 * 60 * 1000;
 
 function loadSessionSides() {
   try {
@@ -759,8 +761,8 @@ const server = http.createServer((request, response) => {
 
     const upstreamModel = upstreamModelFor(model, target.provider);
     const side = sessionSide(requestedModel, target.provider, upstreamModel);
+    const recorded = requestInfo.sessionId ? sessionSides.get(requestInfo.sessionId) : undefined;
     if (side && requestInfo.sessionId) {
-      const recorded = sessionSides.get(requestInfo.sessionId);
       if (recorded && recorded.side !== side) {
         logEvent('error', 'session.provider_isolation', {
           requestId, sessionId: requestInfo.sessionId, model: requestedModel, recordedSide: recorded.side, side,
@@ -774,6 +776,9 @@ const server = http.createServer((request, response) => {
         return;
       }
       if (!recorded) recordSessionSide(requestInfo.sessionId, side);
+    }
+    if (recorded && Date.now() - recorded.at > sessionSideRefreshMs) {
+      recordSessionSide(requestInfo.sessionId, recorded.side);
     }
     let toolHistoryRepairs = null;
     let providerOrder = null;
