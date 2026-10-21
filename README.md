@@ -46,12 +46,12 @@ codex                 # DeepSeek V4.1 Flash 1017, the default
 codex -m gpt-6-astra  # native OpenAI; requires a ChatGPT plan
 ```
 
-Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. By default, structured-output requests on OpenRouter routes fall back to OpenAI. To prefer specific OpenRouter endpoints for a model, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
+Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. Requests always stay on the model you selected. To prefer specific OpenRouter endpoints for a model, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
 A pre-stream OpenRouter rejection gets one bounded recovery attempt; a context-window rejection is reported to Codex so it can compact the thread. If recovery fails, the router returns a completed diagnostic instead of breaking the Codex thread; the real status and identifiers remain in the router error log.
 
 For OpenRouter without a ChatGPT login, select `--profile unified-openrouter`
-with an OpenRouter model. This profile refuses automatic model substitution.
+with an OpenRouter model.
 Other callers can opt into the same [routing policy](docs/setup.md#routing-policy)
 without changing their authentication setup.
 

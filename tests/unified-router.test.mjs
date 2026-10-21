@@ -15,7 +15,6 @@ const rejectedRequestDir = routerHome;
 process.env.CODEX_ROUTER_ENV_FILE = join(routerHome, 'openrouter.env');
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
-process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
 process.env.CODEX_ROUTER_LOG_LEVEL = 'info';
@@ -237,28 +236,44 @@ test('OpenAI can continue mixed history after a DeepSeek turn', async () => {
   assert.equal(upstream.headers['chatgpt-account-id'], 'test-account');
 });
 
-test('structured-output fallback also normalizes DeepSeek history for OpenAI', async () => {
-  const format = { type: 'json_schema', name: 'result', schema: { type: 'object' } };
-  const upstream = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: mixedHistory, text: { format } });
-  assert.equal(upstream.hostname, 'chatgpt.com');
-  assert.equal(upstream.body.model, 'gpt-6-astra');
-  assert.deepEqual(upstream.body.input, mixedHistory.filter(item => item !== deepseekReasoning));
-  assert.deepEqual(upstream.body.text.format, format);
-  const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
-  assert.equal(forwardedLog.fallbackReason, 'openrouter_structured_output_unsupported');
-});
-
-test('preserve-model policy refuses structured-output substitution without contacting an upstream', async () => {
-  const count = forwarded.length;
-  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/vendor/model']) {
-    for (const type of ['json_schema', 'json_object']) {
-      const result = await exchange(JSON.stringify({ model, text: { format: { type } } }),
-        { 'x-codex-routing-policy': 'preserve-model-v1' });
-      assert.equal(result.status, 422);
-      assert.equal(result.body.error.code, 'model_substitution_forbidden');
+test('DeepSeek structured output stays on DeepSeek as JSON mode with the schema appended last', async () => {
+  const schema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
+  const format = { type: 'json_schema', name: 'city', strict: true, schema };
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017']) {
+    for (const headers of [{}, { 'x-codex-routing-policy': 'preserve-model-v1' }]) {
+      const upstream = await send({ model, input: mixedHistory, text: { format, verbosity: 'low' } }, headers);
+      assert.equal(upstream.hostname, 'openrouter.ai');
+      assert.equal(upstream.body.model, 'deepseek/deepseek-v4.1-flash-1017');
+      assert.deepEqual(upstream.body.text, { format: { type: 'json_object' }, verbosity: 'low' });
+      // The original history is an unchanged prefix, so cached tokens still apply.
+      assert.deepEqual(upstream.body.input.slice(0, mixedHistory.length), mixedHistory);
+      const instruction = upstream.body.input.at(-1);
+      assert.equal(instruction.role, 'developer');
+      assert.match(instruction.content[0].text, /JSON object named city/);
+      assert.ok(instruction.content[0].text.includes(JSON.stringify(schema)));
+      const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
+      assert.equal(forwardedLog.structuredOutputAdapted, true);
     }
   }
-  assert.equal(forwarded.length, count);
+  const stringInput = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Paris?', text: { format } });
+  assert.deepEqual(stringInput.body.input[0], { role: 'user', content: 'Paris?' });
+});
+
+test('structured output on other OpenRouter models and DeepSeek JSON mode pass through unchanged', async () => {
+  const schemaFormat = { type: 'json_schema', name: 'result', schema: { type: 'object' } };
+  for (const [model, format] of [
+    ['openrouter/vendor/model', schemaFormat],
+    ['openrouter/meta/muse-spark-1.3-contributor', schemaFormat],
+    ['deepseek/deepseek-v4.1-flash-1017', { type: 'json_object' }],
+  ]) {
+    for (const headers of [{}, { 'x-codex-routing-policy': 'preserve-model-v1' }]) {
+      const upstream = await send({ model, input: 'Synthetic request', text: { format } }, headers);
+      assert.equal(upstream.hostname, 'openrouter.ai');
+      assert.equal(upstream.body.model, model.replace(/^openrouter\//, ''));
+      assert.deepEqual(upstream.body.text.format, format);
+      assert.equal(upstream.body.input, 'Synthetic request');
+    }
+  }
 });
 
 test('preserve-model text requests keep OpenRouter model selection without requiring OpenAI login', async () => {
@@ -798,11 +813,9 @@ test('structured router logs correlate requests without recording bodies or cred
   await send({ model: 'openrouter/vendor/model', input: sensitiveBody }, {
     'x-private-header': 'ROUTER_PRIVATE_HEADER_VALUE', session_id: 'session-log-test',
   });
-  const rejected = await exchange(JSON.stringify({
-    model: 'openrouter/vendor/model',
-    text: { format: { type: 'json_schema' } },
-  }), { 'x-codex-routing-policy': 'preserve-model-v1' });
-  assert.equal(rejected.status, 422);
+  const rejected = await exchange(JSON.stringify({ model: 'openrouter/vendor/model', input: 'Hello' }),
+    { 'x-codex-routing-policy': 'unknown-policy' });
+  assert.equal(rejected.status, 400);
   await new Promise(resolve => setImmediate(resolve));
 
   const entries = parsedLogEntries().slice(before);
@@ -820,7 +833,7 @@ test('structured router logs correlate requests without recording bodies or cred
   assert.equal(completed.status, 200);
   const rejectedFinished = entries.filter(entry => entry.event === 'request.finished').at(-1);
   assert.equal(rejectedFinished.level, 'error');
-  assert.equal(rejectedFinished.status, 422);
+  assert.equal(rejectedFinished.status, 400);
   for (const entry of [started, finished]) {
     assert.equal(entry.generationId, 'gen_test');
     assert.equal(entry.providerName, 'TestProvider');

@@ -10,7 +10,6 @@ const host = '127.0.0.1';
 const port = Number(process.env.CODEX_ROUTER_PORT || 18766);
 const envFile = process.env.CODEX_ROUTER_ENV_FILE || join(homedir(), '.codex', 'unified-router', 'openrouter.env');
 const modelCatalogFile = process.env.CODEX_MODEL_CATALOG || join(homedir(), '.codex', 'models.json');
-const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MODEL || 'gpt-6-astra';
 const maxBodyBytes = 64 * 1024 * 1024;
 const routerRevision = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
 
@@ -121,9 +120,26 @@ function upstreamModelFor(model, provider) {
   return model;
 }
 
-function hasStructuredOutput(request) {
-  const format = request?.text?.format;
-  return Boolean(format && format.type && format.type !== 'text');
+// DeepSeek's endpoint offers JSON mode but rejects JSON schemas. Request JSON
+// mode and append the schema as the final instruction, which keeps the cached
+// prompt prefix intact. Other models receive the schema unchanged.
+function adaptStructuredOutputForDeepSeek(request, model) {
+  const format = request.text?.format;
+  if (!model.startsWith('deepseek/') || format?.type !== 'json_schema') return false;
+  request.text = { ...request.text, format: { type: 'json_object' } };
+  const name = typeof format.name === 'string' && format.name ? ` named ${format.name}` : '';
+  const instruction = {
+    type: 'message',
+    role: 'developer',
+    content: [{
+      type: 'input_text',
+      text: `Respond with only a JSON object${name} that conforms to this JSON schema:\n${JSON.stringify(format.schema ?? {})}`,
+    }],
+  };
+  if (Array.isArray(request.input)) request.input = [...request.input, instruction];
+  else if (typeof request.input === 'string') request.input = [{ role: 'user', content: request.input }, instruction];
+  else request.input = [instruction];
+  return true;
 }
 
 // DeepSeek accepts only low, high, max, and none. Other OpenRouter models take
@@ -685,30 +701,12 @@ const server = http.createServer((request, response) => {
       sendJson(response, 400, { error: { message: 'Unsupported routing policy' } });
       return;
     }
-    let model = requestedModel;
-    let target = routeFor(model);
-    let fallbackReason = null;
+    // The router never substitutes another model, including for structured
+    // output; preserve-model-v1 remains accepted for clients that send it.
+    const model = requestedModel;
+    const target = routeFor(model);
     let stateReset = false;
-
-    if (target.provider === 'openrouter' && hasStructuredOutput(parsed)) {
-      if (routingPolicy === 'preserve-model-v1') {
-        sendJson(response, 422, { error: {
-          code: 'model_substitution_forbidden',
-          message: 'This route cannot honor structured output without substituting the model. Use text output and validate locally.',
-        } });
-        return;
-      }
-      model = structuredFallbackModel;
-      target = routeFor(model);
-      if (target.provider !== 'openai') {
-        sendJson(response, 500, {
-          error: { message: 'Structured-output fallback must resolve to an OpenAI model' },
-        });
-        return;
-      }
-      parsed.model = model;
-      fallbackReason = 'openrouter_structured_output_unsupported';
-    }
+    let structuredOutputAdapted = false;
 
     const upstreamModel = upstreamModelFor(model, target.provider);
     let toolHistoryRepairs = null;
@@ -724,6 +722,7 @@ const server = http.createServer((request, response) => {
       const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
       parsed.input = normalizedHistory.input;
       toolHistoryRepairs = normalizedHistory.repairs;
+      structuredOutputAdapted = adaptStructuredOutputForDeepSeek(parsed, upstreamModel);
     } else {
       parsed.input = normalizeInputForOpenAI(parsed.input);
     }
@@ -790,7 +789,7 @@ const server = http.createServer((request, response) => {
         model,
         upstreamModel,
         requestedModel,
-        fallbackReason,
+        structuredOutputAdapted,
         providerOrder,
         stateReset,
         routingPolicy: routingPolicy || 'default',

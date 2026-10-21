@@ -134,7 +134,6 @@ chcp 65001 >nul
 set "CODEX_ROUTER_ENV_FILE=$RouterEnv"
 set "CODEX_MODEL_CATALOG=$CatalogPath"
 set "CODEX_ROUTER_PORT=18766"
-set "CODEX_ROUTER_STRUCTURED_MODEL=gpt-6-astra"
 :run
 "$NodeExe" "$RouterFile" >> "$RouterLog" 2>> "$RouterErrorLog"
 if not errorlevel 1 goto :eof

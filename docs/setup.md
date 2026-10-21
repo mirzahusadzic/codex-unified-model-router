@@ -107,7 +107,7 @@ The same catalog is available to main threads, child-thread model overrides, and
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results.
 - **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
 - **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with a bounded recent tail of the latest turn. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread. Exact rejected bodies are never logged; an explicit `CODEX_ROUTER_REJECTED_REQUEST_DIR` setting can capture them privately for diagnosis.
-- **Structured output:** By default, OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback, or use the [model-preserving routing policy](#routing-policy) to reject substitution.
+- **Structured output:** Requests keep the selected model. DeepSeek receives JSON mode plus the schema as an instruction; other OpenRouter models receive the schema as sent. See [Routing policy](#routing-policy).
 - **Streaming:** Responses are piped through as they arrive. Client disconnects cancel unfinished upstream requests.
 - **Endpoint preferences:** `CODEX_ROUTER_PROVIDER_ORDER` can [prefer specific OpenRouter endpoints](#openrouter-endpoint-preferences) per model.
 
@@ -123,35 +123,9 @@ The key is the upstream model slug, without the `openrouter/` prefix. List sever
 
 ## Routing policy
 
-Automatic fallback is convenient when switching between providers, but some
-callers need the selected model or an error, never a substituted model. Such
-requests can opt in with this local header:
+The router always forwards the model you selected and never substitutes another, including for structured output. DeepSeek's endpoint rejects JSON schemas, so for DeepSeek a `json_schema` response format becomes JSON mode with the schema appended as the final developer instruction: replies follow the schema, but the provider does not enforce it, and the unchanged history keeps its cache hits. `request.forwarded` logs `structuredOutputAdapted`. Other OpenRouter models receive the schema unchanged.
 
-```http
-X-Codex-Routing-Policy: preserve-model-v1
-```
-
-| Request | Default policy (no header) | `preserve-model-v1` |
-| --- | --- | --- |
-| OpenRouter, ordinary text output | Requested model | Requested model |
-| OpenRouter, non-text response format | Configured native OpenAI fallback | HTTP 422, no upstream request |
-| Native OpenAI, including structured output | Requested model | Requested model |
-
-Unknown policy values receive HTTP 400. The policy controls this router's model
-substitution, not upstream provider implementation or identity. It does not add
-JSON Schema support to OpenRouter routes. Callers that need JSON without
-provider-enforced schemas can request ordinary text and validate it themselves.
-
-To opt in while retaining the normal mixed-provider authentication, add the
-header for one Codex invocation:
-
-```sh
-codex --model deepseek/deepseek-v4.1-flash-1017 \
-  --config 'model_providers.unified.http_headers.X-Codex-Routing-Policy="preserve-model-v1"'
-```
-
-The policy header and local authentication token are never forwarded to
-providers. Existing requests without the header retain the default fallback.
+The `X-Codex-Routing-Policy: preserve-model-v1` header, which the OpenRouter-only profile sends, is still accepted and now matches the default behavior. Unknown policy values receive HTTP 400. The policy header and local authentication token are never forwarded to providers.
 
 ## Router capabilities
 

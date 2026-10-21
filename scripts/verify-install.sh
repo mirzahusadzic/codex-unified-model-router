@@ -33,7 +33,6 @@ grep -q '^model_provider = "unified"$' "$codex_home/config.toml"
 grep -q '^\[model_providers\.unified\]$' "$codex_home/config.toml"
 grep -q '^requires_openai_auth = true$' "$codex_home/config.toml"
 grep -q '^supports_websockets = false$' "$codex_home/config.toml"
-grep -q 'const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MODEL || '\''gpt-6-astra'\''' "$codex_home/unified-router/router.mjs"
 
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000 and .max_context_window == 960000' \
   "$codex_home/models.json" >/dev/null

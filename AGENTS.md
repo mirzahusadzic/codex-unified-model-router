@@ -32,7 +32,7 @@ After editing the maintained prompts or adding an OpenRouter entry, run `node sc
 - OpenRouter requests replace Codex authentication with the OpenRouter key; native OpenAI requests retain Codex authentication.
 - Mixed history preserves messages, tool calls, tool results, and encrypted reasoning while removing unsupported plaintext reasoning from OpenAI requests.
 - A pre-stream OpenRouter 400 may receive one bounded recovery attempt, but it must never escape as HTTP 400 to Codex. Context-window rejections instead return a streamed `response.failed` with `context_length_exceeded` so Codex compacts the thread. If recovery fails, return a completed router diagnostic while preserving the real rejection in logs and keeping exact bodies out of logs unless capture is explicitly enabled.
-- Structured-output requests on OpenRouter routes use a native OpenAI fallback by default. Requests with `X-Codex-Routing-Policy: preserve-model-v1` must fail instead of substituting a model.
+- Never substitute a model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
 

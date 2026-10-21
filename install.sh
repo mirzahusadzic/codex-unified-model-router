@@ -166,8 +166,6 @@ if [[ "$service" -eq 1 ]]; then
     <string>$codex_home/models.json</string>
     <key>CODEX_ROUTER_PORT</key>
     <string>18766</string>
-    <key>CODEX_ROUTER_STRUCTURED_MODEL</key>
-    <string>gpt-6-astra</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -205,7 +203,6 @@ EOF_PLIST
           systemd_environment_line CODEX_ROUTER_ENV_FILE "$router_env"
           systemd_environment_line CODEX_MODEL_CATALOG "$codex_home/models.json"
           systemd_environment_line CODEX_ROUTER_PORT 18766
-          systemd_environment_line CODEX_ROUTER_STRUCTURED_MODEL gpt-6-astra
           printf 'ExecStart=%s %s\n' "$(systemd_quote "$node_bin")" "$(systemd_quote "$router_file")"
           printf 'Restart=always\n'
           printf 'RestartSec=2\n\n'
