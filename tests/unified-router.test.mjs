@@ -18,6 +18,7 @@ process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
 process.env.CODEX_ROUTER_LOG_LEVEL = 'info';
+process.env.CODEX_ROUTER_TRAINING_MODELS = 'vendor/trains';
 process.env.CODEX_ROUTER_PROVIDER_ORDER = 'vendor/pinned = google-vertex/us, google-ai-studio; vendor/other=other-endpoint';
 const clientHeaders = {
   host: '127.0.0.1:18766',
@@ -303,6 +304,7 @@ test('routing capabilities and implementation revision are discoverable; unknown
   const health = await exchange('', {}, { method: 'GET', url: '/health' });
   assert.deepEqual(health.body.capabilities.routingPolicies, ['preserve-model-v1']);
   assert.equal(health.body.capabilities.openrouterRejectionRecovery, 'completed-diagnostic-v1');
+  assert.equal(health.body.capabilities.providerIsolation, 'session-v1');
   assert.match(health.body.revision, /^[a-f0-9]{64}$/);
   assert.equal(health.body.capabilities.revisionPrecondition, true);
   const count = forwarded.length;
@@ -404,13 +406,51 @@ test('configured OpenRouter endpoint preferences apply only to their model', asy
   assert.equal(native.body.provider, undefined);
 });
 
+test('native OpenAI and training-tier models never share a session, including its spawned agents', async () => {
+  const inSession = id => ({ 'session-id': id });
+  const refused = async (model, id) => {
+    const count = forwarded.length;
+    const result = await exchange(JSON.stringify({ model, input: 'Hello' }), inSession(id));
+    assert.equal(result.status, 409, model);
+    assert.equal(result.body.error.code, 'provider_isolation');
+    assert.equal(forwarded.length, count);
+  };
+  await send({ model: 'gpt-6-astra', input: 'Hello' }, inSession('isolation-openai'));
+  for (const model of ['openrouter/meta/muse-spark-1.3-contributor', 'ultra-spark/deepseek-v4.1-flash-1017',
+    'openrouter/vendor/trains']) {
+    await refused(model, 'isolation-openai');
+  }
+  await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }, inSession('isolation-openai'));
+
+  // Ultra Spark and its Muse workers share one session and one side.
+  await send({ model: 'ultra-spark/deepseek-v4.1-flash-1017', input: 'Hello' }, inSession('isolation-training'));
+  await send({ model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' }, inSession('isolation-training'));
+  await refused('gpt-6-astra', 'isolation-training');
+
+  // Earlier Codex versions sent session_id; it identifies the same session.
+  await refused('gpt-6-astra', 'isolation-training');
+  const legacy = await exchange(JSON.stringify({ model: 'gpt-6-astra', input: 'Hello' }), { session_id: 'isolation-training' });
+  assert.equal(legacy.status, 409);
+
+  // Without a session ID there is nothing to isolate.
+  await send({ model: 'gpt-6-astra', input: 'Hello' });
+  await send({ model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' });
+
+  const sidesFile = join(routerHome, 'session-sides.json');
+  const sides = JSON.parse(readFileSync(sidesFile, 'utf8'));
+  assert.equal(sides['isolation-openai'].side, 'openai');
+  assert.equal(sides['isolation-training'].side, 'training');
+  assert.doesNotMatch(readFileSync(sidesFile, 'utf8'), /Hello/);
+  if (process.platform !== 'win32') assert.equal(statSync(sidesFile).mode & 0o777, 0o600);
+});
+
 test('OpenRouter continuation is stateless without forwarding the native session ID', async () => {
   const upstream = await send({
     model: 'deepseek/deepseek-v4.1-flash-1017',
     input: 'Continue after a tool call',
     previous_response_id: 'resp_upstream_state',
     store: true,
-  }, { session_id: 'codex-thread-session' });
+  }, { 'session-id': 'codex-thread-session' });
   assert.equal(upstream.headers['x-session-id'], undefined);
   assert.equal(upstream.body.previous_response_id, undefined);
   assert.equal(upstream.body.store, false);
@@ -418,8 +458,10 @@ test('OpenRouter continuation is stateless without forwarding the native session
   assert.equal(forwardedLog.stateReset, true);
 
   const native = await send({ model: 'gpt-6-astra', input: 'Native continuation', store: true },
-    { session_id: 'native-session' });
-  assert.equal(native.headers.session_id, 'native-session');
+    { 'session-id': 'native-session', 'thread-id': 'native-thread', 'x-codex-window-id': 'native-window' });
+  assert.equal(native.headers['session-id'], 'native-session');
+  assert.equal(native.headers['thread-id'], 'native-thread');
+  assert.equal(native.headers['x-codex-window-id'], 'native-window');
   assert.equal(native.headers['x-session-id'], undefined);
   assert.equal(native.body.store, true);
 });
@@ -813,7 +855,7 @@ test('structured router logs correlate requests without recording bodies or cred
   const before = logEntries.length;
   const sensitiveBody = 'ROUTER_PRIVATE_BODY_VALUE';
   await send({ model: 'openrouter/vendor/model', input: sensitiveBody }, {
-    'x-private-header': 'ROUTER_PRIVATE_HEADER_VALUE', session_id: 'session-log-test',
+    'x-private-header': 'ROUTER_PRIVATE_HEADER_VALUE', 'session-id': 'session-log-test',
   });
   const rejected = await exchange(JSON.stringify({ model: 'openrouter/vendor/model', input: 'Hello' }),
     { 'x-codex-routing-policy': 'unknown-policy' });
@@ -962,13 +1004,13 @@ test('only provider-specific headers go upstream; local and unrelated credential
     const upstream = await send({ model }, {
       cookie: 'private-cookie', 'proxy-authorization': 'private-proxy-token',
       'x-private-header': 'private-value', 'openai-beta': 'responses=experimental',
-      session_id: 'native-session', 'x-codex-turn-state': 'native-state',
+      'session-id': 'native-session', 'x-codex-turn-state': 'native-state',
       'content-type': 'application/json; charset=utf-8',
     });
     for (const name of ['cookie', 'proxy-authorization', 'x-private-header', 'x-codex-router-token', 'host']) {
       assert.equal(upstream.headers[name], undefined);
     }
-    assert.equal(upstream.headers.session_id, model.startsWith('gpt') ? 'native-session' : undefined);
+    assert.equal(upstream.headers['session-id'], model.startsWith('gpt') ? 'native-session' : undefined);
     assert.equal(upstream.headers['x-codex-turn-state'], model.startsWith('gpt') ? 'native-state' : undefined);
   }
 });

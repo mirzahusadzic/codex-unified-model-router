@@ -13,11 +13,17 @@ Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between th
 - **Ultra Spark mode.** DeepSeek leads and up to 10 Muse workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
 - **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
 - **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
+- **Private by default.** Codex analytics are off, and native OpenAI models never share a session with a provider that trains on its inputs.
 - **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
 
 ## How it works
 
 ```mermaid
+---
+config:
+  look: neo
+  layout: elk
+---
 flowchart LR
     codex["Codex CLI and app-server"] -->|"Responses API with a local token"| router["Unified router on 127.0.0.1"]
     router -->|"deepseek/, ultra-spark/, openrouter/"| openrouter["OpenRouter"]
@@ -54,7 +60,7 @@ $env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
 
 </details>
 
-For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. Native OpenAI models are hidden from `/model` when Codex's login shows no active ChatGPT plan; set `CODEX_ROUTER_NATIVE_MODELS=show` or `hide` to override ([details](docs/setup.md#native-openai-models)). To keep the ChatGPT connector tools or Codex's own agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0` or `CODEX_ROUTER_AGENT_THREADS=0` ([details](docs/setup.md#chatgpt-apps)).
+For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. Native OpenAI models are hidden from `/model` when Codex's login shows no active ChatGPT plan; set `CODEX_ROUTER_NATIVE_MODELS=show` or `hide` to override ([details](docs/setup.md#native-openai-models)). To keep Codex's ChatGPT connector tools, analytics, or agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0`, `CODEX_ROUTER_DISABLE_ANALYTICS=0`, or `CODEX_ROUTER_AGENT_THREADS=0` ([details](docs/setup.md#chatgpt-apps)).
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you; restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 
@@ -74,7 +80,7 @@ codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contrib
 | **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
 | **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 
-Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives. Use them only for code you are willing to share, and start Ultra Spark in a fresh thread.
+Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. The router never mixes them with native OpenAI models in one session ([details](docs/setup.md#provider-isolation)).
 
 Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 

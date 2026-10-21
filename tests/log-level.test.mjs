@@ -66,6 +66,14 @@ test('router reads endpoint preferences from its environment file and rejects ma
   assert.match(invalid.stderr, /CODEX_ROUTER_PROVIDER_ORDER entries must look like model=provider/);
 });
 
+test('a corrupt session isolation record does not stop the router', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-isolation-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  writeFileSync(join(directory, 'session-sides.json'), '{not json');
+  const result = start(undefined, join(directory, 'openrouter.env'));
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('router rejects unknown log levels', () => {
   const invalid = start('verbose');
   assert.notEqual(invalid.status, 0);

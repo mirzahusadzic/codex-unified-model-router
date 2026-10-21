@@ -8,7 +8,7 @@ The installer uses `~/.codex` by default and respects `CODEX_HOME`. It:
 
 1. Backs up existing configuration and catalog files.
 2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/), [hiding native OpenAI models](#native-openai-models) without an active ChatGPT plan.
-3. Updates managed settings in `config.toml`, preserving unrelated sections, [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`, and [allows 10 spawned agents](#spawned-agent-limit) unless `CODEX_ROUTER_AGENT_THREADS` says otherwise.
+3. Updates managed settings in `config.toml`, preserving unrelated sections, [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`, [turns off Codex analytics](#codex-analytics) unless `CODEX_ROUTER_DISABLE_ANALYTICS=0`, and [allows 10 spawned agents](#spawned-agent-limit) unless `CODEX_ROUTER_AGENT_THREADS` says otherwise.
 4. Merges managed transport settings into `unified-openrouter.config.toml` for OpenRouter without ChatGPT authentication, preserving unrelated preferences.
 5. Installs the router and OpenRouter key under `unified-router/`.
 6. Configures automatic startup and checks the local health endpoint.
@@ -48,6 +48,9 @@ http_headers = { "X-Codex-Router-Token" = "<generated-by-installer>" }
 [features]
 apps = false
 
+[analytics]
+enabled = false
+
 [agents]
 max_concurrent_threads_per_session = 10
 ```
@@ -59,6 +62,10 @@ The installer supplies the actual catalog path and a random local router token. 
 Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
 
 The installer therefore manages `apps = false`. It edits an existing `[features]` table in place, keeping its other keys, or adds one; the managed line sits between `# BEGIN/END codex-unified-router features` markers. The OpenRouter-only profile inherits the setting. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0` (PowerShell: `$env:CODEX_ROUTER_DISABLE_APPS = '0'`) and run the verifier with the same value; the installer then removes its managed line and leaves `apps` to you. Top-level `features.*` keys must move into a `[features]` table first. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
+
+### Codex analytics
+
+Codex sends usage analytics and metrics to OpenAI by default. The installer manages `enabled = false` in the `[analytics]` table, which also turns off Codex's default metrics exporter, so model choices and usage stay on your machine. It edits an existing `[analytics]` table in place like the other managed settings. Install with `CODEX_ROUTER_DISABLE_ANALYTICS=0` to leave analytics to Codex, and run the verifier with the same value. `/feedback` still sends a report only when you submit one.
 
 ### Native OpenAI models
 
@@ -100,7 +107,20 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 **DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) added, which makes delegation the default. It splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers, up to 10 at once, and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
 
-Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor): Meta trains on everything they receive. Use the mode only for code you are willing to share, and start it in a fresh thread. A thread that already holds other models' output, such as native OpenAI turns, should not be handed to it.
+Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor): Meta trains on everything they receive. Use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI model; see [Provider isolation](#provider-isolation).
+
+## Provider isolation
+
+Native OpenAI models and models whose provider trains on their inputs never share a Codex session. Once a session uses one side, the router refuses the other with HTTP 409 (`provider_isolation`) and a message to start a new thread:
+
+| A session that has used | Cannot use |
+| --- | --- |
+| A native OpenAI model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
+| Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model |
+
+OpenAI output therefore never reaches a provider that trains on it, and training-tier output never reaches OpenAI. DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse, and spawned agents share their parent's session, so the rule covers whole agent trees. Requests without a Codex session ID are not tracked.
+
+The router keeps each session's side, without any content, in `unified-router/session-sides.json` for 30 days, so the rule survives restarts. There is no opt-out. `CODEX_ROUTER_TRAINING_MODELS`, a comma-separated list of upstream slugs in `unified-router/openrouter.env`, adds models to the training tier.
 
 ## Routing and compatibility
 
@@ -140,7 +160,7 @@ The `X-Codex-Routing-Policy: preserve-model-v1` header, which the OpenRouter-onl
 
 ## Router capabilities
 
-`GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the supported opt-in routing policies, `capabilities.openrouterRejectionRecovery`, the bounded OpenRouter 400 fallback contract, and `revision`, the running router source's SHA-256. These fields let clients check compatibility and diagnose outdated installed copies without sending an inference request. They do not attest upstream model identity, account access or the entire runtime configuration.
+`GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the supported opt-in routing policies, `capabilities.openrouterRejectionRecovery`, the bounded OpenRouter 400 fallback contract, `capabilities.providerIsolation`, the [provider isolation](#provider-isolation) rule, and `revision`, the running router source's SHA-256. These fields let clients check compatibility and diagnose outdated installed copies without sending an inference request. They do not attest upstream model identity, account access or the entire runtime configuration.
 
 Clients that need to hold that revision across requests can require it with:
 

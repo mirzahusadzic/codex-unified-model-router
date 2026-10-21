@@ -25,6 +25,10 @@ const disableAppsSetting = process.env.CODEX_ROUTER_DISABLE_APPS ?? '1';
 if (!['0', '1'].includes(disableAppsSetting)) throw new Error('CODEX_ROUTER_DISABLE_APPS must be 0 or 1');
 // Ultra Spark fans work out to parallel workers; raise Codex's spawned-agent
 // limit. Set CODEX_ROUTER_AGENT_THREADS=0 to leave the limit to Codex.
+// Codex sends usage analytics and metrics to OpenAI by default. Set
+// CODEX_ROUTER_DISABLE_ANALYTICS=0 to leave Codex's analytics setting alone.
+const disableAnalyticsSetting = process.env.CODEX_ROUTER_DISABLE_ANALYTICS ?? '1';
+if (!['0', '1'].includes(disableAnalyticsSetting)) throw new Error('CODEX_ROUTER_DISABLE_ANALYTICS must be 0 or 1');
 const agentThreadsSetting = process.env.CODEX_ROUTER_AGENT_THREADS ?? '10';
 if (!/^(0|[1-9][0-9]{0,2})$/.test(agentThreadsSetting)) {
   throw new Error('CODEX_ROUTER_AGENT_THREADS must be 0 or a whole number from 1 to 999');
@@ -35,6 +39,12 @@ const managedTables = [
     lines: disableAppsSetting === '1' ? ['apps = false'] : null,
     ownedKeys: ['apps'],
     optOut: 'CODEX_ROUTER_DISABLE_APPS=0',
+  },
+  {
+    name: 'analytics',
+    lines: disableAnalyticsSetting === '1' ? ['enabled = false'] : null,
+    ownedKeys: ['enabled'],
+    optOut: 'CODEX_ROUTER_DISABLE_ANALYTICS=0',
   },
   {
     name: 'agents',

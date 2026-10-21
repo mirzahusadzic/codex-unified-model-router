@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -67,6 +67,48 @@ function parseProviderOrders(value) {
 const providerOrders = parseProviderOrders(String(
   process.env.CODEX_ROUTER_PROVIDER_ORDER || fileEnvironment.CODEX_ROUTER_PROVIDER_ORDER || '',
 ));
+
+// Native OpenAI models and models that train on their inputs never share a
+// Codex session. Spawned agents reuse their parent's session ID, so the rule
+// covers whole agent trees: OpenAI output never reaches a training tier, and
+// training-tier output never reaches OpenAI. Ultra Spark counts as training
+// because its workers run on Muse. The list can be extended, not disabled.
+const trainingModels = new Set(['meta/muse-spark-1.3-contributor', ...String(
+  process.env.CODEX_ROUTER_TRAINING_MODELS || fileEnvironment.CODEX_ROUTER_TRAINING_MODELS || '',
+).split(',').map(model => model.trim()).filter(Boolean)]);
+const sessionSidesFile = join(dirname(envFile), 'session-sides.json');
+const sessionSideRetentionMs = 30 * 24 * 60 * 60 * 1000;
+
+function loadSessionSides() {
+  try {
+    const stored = JSON.parse(readFileSync(sessionSidesFile, 'utf8'));
+    const cutoff = Date.now() - sessionSideRetentionMs;
+    return new Map(Object.entries(stored).filter(([, entry]) => ['openai', 'training'].includes(entry?.side)
+      && entry.at > cutoff));
+  } catch {
+    return new Map();
+  }
+}
+const sessionSides = loadSessionSides();
+
+function sessionSide(requestedModel, provider, upstreamModel) {
+  if (provider === 'openai') return 'openai';
+  if (requestedModel.startsWith('ultra-spark/') || trainingModels.has(upstreamModel)) return 'training';
+  return null;
+}
+
+function recordSessionSide(sessionId, side) {
+  const cutoff = Date.now() - sessionSideRetentionMs;
+  for (const [id, entry] of sessionSides) if (entry.at <= cutoff) sessionSides.delete(id);
+  sessionSides.set(sessionId, { side, at: Date.now() });
+  try {
+    const temporary = `${sessionSidesFile}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(Object.fromEntries(sessionSides)), { mode: 0o600 });
+    renameSync(temporary, sessionSidesFile);
+  } catch (error) {
+    logEvent('error', 'session.isolation_persist_failed', { errorCode: error.code || null });
+  }
+}
 
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
 const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
@@ -302,10 +344,12 @@ function upstreamTrace(headers) {
 function upstreamHeaders(requestHeaders, provider, bodyLength) {
   const allowed = ['accept', 'user-agent'];
   if (provider === 'openai') {
+    // Codex 0.163 sends hyphenated session headers; earlier versions used
+    // session_id and conversation_id.
     allowed.push('authorization', 'chatgpt-account-id', 'openai-beta', 'originator',
-      'version', 'session_id', 'conversation_id', 'x-request-id', 'x-client-request-id',
-      'x-codex-turn-metadata', 'x-codex-turn-state', 'x-codex-beta-features',
-      'x-openai-internal-codex-responses-lite');
+      'version', 'session-id', 'thread-id', 'session_id', 'conversation_id', 'x-request-id',
+      'x-client-request-id', 'x-codex-window-id', 'x-codex-turn-metadata', 'x-codex-turn-state',
+      'x-codex-beta-features', 'x-openai-internal-codex-responses-lite');
   }
   const headers = Object.fromEntries(allowed
     .filter(name => requestHeaders[name] !== undefined)
@@ -587,11 +631,11 @@ const server = http.createServer((request, response) => {
     method: request.method,
     path: request.url,
     model: null,
-    sessionId: typeof request.headers.session_id === 'string'
-      && request.headers.session_id.length <= 256
-      ? request.headers.session_id
-      : null,
+    sessionId: null,
   };
+  // Codex 0.163 sends `session-id`; earlier versions sent `session_id`.
+  const suppliedSessionId = request.headers['session-id'] ?? request.headers.session_id;
+  if (typeof suppliedSessionId === 'string' && suppliedSessionId.length <= 256) requestInfo.sessionId = suppliedSessionId;
   let clientClosed = false;
   let upstreamFailed = false;
   response.once('finish', () => {
@@ -629,6 +673,7 @@ const server = http.createServer((request, response) => {
       capabilities: {
         routingPolicies: ['preserve-model-v1'],
         openrouterRejectionRecovery: 'completed-diagnostic-v1',
+        providerIsolation: 'session-v1',
         revisionPrecondition: true,
       },
     });
@@ -713,6 +758,23 @@ const server = http.createServer((request, response) => {
     let structuredOutputAdapted = false;
 
     const upstreamModel = upstreamModelFor(model, target.provider);
+    const side = sessionSide(requestedModel, target.provider, upstreamModel);
+    if (side && requestInfo.sessionId) {
+      const recorded = sessionSides.get(requestInfo.sessionId);
+      if (recorded && recorded.side !== side) {
+        logEvent('error', 'session.provider_isolation', {
+          requestId, sessionId: requestInfo.sessionId, model: requestedModel, recordedSide: recorded.side, side,
+        });
+        sendJson(response, 409, { error: {
+          code: 'provider_isolation',
+          message: side === 'training'
+            ? 'This session already used a native OpenAI model, and this model\'s provider trains on its inputs. Start a new thread to use it.'
+            : 'This session already used a model whose provider trains on its inputs. Start a new thread to use a native OpenAI model.',
+        } });
+        return;
+      }
+      if (!recorded) recordSessionSide(requestInfo.sessionId, side);
+    }
     let toolHistoryRepairs = null;
     let providerOrder = null;
     if (target.provider === 'openrouter') {

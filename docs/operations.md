@@ -61,6 +61,7 @@ The router emits newline-delimited JSON on every platform. Logging defaults to `
 - `request.forwarded`: model route, attempt, payload SHA-256, routing policy, `providerOrder` when an endpoint preference applies, `structuredOutputAdapted` when a DeepSeek schema request was sent as JSON mode, whether unsupported OpenRouter response state was reset, payload byte length, input item count, and any tool-history repair summary.
 - `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records normalized before an OpenRouter request.
 - `openrouter.request_rejected`: pre-stream OpenRouter HTTP 400 details, including payload hash, input count, generation and request identifiers, `contextOverflow`, and the response-body hash without the body itself.
+- `session.provider_isolation`: a request was refused because its session already used the other side; includes the recorded and requested sides. `session.isolation_persist_failed` reports that the side record could not be saved.
 - `openrouter.rejection_capture_failed` and `openrouter.rejection_capture_refused`: an opted-in body capture could not be written, or was refused because its Windows location is not the private router directory.
 - `openrouter.recovery_attempt`: the single bounded retry, its payload hash, compaction strategy, and counts of retained, dropped, and dropped encrypted-reasoning items. A retry runs only when the recovery payload differs from the rejected request.
 - `openrouter.fallback_completion`: the router returned a completed diagnostic response after recovery failed, allowing Codex to preserve the thread instead of aborting it.
@@ -77,7 +78,7 @@ For any other pre-stream OpenRouter 400, the router retries once without encrypt
 
 To retain the exact rejected request and response bodies for diagnosis, opt in by setting `CODEX_ROUTER_REJECTED_REQUEST_DIR` in `unified-router/openrouter.env` or the router service environment and restarting the router. On macOS and Linux, the router creates that directory with mode `700` and writes each request/response pair with mode `600`. File modes do not restrict access on Windows, so there the directory must be `unified-router` itself, whose current-user-only access list new files inherit, not a subdirectory that could carry its own access list; the router refuses other locations and logs `openrouter.rejection_capture_refused`. Files are named `<requestId>-attempt-<n>.request.json` and `.response.json`. This setting is off by default. Do not commit or share these files; they can contain the complete conversation.
 
-Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records now include the same opaque `sessionId` when Codex supplies its `session_id` header, so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
+Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records include the same opaque `sessionId` from Codex's `session-id` header (`session_id` in earlier Codex versions), so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
 
 For example, calculate a session's overall cache-read share:
 
@@ -125,6 +126,7 @@ Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-rout
 | A new model is missing from `/model` | Rerun the installer to rebuild the catalog, then restart Codex. |
 | OpenAI models are missing from `/model` | They are hidden without an active ChatGPT plan. Install with `CODEX_ROUTER_NATIVE_MODELS=show` to list them anyway. |
 | Ultra Spark does not spawn workers | Select `ultra-spark/deepseek-v4.1-flash-1017` (shown as "· Ultra Spark") in a new thread, and rerun the installer so the catalog carries the current policy. Small single-step tasks run without workers by design. |
+| HTTP 409 `provider_isolation` | The session already used native OpenAI models, or Muse or Ultra Spark, and the router keeps the two apart. Start a new thread for the other side; see [Provider isolation](setup.md#provider-isolation). |
 | Muse requests fail before reaching a model | Allow endpoints that may train on inputs in your OpenRouter privacy settings, and check that OpenRouter guardrails allow the Muse provider. |
 | A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
 | The local endpoint is unavailable | Check the service status and router error log. |

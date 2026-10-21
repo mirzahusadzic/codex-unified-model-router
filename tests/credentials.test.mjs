@@ -16,7 +16,7 @@ function fixture(t) {
 function run(script, args, key = '', extraEnv = {}) {
   return spawnSync(process.execPath, [join(root, script), ...args], {
     encoding: 'utf8',
-    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_AGENT_THREADS: '10', ...extraEnv },
+    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_DISABLE_ANALYTICS: '1', CODEX_ROUTER_AGENT_THREADS: '10', ...extraEnv },
   });
 }
 const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
@@ -208,6 +208,24 @@ test('config merges manage the spawned-agent limit inside an existing agents tab
   for (const value of ['-1', '1.5', 'ten', '1000']) {
     assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_AGENT_THREADS: value }).status, 0);
   }
+});
+
+test('config merges turn off Codex analytics unless told to leave them alone', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  writeFileSync(config, '[analytics]\nenabled = true\n', { mode: 0o600 });
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  assert.match(merged, /\[analytics\]\n# BEGIN codex-unified-router analytics\nenabled = false\n# END codex-unified-router analytics/);
+  assert.doesNotMatch(merged, /enabled = true/);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+
+  const keep = { CODEX_ROUTER_DISABLE_ANALYTICS: '0' };
+  succeeds(run('scripts/merge-config.mjs', args, '', keep));
+  assert.doesNotMatch(readFileSync(config, 'utf8'), /codex-unified-router analytics|enabled = false/);
+  succeeds(run('scripts/verify-credentials.mjs', [home], '', keep));
+  assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_DISABLE_ANALYTICS: 'no' }).status, 0);
 });
 
 test('router refuses to start without a local authentication token', t => {
