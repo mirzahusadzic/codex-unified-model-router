@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -97,6 +97,107 @@ function normalizeReasoningForOpenRouter(value) {
   value.effort = effort === 'medium' ? 'high' : 'max';
 }
 
+function normalizeStateForOpenRouter(request) {
+  let changed = false;
+  if (request.previous_response_id != null) {
+    delete request.previous_response_id;
+    changed = true;
+  }
+  if (request.store === true) {
+    request.store = false;
+    changed = true;
+  }
+  return changed;
+}
+
+function normalizeToolHistoryForOpenRouter(input) {
+  const repairs = {
+    changed: false,
+    droppedInvalidCalls: 0,
+    droppedDuplicateCalls: 0,
+    droppedUnansweredCalls: 0,
+    droppedOrphanOutputs: 0,
+    droppedDuplicateOutputs: 0,
+  };
+  if (!Array.isArray(input)) return { input, repairs };
+
+  const runs = [];
+  for (let index = 0; index < input.length;) {
+    if (input[index]?.type !== 'function_call') {
+      index += 1;
+      continue;
+    }
+    const run = { start: index, end: index, calls: [] };
+    while (index < input.length && input[index]?.type === 'function_call') {
+      run.calls.push({ index, item: input[index] });
+      run.end = index;
+      index += 1;
+    }
+    runs.push(run);
+  }
+
+  const retainedCallIndexes = new Set();
+  const retainedCallIds = new Set();
+  for (const run of runs) {
+    for (const call of run.calls) {
+      if (typeof call.item.call_id !== 'string' || call.item.call_id.length === 0) {
+        repairs.droppedInvalidCalls += 1;
+        continue;
+      }
+      if (retainedCallIds.has(call.item.call_id)) {
+        repairs.droppedDuplicateCalls += 1;
+        continue;
+      }
+      retainedCallIds.add(call.item.call_id);
+      retainedCallIndexes.add(call.index);
+    }
+  }
+
+  const outputsByCallId = new Map();
+  for (const item of input) {
+    if (item?.type !== 'function_call_output') continue;
+    if (typeof item.call_id !== 'string' || !retainedCallIds.has(item.call_id)) {
+      repairs.droppedOrphanOutputs += 1;
+      continue;
+    }
+    if (outputsByCallId.has(item.call_id)) repairs.droppedDuplicateOutputs += 1;
+    // The latest output is the most useful observation if an interrupted turn
+    // left more than one result for the same call ID.
+    outputsByCallId.set(item.call_id, item);
+  }
+
+  for (const run of runs) {
+    for (const call of run.calls) {
+      if (retainedCallIndexes.has(call.index) && !outputsByCallId.has(call.item.call_id)) {
+        repairs.droppedUnansweredCalls += 1;
+        retainedCallIndexes.delete(call.index);
+      }
+    }
+  }
+
+  const normalized = [];
+  const runsByStart = new Map(runs.map(run => [run.start, run]));
+  for (let index = 0; index < input.length;) {
+    const run = runsByStart.get(index);
+    if (run) {
+      const calls = run.calls.filter(call => retainedCallIndexes.has(call.index));
+      normalized.push(...calls.map(call => call.item));
+      for (const call of calls) {
+        const output = outputsByCallId.get(call.item.call_id);
+        if (output) normalized.push(output);
+      }
+      index = run.end + 1;
+      continue;
+    }
+    if (input[index]?.type !== 'function_call_output') normalized.push(input[index]);
+    index += 1;
+  }
+
+  repairs.changed = normalized.length !== input.length
+    || normalized.some((item, index) => item !== input[index]);
+  return { input: normalized, repairs };
+}
+
 function normalizeInputForOpenAI(input) {
   if (!Array.isArray(input)) return input;
   return input.flatMap(item => {
@@ -109,6 +210,31 @@ function normalizeInputForOpenAI(input) {
     const { content, ...reasoning } = item;
     return [reasoning];
   });
+}
+
+function logEvent(level, event, fields = {}) {
+  const record = {
+    timestamp: new Date().toISOString(),
+    level,
+    event,
+    ...fields,
+  };
+  const line = JSON.stringify(record);
+  if (level === 'error') console.error(line);
+  else console.log(line);
+}
+
+function upstreamTrace(headers) {
+  const value = name => {
+    const candidate = headers?.[name];
+    return typeof candidate === 'string' && candidate.length <= 256 ? candidate : null;
+  };
+  return {
+    generationId: value('x-generation-id'),
+    providerName: value('x-provider-name'),
+    upstreamRequestId: value('x-request-id') || value('request-id'),
+    cloudflareRayId: value('cf-ray'),
+  };
 }
 
 function upstreamHeaders(requestHeaders, provider, bodyLength) {
@@ -171,6 +297,33 @@ function modelList() {
 }
 
 const server = http.createServer((request, response) => {
+  const requestId = randomUUID();
+  const requestStartedAt = Date.now();
+  const requestInfo = {
+    requestId,
+    method: request.method,
+    path: request.url,
+    model: null,
+    sessionId: typeof request.headers.session_id === 'string'
+      && request.headers.session_id.length <= 256
+      ? request.headers.session_id
+      : null,
+  };
+  response.once('finish', () => {
+    logEvent('info', 'request.finished', {
+      ...requestInfo,
+      status: response.statusCode || null,
+      durationMs: Date.now() - requestStartedAt,
+    });
+  });
+  response.once('close', () => {
+    if (!response.writableFinished) {
+      logEvent('info', 'request.aborted', {
+        ...requestInfo,
+        durationMs: Date.now() - requestStartedAt,
+      });
+    }
+  });
   request.on('error', () => response.destroy());
   const localPort = request.socket?.localPort || port;
   if (![`127.0.0.1:${localPort}`, `localhost:${localPort}`].includes(request.headers.host)
@@ -255,6 +408,7 @@ const server = http.createServer((request, response) => {
     }
 
     const requestedModel = parsed.model;
+    requestInfo.model = requestedModel;
     const routingPolicy = request.headers['x-codex-routing-policy'];
     if (routingPolicy !== undefined && routingPolicy !== 'preserve-model-v1') {
       sendJson(response, 400, { error: { message: 'Unsupported routing policy' } });
@@ -263,6 +417,7 @@ const server = http.createServer((request, response) => {
     let model = requestedModel;
     let target = routeFor(model);
     let fallbackReason = null;
+    let stateReset = false;
 
     if (target.provider === 'openrouter' && hasStructuredOutput(parsed)) {
       if (routingPolicy === 'preserve-model-v1') {
@@ -284,12 +439,17 @@ const server = http.createServer((request, response) => {
       fallbackReason = 'deepseek_structured_output_unsupported';
     }
 
+    const upstreamModel = upstreamModelFor(model, target.provider);
+    let toolHistoryRepairs = null;
     if (target.provider === 'openrouter') {
+      stateReset = normalizeStateForOpenRouter(parsed);
       normalizeReasoningForOpenRouter(parsed.reasoning);
+      const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
+      parsed.input = normalizedHistory.input;
+      toolHistoryRepairs = normalizedHistory.repairs;
     } else {
       parsed.input = normalizeInputForOpenAI(parsed.input);
     }
-    const upstreamModel = upstreamModelFor(model, target.provider);
     parsed.model = upstreamModel;
     let body;
     try {
@@ -307,21 +467,36 @@ const server = http.createServer((request, response) => {
       return;
     }
 
-    console.log(JSON.stringify({
-      accepted: true,
+    if (toolHistoryRepairs?.changed) {
+      logEvent('info', 'history.repaired', {
+        requestId, sessionId: requestInfo.sessionId, model: upstreamModel, ...toolHistoryRepairs,
+      });
+    }
+    logEvent('info', 'request.forwarded', {
+      requestId,
+      sessionId: requestInfo.sessionId,
       provider: target.provider,
       model,
       upstreamModel,
       requestedModel,
       fallbackReason,
+      stateReset,
       routingPolicy: routingPolicy || 'default',
       bytes: body.length,
-    }));
+      inputItems: Array.isArray(parsed.input) ? parsed.input.length : null,
+      historyRepairs: toolHistoryRepairs?.changed ? toolHistoryRepairs : null,
+    });
 
     let upstream;
     const upstreamError = error => {
-      console.error(JSON.stringify({ provider: target.provider, model,
-        error: error.code || 'upstream_error', durationMs: Date.now() - startedAt }));
+      logEvent('error', 'upstream.error', {
+        requestId,
+        sessionId: requestInfo.sessionId,
+        provider: target.provider,
+        model,
+        errorCode: error.code || null,
+        durationMs: Date.now() - startedAt,
+      });
       if (response.destroyed) return;
       if (response.headersSent) response.destroy();
       else sendJson(response, 502, { error: { message: 'Unified router upstream request failed' } });
@@ -338,6 +513,8 @@ const server = http.createServer((request, response) => {
           upstreamResponse.destroy();
           return;
         }
+        const status = upstreamResponse.statusCode || null;
+        const trace = upstreamTrace(upstreamResponse.headers);
         response.writeHead(upstreamResponse.statusCode || 502, responseHeaders(upstreamResponse.headers));
         pipeline(upstreamResponse, response, error => {
           if (error) {
@@ -345,19 +522,25 @@ const server = http.createServer((request, response) => {
             upstreamError(error);
           }
         });
-        console.log(JSON.stringify({
+        logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_started', {
+          requestId,
+          sessionId: requestInfo.sessionId,
           provider: target.provider,
           model,
-          status: upstreamResponse.statusCode || null,
+          status,
           timeToHeadersMs: Date.now() - startedAt,
-        }));
+          ...trace,
+        });
         upstreamResponse.on('end', () => {
-          console.log(JSON.stringify({
+          logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_finished', {
+            requestId,
+            sessionId: requestInfo.sessionId,
             provider: target.provider,
             model,
-            status: upstreamResponse.statusCode || null,
+            status,
             durationMs: Date.now() - startedAt,
-          }));
+            ...trace,
+          });
         });
       });
 
@@ -375,11 +558,11 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(JSON.stringify({ ready: true, host, port, openrouterConfigured: Boolean(openrouterApiKey) }));
+  logEvent('info', 'router.ready', { host, port, openrouterConfigured: Boolean(openrouterApiKey) });
 });
 
 function shutdown(signal) {
-  console.log(JSON.stringify({ shutdown: signal }));
+  logEvent('info', 'router.shutdown', { signal });
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }

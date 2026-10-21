@@ -21,8 +21,9 @@ const clientHeaders = {
 };
 let handleRequest;
 const forwarded = [];
-mock.method(console, 'log', () => {});
-mock.method(console, 'error', () => {});
+const logEntries = [];
+mock.method(console, 'log', line => logEntries.push(String(line)));
+mock.method(console, 'error', line => logEntries.push(String(line)));
 mock.method(http, 'createServer', handler => {
   handleRequest = handler;
   return { listen: (_port, _host, ready) => ready() };
@@ -47,7 +48,13 @@ mock.method(https, 'request', (options, onResponse) => {
         : { id: 'resp_test', output: [] };
       const response = Readable.from([JSON.stringify(payload)]);
       response.statusCode = invalidIndex >= 0 ? 400 : 200;
-      response.headers = { 'content-type': 'application/json' };
+      response.headers = {
+        'content-type': 'application/json',
+        'x-generation-id': 'gen_test',
+        'x-provider-name': 'TestProvider',
+        'x-request-id': 'req_test',
+        'cf-ray': 'cf_test',
+      };
       queueMicrotask(() => onResponse(response));
       callback();
     },
@@ -88,6 +95,16 @@ async function send(body, headers) {
   const upstream = forwarded.at(-1);
   assert.equal(Number(upstream.headers['content-length']), upstream.byteLength);
   return upstream;
+}
+
+function parsedLogEntries() {
+  return logEntries.flatMap(line => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
 }
 
 const nativeReasoning = {
@@ -238,6 +255,116 @@ test('DeepSeek and other OpenRouter routes retain their reasoning history', asyn
     assert.equal(upstream.headers.authorization, 'Bearer test-openrouter-key');
     assert.equal(upstream.headers['chatgpt-account-id'], undefined);
   }
+});
+
+test('OpenRouter continuation is stateless without forwarding the native session ID', async () => {
+  const upstream = await send({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: 'Continue after a tool call',
+    previous_response_id: 'resp_upstream_state',
+    store: true,
+  }, { session_id: 'codex-thread-session' });
+  assert.equal(upstream.headers['x-session-id'], undefined);
+  assert.equal(upstream.body.previous_response_id, undefined);
+  assert.equal(upstream.body.store, false);
+  const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
+  assert.equal(forwardedLog.stateReset, true);
+
+  const native = await send({ model: 'gpt-6-astra', input: 'Native continuation', store: true },
+    { session_id: 'native-session' });
+  assert.equal(native.headers.session_id, 'native-session');
+  assert.equal(native.headers['x-session-id'], undefined);
+  assert.equal(native.body.store, true);
+});
+
+test('OpenRouter tool history drops invalid records and keeps one ordered output per call', async () => {
+  const firstCall = { type: 'function_call', call_id: 'call_first', name: 'lookup', arguments: '{}' };
+  const secondCall = { type: 'function_call', call_id: 'call_second', name: 'lookup', arguments: '{}' };
+  const firstOutput = { type: 'function_call_output', call_id: 'call_first', output: 'old result' };
+  const latestFirstOutput = { type: 'function_call_output', call_id: 'call_first', output: 'latest result' };
+  const secondOutput = { type: 'function_call_output', call_id: 'call_second', output: 'second result' };
+  const input = [
+    deepseekReasoning,
+    firstCall,
+    secondCall,
+    secondOutput,
+    firstOutput,
+    firstCall,
+    latestFirstOutput,
+    { type: 'function_call_output', call_id: 'call_orphan', output: 'orphan result' },
+    { type: 'function_call', name: 'lookup', arguments: '{}' },
+    { type: 'function_call', call_id: 'call_pending', name: 'lookup', arguments: '{}' },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Continue.' }] },
+  ];
+
+  const upstream = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input });
+  assert.deepEqual(upstream.body.input, [
+    deepseekReasoning,
+    firstCall,
+    secondCall,
+    latestFirstOutput,
+    secondOutput,
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Continue.' }] },
+  ]);
+
+  const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
+  assert.deepEqual(forwardedLog.historyRepairs, {
+    changed: true,
+    droppedInvalidCalls: 1,
+    droppedDuplicateCalls: 1,
+    droppedUnansweredCalls: 1,
+    droppedOrphanOutputs: 1,
+    droppedDuplicateOutputs: 1,
+  });
+});
+
+test('OpenRouter keeps sequential tool rounds separate and orders parallel outputs by call', async () => {
+  const firstCall = { type: 'function_call', call_id: 'call_first', name: 'lookup', arguments: '{}' };
+  const secondCall = { type: 'function_call', call_id: 'call_second', name: 'lookup', arguments: '{}' };
+  const firstOutput = { type: 'function_call_output', call_id: 'call_first', output: 'first' };
+  const secondOutput = { type: 'function_call_output', call_id: 'call_second', output: 'second' };
+
+  const sequential = await send({
+    model: 'openrouter/vendor/model',
+    input: [firstCall, firstOutput, secondCall, secondOutput],
+  });
+  assert.deepEqual(sequential.body.input, [firstCall, firstOutput, secondCall, secondOutput]);
+
+  const parallel = await send({
+    model: 'openrouter/vendor/model',
+    input: [firstCall, secondCall, secondOutput, firstOutput],
+  });
+  assert.deepEqual(parallel.body.input, [firstCall, secondCall, firstOutput, secondOutput]);
+});
+
+test('structured router logs correlate requests without recording bodies or credentials', async () => {
+  const before = logEntries.length;
+  const sensitiveBody = 'ROUTER_PRIVATE_BODY_VALUE';
+  await send({ model: 'openrouter/vendor/model', input: sensitiveBody }, {
+    'x-private-header': 'ROUTER_PRIVATE_HEADER_VALUE', session_id: 'session-log-test',
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  const entries = parsedLogEntries().slice(before);
+  const forwarded = entries.filter(entry => entry.event === 'request.forwarded').at(-1);
+  assert.match(forwarded.requestId, /^[0-9a-f-]{36}$/);
+  assert.equal(forwarded.sessionId, 'session-log-test');
+  const started = entries.find(entry => entry.event === 'upstream.response_started'
+    && entry.requestId === forwarded.requestId);
+  const finished = entries.find(entry => entry.event === 'upstream.response_finished'
+    && entry.requestId === forwarded.requestId);
+  const completed = entries.find(entry => entry.event === 'request.finished'
+    && entry.requestId === forwarded.requestId);
+  assert.equal(completed.sessionId, 'session-log-test');
+  for (const entry of [started, finished]) {
+    assert.equal(entry.generationId, 'gen_test');
+    assert.equal(entry.providerName, 'TestProvider');
+    assert.equal(entry.upstreamRequestId, 'req_test');
+    assert.equal(entry.cloudflareRayId, 'cf_test');
+  }
+  const serialized = JSON.stringify(entries);
+  assert.doesNotMatch(serialized, new RegExp(sensitiveBody));
+  assert.doesNotMatch(serialized, /ROUTER_PRIVATE_HEADER_VALUE|test-openrouter-key|a{64}/);
 });
 
 test('string, empty, and absent inputs still pass through', async () => {

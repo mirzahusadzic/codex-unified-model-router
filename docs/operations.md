@@ -28,6 +28,29 @@ Logs:
 ~/Library/Logs/codex-unified-router.error.log
 ```
 
+Router output is newline-delimited JSON. Request-scoped events share a
+`requestId`, while OpenRouter responses also record the upstream
+`generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when
+those headers are present. Useful events include:
+
+- `request.forwarded`: model route, request size, input item count, and any history repair.
+- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records that were normalized.
+- `upstream.response_started`: status and time to upstream headers.
+- `upstream.response_finished`: final status and duration.
+- `upstream.error`: transport failure code and duration.
+- `request.finished` and `request.aborted`: local request outcome and total duration.
+
+Logs never include request or response bodies, authorization headers, API
+keys, cookies, or environment values. For example:
+
+```sh
+jq -c 'select(.event == "history.repaired" or .event == "upstream.error")' \
+  ~/Library/Logs/codex-unified-router.log
+
+jq -c 'select(.event == "upstream.response_started" and .status >= 400)' \
+  ~/Library/Logs/codex-unified-router.error.log
+```
+
 ### Linux
 
 ```sh
@@ -63,6 +86,7 @@ Logs are under the installation directory, which defaults to:
 | OpenRouter returns HTTP 401 | Rerun the installer with a valid `OPENROUTER_API_KEY` to replace the configured key. |
 | Structured output fails on DeepSeek | Verify the thread uses the unified provider and the fallback model is a native OpenAI model. |
 | Switching to OpenAI produces a reasoning-content error | Update and restart the installed router so history normalization is active. |
+| OpenRouter returns HTTP 400 with `provider_name: null` | Check `request.forwarded` and `history.repaired` for the same `requestId`; update and restart the router so tool-history normalization is active. |
 | Replies are slow | Inspect upstream header timings and request durations. Headers can arrive before model output; these timings do not measure first-token latency. |
 
 Restarting either service interrupts its active requests. Changing models inside a thread already using the unified provider does not require a service restart.
