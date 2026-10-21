@@ -26,7 +26,19 @@ The helper scripts behind these steps are listed in [CONTRIBUTING.md](../CONTRIB
 
 ### Installer settings
 
-Pass these on each run; the installer does not store them. Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
+Pass settings as flags or environment variables on each run; the installer does not store them:
+
+```sh
+./platform/unix/install.sh --force
+CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 ./platform/unix/install.sh
+```
+
+```powershell
+$env:CODEX_ROUTER_NATIVE_MODELS = 'hide'
+.\platform\windows\install.ps1 -Force
+```
+
+Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -39,14 +51,6 @@ Pass these on each run; the installer does not store them. Run the verifier with
 | `CODEX_ROUTER_DISABLE_ANALYTICS` | `1` (default), `0` | `1` turns off Codex analytics; `0` leaves them to you. See [Codex analytics](#codex-analytics). |
 | `CODEX_ROUTER_AGENT_THREADS` | `10` (default), `1`–`999`, `0` | Spawned-agent limit per session; `0` leaves it to Codex. See [Spawned-agent limit](#spawned-agent-limit). |
 | `CODEX_ROUTER_RESTART_DAEMON` | `1` (default), `0` | `0` skips restarting a running Codex app-server daemon. See [Activate the provider](#activate-the-provider). |
-
-For example, on macOS or Linux:
-
-```sh
-CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 ./install.sh
-```
-
-In PowerShell, set each variable first, for example `$env:CODEX_ROUTER_NATIVE_MODELS = 'hide'`, then run `.\install.ps1`.
 
 ### Existing configuration
 
@@ -70,7 +74,20 @@ Start a new thread afterward. Once a thread uses the unified provider, switching
 
 ## Router settings
 
-The router reads these settings when it starts, from `unified-router/openrouter.env` under your Codex home directory or from its service environment. The installer keeps extra settings in `openrouter.env` when you rerun it, while it regenerates the service environment, so prefer the file. Restart the router after a change, for example by rerunning the installer.
+The router reads these settings when it starts, from `unified-router/openrouter.env` under your Codex home directory or from its service environment. Prefer the file: the installer keeps extra settings there when you rerun it, while it regenerates the service environment. For example:
+
+```sh
+# ~/.codex/unified-router/openrouter.env
+# The installer writes the first two lines; add your settings below them.
+OPENROUTER_API_KEY=...
+CODEX_ROUTER_TOKEN=...
+CODEX_ROUTER_LOG_LEVEL=info
+CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
+```
+
+Put comments on their own lines; a `#` after a value becomes part of the value.
+
+Restart the router after a change, for example by rerunning the installer.
 
 | Variable | Default | Effect |
 | --- | --- | --- |

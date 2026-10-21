@@ -43,8 +43,8 @@ Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRout
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
 export OPENROUTER_API_KEY='your-openrouter-api-key'
-./install.sh
-./scripts/verify-install.sh
+./platform/unix/install.sh
+./platform/unix/verify-install.sh
 ```
 
 <details>
@@ -54,13 +54,21 @@ export OPENROUTER_API_KEY='your-openrouter-api-key'
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 Set-Location codex-unified-model-router
 $env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
-.\install.ps1
-.\scripts\verify-install.ps1
+.\platform\windows\install.ps1
+.\platform\windows\verify-install.ps1
 ```
 
 </details>
 
-For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. Native OpenAI models are hidden from `/model` when Codex's login shows no active ChatGPT plan; set `CODEX_ROUTER_NATIVE_MODELS=show` or `hide` to override ([details](docs/setup.md#native-openai-models)). To keep Codex's ChatGPT connector tools, analytics, or agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0`, `CODEX_ROUTER_DISABLE_ANALYTICS=0`, or `CODEX_ROUTER_AGENT_THREADS=0` ([all installer settings](docs/setup.md#installer-settings)).
+Common variations:
+
+```sh
+./platform/unix/install.sh --force                            # first install over an existing Codex configuration (backed up)
+CODEX_ROUTER_NATIVE_MODELS=hide ./platform/unix/install.sh    # hide native OpenAI models from /model
+CODEX_ROUTER_DISABLE_ANALYTICS=0 ./platform/unix/install.sh   # keep Codex analytics on
+```
+
+By default, the installer hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. [Installer settings](docs/setup.md#installer-settings) lists every option with its default.
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you; restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 

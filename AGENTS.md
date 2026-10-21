@@ -20,7 +20,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
 | Catalog generation and prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
 | Managed Codex settings and TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
-| Installation or service startup | `install.sh`, `install.ps1` |
+| Installation or service startup | `platform/unix/install.sh`, `platform/windows/install.ps1` |
 
 For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
 

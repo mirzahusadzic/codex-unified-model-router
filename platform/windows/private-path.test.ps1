@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '..\scripts\private-path.ps1')
+. (Join-Path $PSScriptRoot 'private-path.ps1')
 $TestDir = Join-Path ([System.IO.Path]::GetTempPath()) ('router-acl-test-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TestDir | Out-Null
 try {

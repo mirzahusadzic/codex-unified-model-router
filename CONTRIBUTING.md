@@ -8,11 +8,11 @@ Node.js 20 or later is the only requirement; there are no dependencies to instal
 
 ```sh
 node --test                                # all tests; offline, no credentials needed
-bash -n install.sh scripts/*.sh            # shell syntax
+bash -n platform/unix/*.sh                 # shell syntax
 node scripts/render-openrouter-entries.mjs # after editing prompts/ or adding a catalog entry
 ```
 
-The installed router is a separate copy under your Codex home directory. Rerun the installer to try a change in Codex, and run `./scripts/verify-install.sh` afterward.
+The installed router is a separate copy under your Codex home directory. Rerun the installer to try a change in Codex, and run `./platform/unix/verify-install.sh` afterward.
 
 ## Project layout
 
@@ -21,7 +21,7 @@ The installed router is a separate copy under your Codex home directory. Rerun t
 | `router/unified-router.mjs` | The router: routing, request adaptation, recovery, provider isolation, and streaming. |
 | `catalog/` | OpenRouter model entries for the Codex catalog, each with a license notice. |
 | `prompts/` | Shared OpenRouter instructions and the Ultra Spark delegation policy. |
-| `install.sh`, `install.ps1` | Installers for macOS/Linux and Windows. |
+| `platform/` | Per-OS installers and verifiers in `unix/` and `windows/`, plus the Windows access-control helper; see the [platform index](platform/README.md). |
 | `scripts/` | Verifiers, installer helpers, and development tools; see [Scripts](#scripts). |
 | `tests/` | `node --test` suites, plus a Windows access-control test; see [Tests](#tests). |
 | `docs/` | [Setup and configuration](docs/setup.md) and [services and troubleshooting](docs/operations.md). |
@@ -32,7 +32,7 @@ Scripts you run:
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/verify-install.sh`, `scripts/verify-install.ps1` | Verify an installation: configuration, tokens, permissions, catalog prompts, router health, and the service. Pass `--no-service` (Windows: `-NoService`) after an install without a service. |
+| `platform/unix/verify-install.sh`, `platform/windows/verify-install.ps1` | Verify an installation: configuration, tokens, permissions, catalog prompts, router health, and the service. Pass `--no-service` (Windows: `-NoService`) after an install without a service. |
 | `scripts/render-openrouter-entries.mjs` | Render the maintained prompts into the checked-in catalog entries. Run it after editing `prompts/` or adding an entry. |
 | `scripts/chatgpt-plan.mjs <codex-home>` | Print `active`, `inactive`, or `unknown` for the ChatGPT plan in Codex's login, as the installer's `CODEX_ROUTER_NATIVE_MODELS=auto` check sees it. |
 
@@ -47,7 +47,7 @@ Helpers the installers and verifiers call:
 | `scripts/verify-credentials.mjs` | Check the managed blocks, local tokens, and private permissions. |
 | `scripts/verify-health.mjs` | Check the running router's health, capabilities, and source revision. |
 | `scripts/verify-prompts.mjs` | Check that the installed catalog carries the repository's prompts. |
-| `scripts/private-path.ps1` | On Windows, restrict a file or directory to the current user. |
+| `platform/windows/private-path.ps1` | On Windows, restrict a file or directory to the current user. |
 
 Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for OpenRouter entries, and `scripts/toml-lines.mjs` reads TOML line by line without mistaking strings or comments for keys, tables, or markers.
 
@@ -61,16 +61,16 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
 | `tests/catalog.test.mjs` | Catalog entries, rendered prompts, prompt suffixes, and catalog-build validation. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
-| `tests/install.test.mjs` | End-to-end installs without a service, collision guards, and setting validation. Runs `install.sh` on macOS and Linux and `install.ps1` on Windows. | All, per-platform installer |
+| `tests/install.test.mjs` | End-to-end installs without a service, collision guards, and setting validation. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
 | `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
-| `tests/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
+| `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
 
 ## Making changes
 
 - **Router behavior:** add a focused regression test in `tests/unified-router.test.mjs`.
 - **New OpenRouter model:** copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review every capability: context limits, reasoning levels, tool support, and prompts. A catalog entry alone does not prove compatibility, so try the model in Codex before proposing it.
-- **Installers:** keep `install.sh` and `install.ps1` aligned, including backups and preservation of unrelated configuration.
+- **Installers:** keep `platform/unix/install.sh` and `platform/windows/install.ps1` aligned, including backups and preservation of unrelated configuration.
 - **Documentation:** keep the README brief and put details in `docs/`.
 
 ## Pull requests

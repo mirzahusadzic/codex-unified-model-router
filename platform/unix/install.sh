@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 backup_dir="$codex_home/backups/codex-unified-router-$stamp-$$"
@@ -18,7 +18,7 @@ service=1
 
 case "$platform" in
   MINGW*|MSYS*|CYGWIN*)
-    printf 'Native Windows uses the PowerShell installer: install.ps1\n' >&2
+    printf 'Native Windows uses the PowerShell installer: platform/windows/install.ps1\n' >&2
     exit 2
     ;;
 esac

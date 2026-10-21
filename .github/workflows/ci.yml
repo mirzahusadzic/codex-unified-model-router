@@ -50,14 +50,14 @@ jobs:
       - name: Check Bash syntax
         if: runner.os != 'Windows'
         run: |
-          for file in install.sh scripts/*.sh; do
+          for file in platform/unix/*.sh; do
             bash -n "$file"
           done
       - name: Check Windows PowerShell 5.1 syntax
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $files = @('install.ps1') + @(Get-ChildItem scripts, tests -Filter '*.ps1' | ForEach-Object { $_.FullName })
+          $files = @(Get-ChildItem platform -Recurse -Filter '*.ps1' | ForEach-Object { $_.FullName })
           foreach ($file in $files) {
             $tokens = $null
             $parseErrors = $null
@@ -71,4 +71,4 @@ jobs:
       - name: Test Windows credential permissions
         if: runner.os == 'Windows'
         shell: powershell
-        run: .\tests\private-path.test.ps1
+        run: .\platform\windows\private-path.test.ps1

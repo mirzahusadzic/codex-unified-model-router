@@ -2,7 +2,7 @@
 set -euo pipefail
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)"
 service_label="com.mirza.codex-unified-router"
 linux_service="codex-unified-router.service"
 platform="$(uname -s)"
@@ -10,7 +10,7 @@ check_service=1
 
 case "$platform" in
   MINGW*|MSYS*|CYGWIN*)
-    printf 'Native Windows uses the PowerShell verifier: scripts/verify-install.ps1\n' >&2
+    printf 'Native Windows uses the PowerShell verifier: platform/windows/verify-install.ps1\n' >&2
     exit 2
     ;;
 esac

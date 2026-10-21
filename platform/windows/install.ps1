@@ -6,8 +6,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$RepoDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-. (Join-Path $RepoDir 'scripts\private-path.ps1')
+$PlatformDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoDir = Split-Path -Parent (Split-Path -Parent $PlatformDir)
+. (Join-Path $PlatformDir 'private-path.ps1')
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $CodexHome "backups\codex-unified-router-$Stamp-$PID"

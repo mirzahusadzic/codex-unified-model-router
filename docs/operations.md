@@ -5,10 +5,10 @@ The router and Codex's app-server daemon are separate processes. Restart the rou
 ## Verify an installation
 
 ```sh
-./scripts/verify-install.sh
+./platform/unix/verify-install.sh
 ```
 
-On Windows, run `.\scripts\verify-install.ps1`.
+On Windows, run `.\platform\windows\verify-install.ps1`.
 
 The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, local health, and platform startup setup. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
 
@@ -141,9 +141,9 @@ Restarting either service interrupts its active requests. Changing models inside
 
 ## Install without automatic startup
 
-Use `./install.sh --no-service` on macOS/Linux or `.\install.ps1 -NoService` on Windows. These options write the configuration and router files but do not register or launch a background service.
+Use `./platform/unix/install.sh --no-service` on macOS/Linux or `.\platform\windows\install.ps1 -NoService` on Windows. These options write the configuration and router files but do not register or launch a background service.
 
-Use `./scripts/verify-install.sh --no-service` or `.\scripts\verify-install.ps1 -NoService` to validate those files. The installer still requires Codex and an OpenRouter key.
+Use `./platform/unix/verify-install.sh --no-service` or `.\platform\windows\verify-install.ps1 -NoService` to validate those files. The installer still requires Codex and an OpenRouter key.
 
 ## Rollback
 

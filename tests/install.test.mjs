@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const windows = process.platform === 'win32';
+// The installer or verifier for this platform under platform/unix or platform/windows.
+const platformScript = name => join(root, 'platform', windows ? 'windows' : 'unix', name + (windows ? '.ps1' : '.sh'));
 
 test('no-service installer guards collisions before mutation and preserves backed-up profile preferences', t => {
   const directory = mkdtempSync(join(tmpdir(), 'router-install-'));
@@ -23,10 +25,10 @@ test('no-service installer guards collisions before mutation and preserves backe
     PATH: bin + (windows ? ';' : ':') + process.env.PATH, OPENROUTER_API_KEY: 'synthetic-install-key',
     CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' };
   function invoke(verify = false, force = false) {
-    const script = verify ? 'scripts/verify-install' : 'install';
+    const script = platformScript(verify ? 'verify-install' : 'install');
     return spawnSync(windows ? 'powershell.exe' : 'bash', windows
-      ? ['-NoProfile', '-File', join(root, script + '.ps1'), '-NoService', ...(force ? ['-Force'] : [])]
-      : [join(root, script + '.sh'), '--no-service', ...(force ? ['--force'] : [])],
+      ? ['-NoProfile', '-File', script, '-NoService', ...(force ? ['-Force'] : [])]
+      : [script, '--no-service', ...(force ? ['--force'] : [])],
     { env: environment, encoding: 'utf8', timeout: 30000 });
   }
   const profile = join(home, 'unified-openrouter.config.toml');
@@ -69,8 +71,8 @@ test('marker text in a comment or string still requires an explicit first conver
     + 'developer_instructions = """\n# BEGIN codex-unified-router managed keys\nKeep these instructions.\n"""\n';
   writeFileSync(config, original);
   const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
-    ? ['-NoProfile', '-File', join(root, 'install.ps1'), '-NoService']
-    : [join(root, 'install.sh'), '--no-service'], {
+    ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
+    : [platformScript('install'), '--no-service'], {
     encoding: 'utf8', timeout: 30000,
     env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
       OPENROUTER_API_KEY: 'synthetic-install-key', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
@@ -86,8 +88,8 @@ test('installer settings are validated before anything is written', t => {
   mkdirSync(home);
   for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe']]) {
     const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
-      ? ['-NoProfile', '-File', join(root, 'install.ps1'), '-NoService']
-      : [join(root, 'install.sh'), '--no-service'], {
+      ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
+      : [platformScript('install'), '--no-service'], {
       encoding: 'utf8', timeout: 30000,
       env: { ...process.env, HOME: directory, CODEX_HOME: home, OPENROUTER_API_KEY: 'synthetic-install-key', [name]: value },
     });

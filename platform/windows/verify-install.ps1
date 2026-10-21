@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'private-path.ps1')
+$ScriptsDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts'
 
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $ConfigPath = Join-Path $CodexHome 'config.toml'
@@ -24,7 +25,7 @@ foreach ($Path in $RequiredPaths) {
     if (-not (Test-Path $Path)) { throw "Missing required file: $Path" }
 }
 
-& node (Join-Path $PSScriptRoot 'verify-credentials.mjs') $CodexHome
+& node (Join-Path $ScriptsDir 'verify-credentials.mjs') $CodexHome
 if ($LASTEXITCODE -ne 0) { throw 'Router credential verification failed.' }
 foreach ($Path in @($ConfigPath, $ProfilePath, (Join-Path $CodexHome 'unified-router'), (Join-Path $CodexHome 'unified-router\openrouter.env'))) {
     Assert-PrivatePath $Path
@@ -48,11 +49,11 @@ if (-not $DeepSeek) { throw 'DeepSeek is missing from the model catalog.' }
 if ([int64]$DeepSeek.context_window -ne 960000 -or [int64]$DeepSeek.max_context_window -ne 960000) {
     throw 'DeepSeek context limits are not 960000.'
 }
-& node (Join-Path $PSScriptRoot 'verify-prompts.mjs') $CodexHome
+& node (Join-Path $ScriptsDir 'verify-prompts.mjs') $CodexHome
 if ($LASTEXITCODE -ne 0) { throw 'Installed OpenRouter prompts differ from the repository; rerun the installer.' }
 
 if (-not $NoService) {
-    & node (Join-Path $PSScriptRoot 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
+    & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
     if ($LASTEXITCODE -ne 0) {
         throw 'The unified router health check failed.'
     }
