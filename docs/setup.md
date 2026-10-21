@@ -76,6 +76,7 @@ The same catalog is available to main threads, child-thread model overrides, and
 - **Reasoning effort:** OpenRouter requests map `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Native OpenAI requests retain the requested effort.
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results.
 - **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
+- **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with a bounded recent tail of the latest turn. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread. Exact rejected bodies are never logged; an explicit `CODEX_ROUTER_REJECTED_REQUEST_DIR` setting can capture them privately for diagnosis.
 - **Structured output:** By default, OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback, or use the [model-preserving routing policy](#routing-policy) to reject substitution.
 - **Streaming:** Responses are piped through as they arrive. Client disconnects cancel unfinished upstream requests.
 
@@ -114,10 +115,12 @@ providers. Existing requests without the header retain the default fallback.
 ## Router capabilities
 
 `GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the
-supported opt-in routing policies, and `revision`, the running router source's
-SHA-256. These fields let clients check compatibility and diagnose outdated
-installed copies without sending an inference request. They do not attest
-upstream model identity, account access or the entire runtime configuration.
+supported opt-in routing policies, `capabilities.openrouterRejectionRecovery`,
+the bounded OpenRouter 400 fallback contract, and `revision`, the running router
+source's SHA-256. These fields let clients check compatibility and diagnose
+outdated installed copies without sending an inference request.
+They do not attest upstream model identity, account access or the entire
+runtime configuration.
 
 Clients that need to hold that revision across requests can require it with:
 
@@ -175,7 +178,7 @@ For an OpenRouter model:
 
 The router removes the `openrouter/` prefix before forwarding. The model becomes available through the shared catalog.
 
-The DeepSeek entry uses maintained instructions from [`prompts/`](../prompts/). After editing those files, refresh the checked-in entries:
+Every `deepseek/` and `openrouter/` entry uses the maintained instructions from [`prompts/`](../prompts/). After editing those files or adding an entry, refresh the checked-in entries:
 
 ```sh
 ./scripts/render-openrouter-entries.sh
@@ -195,7 +198,7 @@ The router rejects browser origins, unexpected Host headers, and non-JSON model 
 
 To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks both configurations against the stored token, their managed transport settings, and private ownership/permissions. Readiness checks require the current capabilities and the installed source's SHA-256; a reachable older router is not a successful upgrade. Health redirects are rejected.
 
-Logging defaults to errors only. Set `CODEX_ROUTER_LOG_LEVEL=info` to record successful request metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged. See [Structured logs](operations.md#structured-logs) for event names and platform log locations.
+Logging defaults to errors only. Set `CODEX_ROUTER_LOG_LEVEL=info` in `unified-router/openrouter.env` or the service environment to record successful request metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged. Set `CODEX_ROUTER_REJECTED_REQUEST_DIR` only when an exact OpenRouter-rejected payload is needed for diagnosis; captured files are private but contain complete conversation content. See [Structured logs](operations.md#structured-logs) for event names and platform log locations.
 
 ## CI coverage
 

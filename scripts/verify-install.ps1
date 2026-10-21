@@ -48,8 +48,15 @@ if (-not $DeepSeek) { throw 'DeepSeek is missing from the model catalog.' }
 if ([int64]$DeepSeek.context_window -ne 960000 -or [int64]$DeepSeek.max_context_window -ne 960000) {
     throw 'DeepSeek context limits are not 960000.'
 }
-if ($DeepSeek.base_instructions -ne $DeepSeek.model_messages.instructions_template) {
-    throw 'DeepSeek instruction representations differ.'
+$Instructions = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\prompts\openrouter-instructions.md'), $Utf8NoBom)
+$Persistent = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\prompts\openrouter-persistent.md'), $Utf8NoBom)
+$OpenRouterEntries = @($Catalog.models | Where-Object { $_.slug.StartsWith('openrouter/') -or $_.slug.StartsWith('deepseek/') })
+foreach ($Entry in $OpenRouterEntries) {
+    if ($Entry.base_instructions -cne $Instructions -or
+        $Entry.model_messages.instructions_template -cne $Instructions -or
+        $Entry.model_messages.persistent_instructions -cne $Persistent) {
+        throw "Installed OpenRouter prompts differ from the repository prompts for $($Entry.slug); rerun the installer."
+    }
 }
 
 if (-not $NoService) {

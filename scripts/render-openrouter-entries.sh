@@ -8,25 +8,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-render_entry() {
-  local input="$1"
-  local output="$2"
+# Render the shared prompts into every catalog entry routed through OpenRouter.
+render_file() {
+  local file="$1"
   local tmp_file
   tmp_file="$(mktemp "${TMPDIR:-/tmp}/openrouter-catalog.XXXXXX")"
   tmp_files+=("$tmp_file")
   jq --rawfile instructions "$repo_dir/prompts/openrouter-instructions.md" \
      --rawfile persistent "$repo_dir/prompts/openrouter-persistent.md" '
-       .base_instructions = $instructions
-       | .model_messages.instructions_template = $instructions
-       | .model_messages.persistent_instructions = $persistent
-     ' "$input" > "$tmp_file"
-  mv "$tmp_file" "$output"
-  chmod 644 "$output"
+       def render:
+         if (.slug | startswith("openrouter/") or startswith("deepseek/")) then
+           .base_instructions = $instructions
+           | .model_messages.instructions_template = $instructions
+           | .model_messages.persistent_instructions = $persistent
+         else . end;
+       if type == "array" then map(render) else render end
+     ' "$file" > "$tmp_file"
+  mv "$tmp_file" "$file"
+  chmod 644 "$file"
 }
 
-if [[ $# -gt 0 ]]; then
-  render_entry "$repo_dir/catalog/deepseek-model.json" "$1"
-  exit 0
-fi
-
-render_entry "$repo_dir/catalog/deepseek-model.json" "$repo_dir/catalog/deepseek-model.json"
+for file in "$repo_dir"/catalog/*.json; do
+  render_file "$file"
+done

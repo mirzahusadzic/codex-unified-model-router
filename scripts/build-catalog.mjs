@@ -44,22 +44,24 @@ const instructions = options.instructions && existsSync(options.instructions)
 const persistent = options.persistent && existsSync(options.persistent)
   ? readFileSync(options.persistent, 'utf8')
   : null;
-const promptSlug = options['prompt-slug'] || 'deepseek/deepseek-v4.1-flash-1017';
+// Every entry the router forwards to OpenRouter shares the maintained prompts.
+const usesOpenRouterPrompts = slug => slug.startsWith('openrouter/') || slug.startsWith('deepseek/');
 
-const entries = readEntries(options['catalog-dir']).map(entry => {
-  if (entry.slug === promptSlug && instructions && persistent) {
-    return {
-      ...entry,
-      base_instructions: instructions,
-      model_messages: {
-        ...entry.model_messages,
-        instructions_template: instructions,
-        persistent_instructions: persistent,
-      },
-    };
-  }
-  return entry;
-});
+const entries = readEntries(options['catalog-dir'])
+  .map(entry => {
+    if (usesOpenRouterPrompts(entry.slug) && instructions && persistent) {
+      return {
+        ...entry,
+        base_instructions: instructions,
+        model_messages: {
+          ...entry.model_messages,
+          instructions_template: instructions,
+          persistent_instructions: persistent,
+        },
+      };
+    }
+    return entry;
+  });
 
 const order = bundled.models.map(model => model.slug);
 const bySlug = new Map(bundled.models.map(model => [model.slug, model]));

@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { after, mock, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 // Exercise the router's request handler without network access or real credentials.
+const rejectedRequestDir = mkdtempSync(join(tmpdir(), 'codex-router-rejections-'));
 process.env.CODEX_ROUTER_ENV_FILE = fileURLToPath(new URL('./missing.env', import.meta.url));
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
 process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
@@ -62,9 +67,12 @@ mock.method(https, 'request', (options, onResponse) => {
   });
 });
 await import('../router/unified-router.mjs');
-after(() => mock.restoreAll());
+after(() => {
+  mock.restoreAll();
+  rmSync(rejectedRequestDir, { recursive: true, force: true });
+});
 
-async function exchange(rawBody, headers = {}, { method = 'POST', url = '/v1/responses' } = {}) {
+async function exchangeRaw(rawBody, headers = {}, { method = 'POST', url = '/v1/responses' } = {}) {
   const request = new PassThrough();
   Object.assign(request, {
     method,
@@ -77,8 +85,10 @@ async function exchange(rawBody, headers = {}, { method = 'POST', url = '/v1/res
   });
   const response = new PassThrough();
   response.headersSent = false;
-  response.writeHead = status => {
+  response.responseHeaders = {};
+  response.writeHead = (status, responseHeaders = {}) => {
     response.statusCode = status;
+    response.responseHeaders = responseHeaders;
     response.headersSent = true;
   };
   const chunks = [];
@@ -87,7 +97,16 @@ async function exchange(rawBody, headers = {}, { method = 'POST', url = '/v1/res
   handleRequest(request, response);
   request.end(rawBody);
   await done;
-  return { status: response.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) };
+  return {
+    status: response.statusCode,
+    headers: response.responseHeaders,
+    rawBody: Buffer.concat(chunks).toString('utf8'),
+  };
+}
+
+async function exchange(rawBody, headers = {}, options) {
+  const result = await exchangeRaw(rawBody, headers, options);
+  return { ...result, body: JSON.parse(result.rawBody) };
 }
 
 async function send(body, headers) {
@@ -105,6 +124,48 @@ function parsedLogEntries() {
     } catch {
       return [];
     }
+  });
+}
+
+function parseSse(rawBody) {
+  return rawBody.split(/\r?\n/)
+    .filter(line => line.startsWith('data: '))
+    .map(line => JSON.parse(line.slice('data: '.length)));
+}
+
+function mockUpstreamSequence(t, responses) {
+  let index = 0;
+  t.mock.method(https, 'request', (options, onResponse) => {
+    const chunks = [];
+    return new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+      final(callback) {
+        const rawBody = Buffer.concat(chunks);
+        const body = JSON.parse(rawBody.toString('utf8'));
+        forwarded.push({ ...options, body, byteLength: rawBody.length });
+        const spec = responses[index];
+        index += 1;
+        if (!spec) {
+          callback(new Error(`Unexpected upstream request ${index}`));
+          return;
+        }
+        const response = Readable.from([spec.body]);
+        response.statusCode = spec.status;
+        response.headers = {
+          'content-type': spec.contentType || 'application/json',
+          'x-generation-id': spec.generationId || `gen_reject_${index}`,
+          'x-provider-name': '',
+          'x-request-id': `req_${index}`,
+          'cf-ray': `cf_${index}`,
+          ...spec.headers,
+        };
+        queueMicrotask(() => onResponse(response));
+        callback();
+      },
+    });
   });
 }
 
@@ -129,6 +190,39 @@ const mixedHistory = [
   deepseekReasoning,
   { type: 'message', id: 'msg_tmp_example', role: 'assistant', content: [{ type: 'output_text', text: 'All good.' }] },
   { role: 'user', content: 'not bad ha? this project?' },
+];
+const recoveryHistory = [
+  {
+    type: 'message',
+    id: 'msg_current_developer',
+    role: 'developer',
+    content: [{ type: 'input_text', text: 'Current development instructions.' }],
+  },
+  ...Array.from({ length: 100 }, (_, index) => ({
+    type: 'message',
+    id: `msg_old_${index}`,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    content: [{ type: index % 2 === 0 ? 'input_text' : 'output_text', text: `Old turn ${index}` }],
+  })),
+  {
+    type: 'message',
+    id: 'msg_current_user',
+    role: 'user',
+    content: [{ type: 'input_text', text: 'Continue the current task.' }],
+  },
+  {
+    type: 'function_call',
+    id: 'fc_current',
+    call_id: 'call_current',
+    name: 'exec_command',
+    arguments: '{"cmd":"printf current"}',
+  },
+  {
+    type: 'function_call_output',
+    id: 'fco_current',
+    call_id: 'call_current',
+    output: 'current',
+  },
 ];
 
 test('OpenAI can continue mixed history after a DeepSeek turn', async () => {
@@ -190,6 +284,7 @@ test('preserve-model policy leaves native structured output on the requested nat
 test('routing capabilities and implementation revision are discoverable; unknown policies fail closed', async () => {
   const health = await exchange('', {}, { method: 'GET', url: '/health' });
   assert.deepEqual(health.body.capabilities.routingPolicies, ['preserve-model-v1']);
+  assert.equal(health.body.capabilities.openrouterRejectionRecovery, 'completed-diagnostic-v1');
   assert.match(health.body.revision, /^[a-f0-9]{64}$/);
   assert.equal(health.body.capabilities.revisionPrecondition, true);
   const count = forwarded.length;
@@ -338,6 +433,271 @@ test('OpenRouter keeps sequential tool rounds separate and orders parallel outpu
     input: [firstCall, secondCall, secondOutput, firstOutput],
   });
   assert.deepEqual(parallel.body.input, [firstCall, secondCall, firstOutput, secondOutput]);
+});
+
+test('OpenRouter retries one compacted history after a pre-stream 400', async t => {
+  mockUpstreamSequence(t, [
+    {
+      status: 400,
+      generationId: 'gen_reject_recovery',
+      body: JSON.stringify({
+        error: { message: 'invalid request', code: 400, metadata: { provider_name: null } },
+      }),
+    },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      generationId: 'gen_recovered',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_recovered","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: recoveryHistory,
+  }), { 'x-codex-routing-policy': 'preserve-model-v1' });
+
+  assert.equal(result.status, 200);
+  assert.match(result.rawBody, /resp_recovered/);
+  assert.equal(forwarded.length, before + 2);
+  const [primary, recovery] = forwarded.slice(before);
+  assert.deepEqual(primary.body.input, recoveryHistory);
+  assert.ok(recovery.body.input.length < primary.body.input.length);
+  assert.deepEqual(recovery.body.input, [
+    recoveryHistory[0],
+    recoveryHistory[101],
+    recoveryHistory[102],
+    recoveryHistory[103],
+  ]);
+
+  const entries = parsedLogEntries().slice(logsBefore);
+  const rejected = entries.find(entry => entry.event === 'openrouter.request_rejected');
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.attempt, 1);
+  assert.equal(rejected.inputItems, recoveryHistory.length);
+  assert.equal(rejected.generationId, 'gen_reject_recovery');
+  assert.match(rejected.payloadSha256, /^[a-f0-9]{64}$/);
+  const retry = entries.find(entry => entry.event === 'openrouter.recovery_attempt');
+  assert.equal(retry.attempt, 2);
+  assert.equal(retry.compactionStrategy, 'latest-user-turn');
+  assert.equal(retry.inputItems, 4);
+  assert.ok(retry.droppedItems > 0);
+  assert.match(retry.payloadSha256, /^[a-f0-9]{64}$/);
+});
+
+test('OpenRouter recovery keeps a bounded recent tail for a long single-turn history', async t => {
+  const singleTurnHistory = [
+    {
+      type: 'message',
+      id: 'msg_long_user',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'Perform a long task.' }],
+    },
+    ...Array.from({ length: 100 }, (_, index) => ({
+      type: 'message',
+      id: `msg_long_assistant_${index}`,
+      role: 'assistant',
+      content: [{ type: 'output_text', text: `Progress ${index}` }],
+    })),
+  ];
+  mockUpstreamSequence(t, [
+    {
+      status: 400,
+      body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }),
+    },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_tail","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: singleTurnHistory,
+  }), { 'x-codex-routing-policy': 'preserve-model-v1' });
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const recovery = forwarded.at(-1);
+  assert.ok(recovery.body.input.length <= 80);
+  assert.equal(recovery.body.input[0].id, 'msg_long_user');
+  assert.equal(recovery.body.input.at(-1).id, 'msg_long_assistant_99');
+  const retry = parsedLogEntries().slice(logsBefore)
+    .find(entry => entry.event === 'openrouter.recovery_attempt');
+  assert.equal(retry.compactionStrategy, 'recent-tail');
+});
+
+test('OpenRouter recovery bounds a long latest turn that follows earlier turns', async t => {
+  const longTurnHistory = [
+    recoveryHistory[0],
+    { type: 'message', id: 'msg_earlier_user', role: 'user', content: [{ type: 'input_text', text: 'Earlier task.' }] },
+    { type: 'message', id: 'msg_earlier_reply', role: 'assistant', content: [{ type: 'output_text', text: 'Done.' }] },
+    { type: 'message', id: 'msg_task', role: 'user', content: [{ type: 'input_text', text: 'Refactor everything.' }] },
+    ...Array.from({ length: 120 }, (_, index) => [
+      { type: 'function_call', call_id: `call_long_${index}`, name: 'exec_command', arguments: '{}' },
+      { type: 'function_call_output', call_id: `call_long_${index}`, output: 'x'.repeat(20000) },
+    ]).flat(),
+  ];
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_long_turn","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: longTurnHistory,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const [primary, recovery] = forwarded.slice(before);
+  const input = recovery.body.input;
+  assert.ok(recovery.byteLength < primary.byteLength / 2);
+  assert.ok(Buffer.byteLength(JSON.stringify(input)) <= 1024 * 1024);
+  assert.deepEqual(input.slice(0, 2).map(item => item.id), ['msg_current_developer', 'msg_task']);
+  assert.equal(input.at(-1).call_id, 'call_long_119');
+  const callIds = new Set(input.filter(item => item.type === 'function_call').map(item => item.call_id));
+  const outputIds = input.filter(item => item.type === 'function_call_output').map(item => item.call_id);
+  assert.deepEqual(outputIds, [...callIds]);
+});
+
+test('OpenRouter recovery drops encrypted reasoning from a short history', async t => {
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_no_reasoning","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: mixedHistory,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.match(result.rawBody, /resp_no_reasoning/);
+  assert.equal(forwarded.length, before + 2);
+  assert.deepEqual(forwarded.at(-1).body.input, mixedHistory.filter(item => item !== nativeReasoning));
+});
+
+test('an OpenRouter context-window rejection fails the response so Codex can compact', async t => {
+  mockUpstreamSequence(t, [{
+    status: 400,
+    body: JSON.stringify({ error: {
+      message: "This endpoint's maximum context length is 163840 tokens. However, you requested about 200000 tokens.",
+      code: 400,
+    } }),
+  }]);
+  const before = forwarded.length;
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: recoveryHistory,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-context-overflow');
+  assert.equal(forwarded.length, before + 1);
+  const events = parseSse(result.rawBody);
+  assert.deepEqual(events.map(event => event.type), ['response.created', 'response.failed']);
+  assert.equal(events[1].response.error.code, 'context_length_exceeded');
+  assert.doesNotMatch(result.rawBody, /163840/);
+  const rejected = parsedLogEntries().slice(logsBefore)
+    .find(entry => entry.event === 'openrouter.request_rejected');
+  assert.equal(rejected.contextOverflow, true);
+});
+
+test('a repeated OpenRouter 400 completes with a router diagnostic instead of breaking Codex', async t => {
+  mockUpstreamSequence(t, [
+    {
+      status: 400,
+      generationId: 'gen_reject_primary',
+      body: JSON.stringify({
+        error: { message: 'invalid request', code: 400, metadata: { provider_name: null } },
+      }),
+    },
+    {
+      status: 400,
+      generationId: 'gen_reject_recovery',
+      body: JSON.stringify({
+        error: { message: 'invalid request', code: 400, metadata: { provider_name: null } },
+      }),
+    },
+  ]);
+  const before = forwarded.length;
+  const captureBefore = readdirSync(rejectedRequestDir).sort();
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'openrouter/vendor/model',
+    input: recoveryHistory,
+  }), { 'x-codex-routing-policy': 'preserve-model-v1' });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['content-type'], 'text/event-stream');
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-request-rejected');
+  assert.doesNotMatch(result.rawBody, /"error"/);
+  const events = parseSse(result.rawBody);
+  assert.deepEqual(events.map(event => event.type), [
+    'response.created',
+    'response.output_item.done',
+    'response.completed',
+  ]);
+  assert.equal(events[1].item.role, 'assistant');
+  assert.equal(events[1].item.content[0].text,
+    '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.');
+  assert.equal(events[2].response.end_turn, true);
+  assert.equal(events[2].response.usage, undefined);
+  assert.equal(forwarded.length, before + 2);
+
+  const entries = parsedLogEntries().slice(logsBefore);
+  const rejected = entries.filter(entry => entry.event === 'openrouter.request_rejected');
+  assert.equal(rejected.length, 2);
+  assert.deepEqual(rejected.map(entry => entry.attempt), [1, 2]);
+  assert.deepEqual(rejected.map(entry => entry.generationId), [
+    'gen_reject_primary',
+    'gen_reject_recovery',
+  ]);
+  for (const entry of rejected) {
+    assert.match(entry.payloadSha256, /^[a-f0-9]{64}$/);
+    assert.equal(entry.status, 400);
+    assert.equal(entry.bytes > 0, true);
+    assert.equal(entry.inputItems > 0, true);
+    assert.equal(entry.upstreamErrorCode, 400);
+    assert.equal(entry.upstreamErrorBytes > 0, true);
+  }
+  assert.equal(entries.some(entry => entry.event === 'openrouter.fallback_completion'), true);
+  const serializedLogs = JSON.stringify(entries);
+  assert.doesNotMatch(serializedLogs, /Continue the current task|Old turn 0|printf current/);
+
+  const captureAfter = readdirSync(rejectedRequestDir).sort();
+  const created = captureAfter.filter(name => !captureBefore.includes(name));
+  assert.equal(created.length, 4);
+  for (const name of created) {
+    assert.equal(statSync(join(rejectedRequestDir, name)).mode & 0o777, 0o600);
+    assert.doesNotThrow(() => JSON.parse(readFileSync(join(rejectedRequestDir, name), 'utf8')));
+  }
+});
+
+test('native OpenAI 400 responses remain errors and are never replaced by router diagnostics', async t => {
+  mockUpstreamSequence(t, [{
+    status: 400,
+    generationId: 'gen_native_reject',
+    body: JSON.stringify({ error: { message: 'native rejected this request', code: 400 } }),
+  }]);
+  const result = await exchangeRaw('{"model":"gpt-6-astra","input":"Hello"}');
+  assert.equal(result.status, 400);
+  assert.deepEqual(JSON.parse(result.rawBody), {
+    error: { message: 'native rejected this request', code: 400 },
+  });
 });
 
 test('structured router logs correlate requests without recording bodies or credentials', async () => {

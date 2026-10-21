@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -16,11 +19,11 @@ const harness = `
   process.exit(0);
 `;
 
-function start(level) {
+function start(level, envFile = fileURLToPath(new URL('./missing.env', import.meta.url))) {
   const env = {
     ...process.env,
     ROUTER_SOURCE: routerSource,
-    CODEX_ROUTER_ENV_FILE: fileURLToPath(new URL('./missing.env', import.meta.url)),
+    CODEX_ROUTER_ENV_FILE: envFile,
     CODEX_ROUTER_TOKEN: 'a'.repeat(64),
     OPENROUTER_API_KEY: 'test-openrouter-key',
   };
@@ -35,6 +38,16 @@ test('router logging defaults to errors and requires an explicit info opt-in', (
   assert.equal(quiet.stdout, '');
 
   const info = start('info');
+  assert.equal(info.status, 0, info.stderr);
+  assert.match(info.stdout, /"event":"router\.ready"/);
+});
+
+test('router reads the log level from its environment file', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-log-level-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const envFile = join(directory, 'openrouter.env');
+  writeFileSync(envFile, 'CODEX_ROUTER_LOG_LEVEL=info\n');
+  const info = start(undefined, envFile);
   assert.equal(info.status, 0, info.stderr);
   assert.match(info.stdout, /"event":"router\.ready"/);
 });

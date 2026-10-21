@@ -38,18 +38,20 @@ grep -q 'const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MOD
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000 and .max_context_window == 960000' \
   "$codex_home/models.json" >/dev/null
 
-jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .base_instructions == .model_messages.instructions_template' \
-  "$codex_home/models.json" >/dev/null
-
-if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .base_instructions, .model_messages.persistent_instructions' \
-  "$codex_home/models.json" | grep -E 'update_plan|send_user_message_async|clock\.sleep|update_up_next'; then
-  printf 'DeepSeek prompt still references unavailable tools.\n' >&2
+if ! jq -e --rawfile instructions "$script_dir/../prompts/openrouter-instructions.md" \
+  --rawfile persistent "$script_dir/../prompts/openrouter-persistent.md" '
+    [.models[] | select(.slug | startswith("openrouter/") or startswith("deepseek/"))]
+    | length > 0 and all(.base_instructions == $instructions
+      and .model_messages.instructions_template == $instructions
+      and .model_messages.persistent_instructions == $persistent)
+  ' "$codex_home/models.json" >/dev/null; then
+  printf 'Installed OpenRouter prompts differ from the repository prompts; rerun the installer.\n' >&2
   exit 1
 fi
 
 if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .base_instructions, .model_messages.persistent_instructions' \
-  "$codex_home/models.json" | grep -Ei 'adares|mirzahusadzic|2550|rca catalyst|cogx|cetasol|volvo|tendora|intentropia|egemma'; then
-  printf 'DeepSeek prompt contains project-specific residue.\n' >&2
+  "$codex_home/models.json" | grep -E 'update_plan|send_user_message_async|clock\.sleep|update_up_next'; then
+  printf 'DeepSeek prompt still references unavailable tools.\n' >&2
   exit 1
 fi
 

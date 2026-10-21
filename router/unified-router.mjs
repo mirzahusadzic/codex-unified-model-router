@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,11 +13,6 @@ const modelCatalogFile = process.env.CODEX_MODEL_CATALOG || join(homedir(), '.co
 const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MODEL || 'gpt-6-astra';
 const maxBodyBytes = 64 * 1024 * 1024;
 const routerRevision = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
-const logLevels = { error: 0, info: 1, debug: 2 };
-const configuredLogLevel = String(process.env.CODEX_ROUTER_LOG_LEVEL || 'error').trim().toLowerCase();
-if (!Object.hasOwn(logLevels, configuredLogLevel)) {
-  throw new Error('CODEX_ROUTER_LOG_LEVEL must be error, info, or debug');
-}
 
 function readEnvironmentFile(file) {
   if (!existsSync(file)) return {};
@@ -38,11 +33,29 @@ function readEnvironmentFile(file) {
 }
 
 const fileEnvironment = readEnvironmentFile(envFile);
+const logLevels = { error: 0, info: 1, debug: 2 };
+const configuredLogLevel = String(
+  process.env.CODEX_ROUTER_LOG_LEVEL || fileEnvironment.CODEX_ROUTER_LOG_LEVEL || 'error',
+).trim().toLowerCase();
+if (!Object.hasOwn(logLevels, configuredLogLevel)) {
+  throw new Error('CODEX_ROUTER_LOG_LEVEL must be error, info, or debug');
+}
 const openrouterApiKey = process.env.OPENROUTER_API_KEY || fileEnvironment.OPENROUTER_API_KEY || '';
 const routerToken = process.env.CODEX_ROUTER_TOKEN || fileEnvironment.CODEX_ROUTER_TOKEN || '';
+const rejectedRequestDir = String(
+  process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR
+    || fileEnvironment.CODEX_ROUTER_REJECTED_REQUEST_DIR
+    || '',
+).trim();
 if (!/^[a-f0-9]{64}$/.test(routerToken)) {
   throw new Error('A 64-character hex CODEX_ROUTER_TOKEN is required; rerun the installer');
 }
+
+const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
+const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
+const openrouterRecoveryCompactBytes = 1024 * 1024;
+const openrouterRecoveryCompactItems = 80;
+const maxCapturedUpstreamErrorBytes = 256 * 1024;
 
 function isAuthenticated(headers) {
   const supplied = headers['x-codex-router-token'];
@@ -290,6 +303,210 @@ function sendJson(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
+function payloadHash(body) {
+  return createHash('sha256').update(body).digest('hex');
+}
+
+function captureRejectedRequest({
+  requestId, attempt, requestBody, responseBody,
+}) {
+  if (!rejectedRequestDir) return null;
+  const prefix = `${requestId}-attempt-${attempt}`;
+  try {
+    mkdirSync(rejectedRequestDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(rejectedRequestDir, `${prefix}.request.json`), requestBody, { mode: 0o600 });
+    writeFileSync(join(rejectedRequestDir, `${prefix}.response.json`), responseBody, { mode: 0o600 });
+    return prefix;
+  } catch (error) {
+    logEvent('error', 'openrouter.rejection_capture_failed', {
+      requestId,
+      attempt,
+      errorCode: error.code || null,
+    });
+    return null;
+  }
+}
+
+const contextOverflowPattern = /context[ _-]?(?:length|window)|maximum context|too many tokens|prompt is too long/i;
+
+function parseUpstreamError(body) {
+  try {
+    const parsed = JSON.parse(body.toString('utf8'));
+    const messages = [parsed?.error?.message, parsed?.error?.metadata?.raw]
+      .filter(value => typeof value === 'string');
+    return {
+      errorCode: parsed?.error?.code ?? null,
+      errorType: parsed?.error_type ?? parsed?.error?.type ?? null,
+      contextOverflow: parsed?.error?.code === 'context_length_exceeded'
+        || messages.some(message => contextOverflowPattern.test(message)),
+    };
+  } catch {
+    return { errorCode: null, errorType: null, contextOverflow: false };
+  }
+}
+
+function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let bytes = 0;
+    let truncated = false;
+    let settled = false;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    stream.on('data', chunk => {
+      const buffer = Buffer.from(chunk);
+      if (bytes + buffer.length > limit) {
+        const remaining = Math.max(0, limit - bytes);
+        if (remaining > 0) chunks.push(buffer.subarray(0, remaining));
+        bytes = limit;
+        truncated = true;
+        return;
+      }
+      chunks.push(buffer);
+      bytes += buffer.length;
+    });
+    stream.once('error', fail);
+    stream.once('aborted', () => fail(new Error('Upstream response was aborted')));
+    stream.once('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve({ body: Buffer.concat(chunks), bytes, truncated });
+    });
+  });
+}
+
+function isMessageForRole(item, role) {
+  return item?.role === role && (item.type == null || item.type === 'message');
+}
+
+function compactOpenRouterHistory(input, requestBytes) {
+  if (!Array.isArray(input)
+      || (requestBytes <= openrouterRecoveryCompactBytes
+        && input.length <= openrouterRecoveryCompactItems)) {
+    return { input, changed: false, droppedItems: 0, strategy: null };
+  }
+
+  const lastUserIndex = input.findLastIndex(item => isMessageForRole(item, 'user'));
+  const lastDeveloperIndex = input.findLastIndex(item => isMessageForRole(item, 'developer'));
+  // The current developer context and task statement always survive, even
+  // when the rest of the latest turn has to be cut to a recent tail.
+  const pinned = [...new Set([lastDeveloperIndex, lastUserIndex])].filter(index => index >= 0);
+  const itemBytes = index => Buffer.byteLength(JSON.stringify(input[index]) ?? '');
+  let itemBudget = openrouterRecoveryCompactItems - pinned.length;
+  let byteBudget = pinned.reduce((budget, index) => budget - itemBytes(index), openrouterRecoveryCompactBytes);
+
+  let start = input.length;
+  while (start > lastUserIndex + 1 && itemBudget > 0) {
+    const bytes = itemBytes(start - 1);
+    if (bytes > byteBudget && start < input.length) break;
+    itemBudget -= 1;
+    byteBudget -= bytes;
+    start -= 1;
+  }
+
+  const retainedIndexes = new Set(pinned);
+  for (let index = start; index < input.length; index += 1) retainedIndexes.add(index);
+  const compacted = input.filter((_item, index) => retainedIndexes.has(index));
+  return {
+    input: compacted,
+    changed: compacted.length !== input.length,
+    droppedItems: input.length - compacted.length,
+    strategy: lastUserIndex >= 0 && start === lastUserIndex + 1 ? 'latest-user-turn' : 'recent-tail',
+  };
+}
+
+function prepareOpenRouterRecovery(parsed, primaryBody) {
+  // `parsed` already carries the OpenRouter state, reasoning, and tool-history
+  // normalization, so the retry only changes which history items are sent.
+  // Encrypted reasoning is bound to the provider that produced it; drop it
+  // instead of resending the same opaque payload.
+  const input = Array.isArray(parsed.input)
+    ? parsed.input.filter(item => !(item?.type === 'reasoning' && item.encrypted_content))
+    : parsed.input;
+  const droppedReasoningItems = Array.isArray(input) ? parsed.input.length - input.length : 0;
+  const compacted = compactOpenRouterHistory(input, primaryBody.length);
+  const repaired = normalizeToolHistoryForOpenRouter(compacted.input);
+  const body = Buffer.from(JSON.stringify({ ...parsed, input: repaired.input }));
+  return {
+    body,
+    changed: !body.equals(primaryBody),
+    compactionStrategy: compacted.changed ? compacted.strategy : null,
+    droppedItems: compacted.droppedItems,
+    droppedReasoningItems,
+    inputItems: Array.isArray(repaired.input) ? repaired.input.length : null,
+    historyRepairs: repaired.repairs,
+  };
+}
+
+function sendSyntheticResponse(response, requestId, diagnostic, finalEvents) {
+  const responseId = `resp_router_${requestId.replaceAll('-', '')}`;
+  const events = [
+    {
+      type: 'response.created',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'in_progress',
+        output: [],
+      },
+    },
+    ...finalEvents(responseId),
+  ];
+  response.writeHead(200, {
+    'content-type': 'text/event-stream',
+    'cache-control': 'no-cache',
+    'x-codex-router-diagnostic': diagnostic,
+  });
+  for (const event of events) {
+    response.write(`event: ${event.type}\n`);
+    response.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  response.end();
+}
+
+function sendResponsesDiagnostic(response, requestId) {
+  // Omit usage so Codex keeps its last real token accounting.
+  sendSyntheticResponse(response, requestId, 'openrouter-request-rejected', responseId => [
+    {
+      type: 'response.output_item.done',
+      item: {
+        type: 'message',
+        id: responseId.replace(/^resp_/, 'msg_'),
+        role: 'assistant',
+        phase: 'final_answer',
+        content: [{ type: 'output_text', text: openrouterRejectedDiagnostic }],
+      },
+    },
+    {
+      type: 'response.completed',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'completed',
+        end_turn: true,
+      },
+    },
+  ]);
+}
+
+function sendContextOverflow(response, requestId) {
+  // Codex maps this code to its context-window error, which drives compaction.
+  sendSyntheticResponse(response, requestId, 'openrouter-context-overflow', responseId => [
+    {
+      type: 'response.failed',
+      response: {
+        id: responseId,
+        object: 'response',
+        status: 'failed',
+        error: { code: 'context_length_exceeded', message: openrouterContextOverflowMessage },
+      },
+    },
+  ]);
+}
+
 function modelList() {
   try {
     const catalog = JSON.parse(readFileSync(modelCatalogFile, 'utf8'));
@@ -351,6 +568,7 @@ const server = http.createServer((request, response) => {
       revision: routerRevision,
       capabilities: {
         routingPolicies: ['preserve-model-v1'],
+        openrouterRejectionRecovery: 'completed-diagnostic-v1',
         revisionPrecondition: true,
       },
     });
@@ -397,8 +615,8 @@ const server = http.createServer((request, response) => {
     receivedBytes += chunk.length;
     if (receivedBytes > maxBodyBytes) {
       rejected = true;
+      response.once('finish', () => request.destroy());
       sendJson(response, 413, { error: { message: 'Request body exceeds the unified router limit' } });
-      request.destroy();
       return;
     }
     chunks.push(chunk);
@@ -472,36 +690,15 @@ const server = http.createServer((request, response) => {
       return;
     }
 
-    let headers;
-    try {
-      headers = upstreamHeaders(request.headers, target.provider, body.length);
-    } catch (error) {
-      sendJson(response, error.statusCode || 500, { error: { message: error.message } });
-      return;
-    }
-
     if (toolHistoryRepairs?.changed) {
       logEvent('info', 'history.repaired', {
         requestId, sessionId: requestInfo.sessionId, model: upstreamModel, ...toolHistoryRepairs,
       });
     }
-    logEvent('info', 'request.forwarded', {
-      requestId,
-      sessionId: requestInfo.sessionId,
-      provider: target.provider,
-      model,
-      upstreamModel,
-      requestedModel,
-      fallbackReason,
-      stateReset,
-      routingPolicy: routingPolicy || 'default',
-      bytes: body.length,
-      inputItems: Array.isArray(parsed.input) ? parsed.input.length : null,
-      historyRepairs: toolHistoryRepairs?.changed ? toolHistoryRepairs : null,
-    });
 
-    let upstream;
+    let currentUpstream;
     let upstreamErrorLogged = false;
+    let recoveryAttempted = false;
     const upstreamError = error => {
       if (clientClosed || response.writableFinished || upstreamErrorLogged) return;
       upstreamFailed = true;
@@ -518,66 +715,208 @@ const server = http.createServer((request, response) => {
       if (response.headersSent) response.destroy();
       else sendJson(response, 502, { error: { message: 'Unified router upstream request failed' } });
     };
-    try {
-      upstream = target.protocol.request({
-        hostname: target.hostname,
-        path: target.path,
-        method: 'POST',
-        headers,
-        timeout: 300000,
-      }, upstreamResponse => {
-        if (response.destroyed) {
-          upstreamResponse.destroy();
-          return;
-        }
-        const status = upstreamResponse.statusCode || null;
-        const trace = upstreamTrace(upstreamResponse.headers);
-        upstreamResponse.once('error', () => {
-          if (!clientClosed) upstreamFailed = true;
-        });
-        upstreamResponse.once('close', () => {
-          if (!clientClosed && !upstreamResponse.readableEnded) upstreamFailed = true;
-        });
-        response.writeHead(upstreamResponse.statusCode || 502, responseHeaders(upstreamResponse.headers));
-        pipeline(upstreamResponse, response, error => {
-          if (error) {
-            upstream.destroy();
-            upstreamError(error);
+
+    response.once('close', () => {
+      if (!response.writableFinished && currentUpstream && !currentUpstream.destroyed) {
+        currentUpstream.destroy();
+      }
+    });
+
+    const sendUpstream = ({
+      requestBody,
+      attempt,
+      recovery = null,
+    }) => {
+      let headers;
+      try {
+        headers = upstreamHeaders(request.headers, target.provider, requestBody.length);
+      } catch (error) {
+        sendJson(response, error.statusCode || 500, { error: { message: error.message } });
+        return;
+      }
+
+      const requestHash = payloadHash(requestBody);
+      const upstreamInputItems = Array.isArray(parsed.input) ? parsed.input.length : null;
+      logEvent('info', 'request.forwarded', {
+        requestId,
+        sessionId: requestInfo.sessionId,
+        provider: target.provider,
+        model,
+        upstreamModel,
+        requestedModel,
+        fallbackReason,
+        stateReset,
+        routingPolicy: routingPolicy || 'default',
+        bytes: requestBody.length,
+        inputItems: recovery?.inputItems ?? upstreamInputItems,
+        payloadSha256: requestHash,
+        attempt,
+        recoveryStrategy: recovery?.compactionStrategy || null,
+        droppedItems: recovery?.droppedItems || 0,
+        droppedReasoningItems: recovery?.droppedReasoningItems || 0,
+        historyRepairs: attempt === 1
+          ? (toolHistoryRepairs?.changed ? toolHistoryRepairs : null)
+          : (recovery?.historyRepairs?.changed ? recovery.historyRepairs : null),
+      });
+
+      let upstream;
+      try {
+        upstream = target.protocol.request({
+          hostname: target.hostname,
+          path: target.path,
+          method: 'POST',
+          headers,
+          timeout: 300000,
+        }, upstreamResponse => {
+          if (response.destroyed) {
+            upstreamResponse.destroy();
+            return;
           }
-        });
-        logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_started', {
-          requestId,
-          sessionId: requestInfo.sessionId,
-          provider: target.provider,
-          model,
-          status,
-          timeToHeadersMs: Date.now() - startedAt,
-          ...trace,
-        });
-        upstreamResponse.on('end', () => {
-          if (clientClosed || upstreamFailed) return;
-          logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_finished', {
+          const status = upstreamResponse.statusCode || null;
+          const trace = upstreamTrace(upstreamResponse.headers);
+          upstreamResponse.once('error', () => {
+            if (!clientClosed) upstreamFailed = true;
+          });
+          upstreamResponse.once('close', () => {
+            if (!clientClosed && !upstreamResponse.readableEnded) upstreamFailed = true;
+          });
+
+          logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_started', {
             requestId,
             sessionId: requestInfo.sessionId,
             provider: target.provider,
             model,
             status,
-            durationMs: Date.now() - startedAt,
+            timeToHeadersMs: Date.now() - startedAt,
+            attempt,
+            payloadSha256: requestHash,
             ...trace,
           });
-        });
-      });
 
-      upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
-      upstream.on('error', upstreamError);
-      response.on('close', () => {
-        if (!response.writableFinished && !upstream.destroyed) upstream.destroy();
-      });
-      upstream.end(body);
-    } catch (error) {
-      upstream?.destroy();
-      upstreamError(error);
-    }
+          if (target.provider === 'openrouter' && status === 400) {
+            void (async () => {
+              const upstreamBody = await readUpstreamBody(upstreamResponse);
+              logEvent('error', 'upstream.response_finished', {
+                requestId,
+                sessionId: requestInfo.sessionId,
+                provider: target.provider,
+                model,
+                status,
+                durationMs: Date.now() - startedAt,
+                attempt,
+                payloadSha256: requestHash,
+                ...trace,
+              });
+
+              const capture = captureRejectedRequest({
+                requestId,
+                attempt,
+                requestBody,
+                responseBody: upstreamBody.body,
+              });
+              const upstreamErrorDetails = parseUpstreamError(upstreamBody.body);
+              logEvent('error', 'openrouter.request_rejected', {
+                requestId,
+                sessionId: requestInfo.sessionId,
+                model,
+                upstreamModel,
+                status,
+                attempt,
+                payloadSha256: requestHash,
+                bytes: requestBody.length,
+                inputItems: recovery?.inputItems ?? upstreamInputItems,
+                recoveryStrategy: recovery?.compactionStrategy || null,
+                droppedItems: recovery?.droppedItems || 0,
+                upstreamErrorCode: upstreamErrorDetails.errorCode,
+                upstreamErrorType: upstreamErrorDetails.errorType,
+                upstreamErrorSha256: payloadHash(upstreamBody.body),
+                upstreamErrorBytes: upstreamBody.bytes,
+                upstreamErrorTruncated: upstreamBody.truncated,
+                contextOverflow: upstreamErrorDetails.contextOverflow,
+                capture,
+                ...trace,
+              });
+
+              if (clientClosed || response.destroyed) return;
+              if (upstreamErrorDetails.contextOverflow) {
+                // Let Codex compact the thread itself instead of silently
+                // retrying with history the router chose to discard.
+                sendContextOverflow(response, requestId);
+                return;
+              }
+              if (!recoveryAttempted) {
+                const recovery = prepareOpenRouterRecovery(parsed, body);
+                if (recovery.changed) {
+                  recoveryAttempted = true;
+                  logEvent('info', 'openrouter.recovery_attempt', {
+                    requestId,
+                    sessionId: requestInfo.sessionId,
+                    model,
+                    upstreamModel,
+                    attempt: 2,
+                    previousPayloadSha256: requestHash,
+                    payloadSha256: payloadHash(recovery.body),
+                    bytes: recovery.body.length,
+                    inputItems: recovery.inputItems,
+                    compactionStrategy: recovery.compactionStrategy,
+                    droppedItems: recovery.droppedItems,
+                    droppedReasoningItems: recovery.droppedReasoningItems,
+                    historyRepairs: recovery.historyRepairs?.changed ? recovery.historyRepairs : null,
+                  });
+                  sendUpstream({ requestBody: recovery.body, attempt: 2, recovery });
+                  return;
+                }
+              }
+
+              if (clientClosed || response.destroyed) return;
+              logEvent('error', 'openrouter.fallback_completion', {
+                requestId,
+                sessionId: requestInfo.sessionId,
+                model,
+                upstreamModel,
+                attempt,
+                payloadSha256: requestHash,
+                ...trace,
+              });
+              sendResponsesDiagnostic(response, requestId);
+            })().catch(error => upstreamError(error));
+            return;
+          }
+
+          response.writeHead(status || 502, responseHeaders(upstreamResponse.headers));
+          pipeline(upstreamResponse, response, error => {
+            if (error) {
+              upstream.destroy();
+              upstreamError(error);
+            }
+          });
+          upstreamResponse.on('end', () => {
+            if (clientClosed || upstreamFailed) return;
+            logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_finished', {
+              requestId,
+              sessionId: requestInfo.sessionId,
+              provider: target.provider,
+              model,
+              status,
+              durationMs: Date.now() - startedAt,
+              attempt,
+              payloadSha256: requestHash,
+              ...trace,
+            });
+          });
+        });
+
+        currentUpstream = upstream;
+        upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
+        upstream.on('error', upstreamError);
+        upstream.end(requestBody);
+      } catch (error) {
+        upstream?.destroy();
+        upstreamError(error);
+      }
+    };
+
+    sendUpstream({ requestBody: body, attempt: 1 });
   });
 });
 

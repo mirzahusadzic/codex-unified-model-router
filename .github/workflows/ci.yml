@@ -48,19 +48,23 @@ jobs:
           import assert from 'node:assert/strict';
           import { readFileSync, readdirSync } from 'node:fs';
           const normalize = value => value.replace(/\r\n/g, '\n');
+          const instructions = normalize(readFileSync('prompts/openrouter-instructions.md', 'utf8'));
+          const persistent = normalize(readFileSync('prompts/openrouter-persistent.md', 'utf8'));
+          let openrouterEntries = 0;
           for (const file of readdirSync('catalog').filter(name => name.endsWith('.json'))) {
             const value = JSON.parse(readFileSync(`catalog/${file}`, 'utf8'));
             for (const model of Array.isArray(value) ? value : [value]) {
               assert.equal(typeof model.slug, 'string', `${file}: missing model slug`);
               assert.ok(model.slug.length > 0, `${file}: empty model slug`);
+              if (!model.slug.startsWith('openrouter/') && !model.slug.startsWith('deepseek/')) continue;
+              openrouterEntries += 1;
+              const stale = `${file}: rerun scripts/render-openrouter-entries.sh`;
+              assert.equal(normalize(model.base_instructions), instructions, stale);
+              assert.equal(normalize(model.model_messages.instructions_template), instructions, stale);
+              assert.equal(normalize(model.model_messages.persistent_instructions), persistent, stale);
             }
           }
-          const entry = JSON.parse(readFileSync('catalog/deepseek-model.json', 'utf8'));
-          const instructions = normalize(readFileSync('prompts/openrouter-instructions.md', 'utf8'));
-          const persistent = normalize(readFileSync('prompts/openrouter-persistent.md', 'utf8'));
-          assert.equal(normalize(entry.base_instructions), instructions);
-          assert.equal(normalize(entry.model_messages.instructions_template), instructions);
-          assert.equal(normalize(entry.model_messages.persistent_instructions), persistent);
+          assert.ok(openrouterEntries > 0);
           NODE
       - name: Check Bash syntax
         if: runner.os != 'Windows'

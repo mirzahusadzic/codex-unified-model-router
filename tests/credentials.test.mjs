@@ -46,6 +46,16 @@ test('upgrades an existing quoted key without requiring it in the environment', 
   assert.match(readFileSync(envFile, 'utf8'), /^OPENROUTER_API_KEY=synthetic-stored-key\nCODEX_ROUTER_TOKEN=[a-f0-9]{64}\n$/);
 });
 
+test('reinstallation keeps router settings stored beside the credentials', t => {
+  const { envFile } = fixture(t);
+  writeFileSync(envFile, 'OPENROUTER_API_KEY=synthetic-stored-key\nCODEX_ROUTER_LOG_LEVEL=info\n'
+    + 'CODEX_ROUTER_REJECTED_REQUEST_DIR=/private/captures\n');
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-new-key'));
+  assert.match(readFileSync(envFile, 'utf8'), new RegExp('^OPENROUTER_API_KEY=synthetic-new-key\\n'
+    + 'CODEX_ROUTER_TOKEN=[a-f0-9]{64}\\nCODEX_ROUTER_LOG_LEVEL=info\\n'
+    + 'CODEX_ROUTER_REJECTED_REQUEST_DIR=/private/captures\\n$'));
+});
+
 test('rejects missing credentials and environment-file injection without exposing the key', t => {
   const { envFile } = fixture(t);
   for (const key of ['', 'synthetic-secret\nCODEX_ROUTER_TOKEN=injected']) {
