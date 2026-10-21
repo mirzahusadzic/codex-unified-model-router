@@ -96,8 +96,12 @@ function validRequest(body) {
         && (body.text.format.type == null || typeof body.text.format.type === 'string')))));
 }
 
+// OpenRouter slugs: `deepseek/` and `openrouter/<vendor>/<model>`, plus the
+// `ultra-spark/` alias, which selects DeepSeek with the delegation policy.
+const openrouterPrefixes = ['deepseek/', 'openrouter/', 'ultra-spark/'];
+
 function routeFor(model) {
-  if (typeof model === 'string' && (model.startsWith('deepseek/') || model.startsWith('openrouter/'))) {
+  if (typeof model === 'string' && openrouterPrefixes.some(prefix => model.startsWith(prefix))) {
     return {
       provider: 'openrouter',
       hostname: 'openrouter.ai',
@@ -114,9 +118,9 @@ function routeFor(model) {
 }
 
 function upstreamModelFor(model, provider) {
-  if (provider === 'openrouter' && typeof model === 'string' && model.startsWith('openrouter/')) {
-    return model.slice('openrouter/'.length);
-  }
+  if (provider !== 'openrouter' || typeof model !== 'string') return model;
+  if (model.startsWith('openrouter/')) return model.slice('openrouter/'.length);
+  if (model.startsWith('ultra-spark/')) return `deepseek/${model.slice('ultra-spark/'.length)}`;
   return model;
 }
 

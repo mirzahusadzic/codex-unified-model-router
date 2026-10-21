@@ -52,7 +52,7 @@ test('Ultra Spark is DeepSeek with a delegation policy that keeps thread history
   const identity = ['slug', 'display_name', 'description', 'priority', 'default_reasoning_level', suffixField,
     'base_instructions', 'model_messages'];
   const capabilities = entry => Object.fromEntries(Object.entries(entry).filter(([key]) => !identity.includes(key)));
-  assert.equal(ultraSpark.slug, 'openrouter/deepseek/deepseek-v4.1-flash-1017');
+  assert.equal(ultraSpark.slug, 'ultra-spark/deepseek-v4.1-flash-1017');
   assert.equal(ultraSpark.display_name, 'DeepSeek V4.1 Flash 1017 · Ultra Spark');
   assert.deepEqual(capabilities(ultraSpark), capabilities(deepseek));
   assert.equal(ultraSpark[suffixField], 'ultra-spark.md');

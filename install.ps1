@@ -241,6 +241,6 @@ if ($NativeModels -eq 'hide') {
     Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)'
 }
 Write-Host 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)'
-Write-Host 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)'
+Write-Host 'Ultra Spark mode:      codex -m ultra-spark/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)'
 Write-Host ''
 Write-Host 'Restart Codex windows created before this install; they keep the provider they were started with.'

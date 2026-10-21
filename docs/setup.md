@@ -98,7 +98,7 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 ## Ultra Spark mode
 
-**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`openrouter/deepseek/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with one addition: [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) makes delegation the default: it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool, running up to 10 at once. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
+**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with one addition: [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) makes delegation the default: it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool, running up to 10 at once. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
 
 Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor): Meta trains on everything they receive. Use the mode only for code you are willing to share, and start it in a fresh thread. A thread that already holds other models' output, such as native OpenAI turns, should not be handed to it.
 
@@ -109,7 +109,7 @@ Switch it on or off in a thread with `/model`. Workers inherit the [Muse contrib
 | `gpt-6-astra` | Native Codex backend | `gpt-6-astra` |
 | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
 | `openrouter/meta/muse-spark-1.3-contributor` | OpenRouter | `meta/muse-spark-1.3-contributor` |
-| `openrouter/deepseek/deepseek-v4.1-flash-1017` (Ultra Spark) | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
+| `ultra-spark/deepseek-v4.1-flash-1017` (Ultra Spark) | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
 | `openrouter/vendor/model` | OpenRouter | `vendor/model` |
 
 The same catalog is available to main threads, child-thread model overrides, and scheduling interfaces that expose a model field.
@@ -175,7 +175,7 @@ Spark, whose Muse workers use the same profile:
 
 ```sh
 codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
-codex --profile unified-openrouter --model openrouter/deepseek/deepseek-v4.1-flash-1017   # Ultra Spark
+codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017   # Ultra Spark
 codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
 ```
 

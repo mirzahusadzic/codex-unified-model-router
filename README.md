@@ -43,7 +43,7 @@ For an existing Codex configuration, add `--force` (Windows: `-Force`) on the fi
 
 ```sh
 codex                                                   # DeepSeek V4.1 Flash 1017
-codex -m openrouter/deepseek/deepseek-v4.1-flash-1017   # Ultra Spark mode
+codex -m ultra-spark/deepseek-v4.1-flash-1017   # Ultra Spark mode
 codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contributor
 ```
 

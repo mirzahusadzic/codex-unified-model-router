@@ -22,7 +22,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 
 For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
 
-Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, while `deepseek/` is preserved. Other slugs route to the native Codex backend.
+Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, `deepseek/` is preserved, and the `ultra-spark/` alias forwards as `deepseek/` with the Ultra Spark prompt. Other slugs route to the native Codex backend.
 
 After editing the maintained prompts or adding an OpenRouter entry, run `node scripts/render-openrouter-entries.mjs` and include the updated catalog entries. An entry can append one more prompt from `prompts/` by naming it in `router_instructions_suffix`; the generated Codex catalog omits that field. Keep model-specific context settings in the catalog; preserve native models' bundled limits.
 

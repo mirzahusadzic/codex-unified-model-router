@@ -285,6 +285,6 @@ else
   printf 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)\n'
 fi
 printf 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)\n'
-printf 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)\n'
+printf 'Ultra Spark mode:      codex -m ultra-spark/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)\n'
 printf '\nIn an existing session, child threads may use the same model names through spawn_agent model overrides.\n'
 printf 'Restart Codex windows created before this install; they keep the provider they were started with.\n'

@@ -239,7 +239,8 @@ test('OpenAI can continue mixed history after a DeepSeek turn', async () => {
 test('DeepSeek structured output stays on DeepSeek as JSON mode with the schema appended last', async () => {
   const schema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
   const format = { type: 'json_schema', name: 'city', strict: true, schema };
-  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017']) {
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017',
+    'ultra-spark/deepseek-v4.1-flash-1017']) {
     for (const headers of [{}, { 'x-codex-routing-policy': 'preserve-model-v1' }]) {
       const upstream = await send({ model, input: mixedHistory, text: { format, verbosity: 'low' } }, headers);
       assert.equal(upstream.hostname, 'openrouter.ai');
@@ -376,7 +377,8 @@ test('only DeepSeek reasoning efforts are remapped; other OpenRouter models keep
   for (const [requested, deepseek] of [
     ['minimal', 'max'], ['low', 'low'], ['medium', 'high'], ['high', 'high'], ['xhigh', 'max'], ['max', 'max'],
   ]) {
-    for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017']) {
+    for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017',
+    'ultra-spark/deepseek-v4.1-flash-1017']) {
       const upstream = await send({ model, input: 'Hello', reasoning: { effort: requested } });
       assert.deepEqual(upstream.body.reasoning, { effort: deepseek });
     }
