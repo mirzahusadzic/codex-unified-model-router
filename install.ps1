@@ -81,8 +81,8 @@ try {
     & node (Join-Path $RepoDir 'scripts\build-catalog.mjs') `
         '--bundled' $BundledFile `
         '--catalog-dir' (Join-Path $RepoDir 'catalog') `
-        '--instructions' (Join-Path $RepoDir 'prompts\deepseek-instructions.md') `
-        '--persistent' (Join-Path $RepoDir 'prompts\deepseek-persistent.md') `
+        '--instructions' (Join-Path $RepoDir 'prompts\openrouter-instructions.md') `
+        '--persistent' (Join-Path $RepoDir 'prompts\openrouter-persistent.md') `
         '--output' $ModelsFile
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
 

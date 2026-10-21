@@ -56,8 +56,8 @@ jobs:
             }
           }
           const entry = JSON.parse(readFileSync('catalog/deepseek-model.json', 'utf8'));
-          const instructions = normalize(readFileSync('prompts/deepseek-instructions.md', 'utf8'));
-          const persistent = normalize(readFileSync('prompts/deepseek-persistent.md', 'utf8'));
+          const instructions = normalize(readFileSync('prompts/openrouter-instructions.md', 'utf8'));
+          const persistent = normalize(readFileSync('prompts/openrouter-persistent.md', 'utf8'));
           assert.equal(normalize(entry.base_instructions), instructions);
           assert.equal(normalize(entry.model_messages.instructions_template), instructions);
           assert.equal(normalize(entry.model_messages.persistent_instructions), persistent);

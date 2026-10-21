@@ -81,8 +81,8 @@ codex debug models --bundled > "$tmp_dir/bundled-models.json"
 node "$repo_dir/scripts/build-catalog.mjs" \
   --bundled "$tmp_dir/bundled-models.json" \
   --catalog-dir "$repo_dir/catalog" \
-  --instructions "$repo_dir/prompts/deepseek-instructions.md" \
-  --persistent "$repo_dir/prompts/deepseek-persistent.md" \
+  --instructions "$repo_dir/prompts/openrouter-instructions.md" \
+  --persistent "$repo_dir/prompts/openrouter-persistent.md" \
   --output "$tmp_dir/models.json"
 
 node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"

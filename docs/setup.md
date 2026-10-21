@@ -175,10 +175,10 @@ For an OpenRouter model:
 
 The router removes the `openrouter/` prefix before forwarding. The model becomes available through the shared catalog.
 
-The DeepSeek entry uses maintained instructions from [`prompts/`](../prompts/). After editing those files, refresh the checked-in entry:
+The DeepSeek entry uses maintained instructions from [`prompts/`](../prompts/). After editing those files, refresh the checked-in entries:
 
 ```sh
-./scripts/render-deepseek-entry.sh
+./scripts/render-openrouter-entries.sh
 ```
 
 The installer also injects these instructions into its generated catalog.

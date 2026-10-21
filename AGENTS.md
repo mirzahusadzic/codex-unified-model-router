@@ -15,7 +15,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 | --- | --- |
 | Request routing, history normalization, streaming | `router/unified-router.mjs` |
 | Add or update an OpenRouter model | `catalog/*.json` |
-| DeepSeek instructions | `prompts/deepseek-instructions.md`, `prompts/deepseek-persistent.md` |
+| Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |
 | Catalog generation or managed Codex settings | `scripts/build-catalog.mjs`, `scripts/merge-config.mjs` |
 | Installation or service startup | `install.sh`, `install.ps1` |
 
@@ -23,7 +23,7 @@ For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/
 
 Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, while `deepseek/` is preserved. Other slugs route to the native Codex backend.
 
-After editing the maintained DeepSeek prompts, run `./scripts/render-deepseek-entry.sh` (requires `jq`) and include the updated catalog entry. Keep model-specific context settings in the catalog; preserve native models' bundled limits.
+After editing the maintained prompts, run `./scripts/render-openrouter-entries.sh` (requires `jq`) and include the updated catalog entries. Keep model-specific context settings in the catalog; preserve native models' bundled limits.
 
 ## Preserve these behaviors
 
