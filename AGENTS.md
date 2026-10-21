@@ -7,6 +7,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 - [README.md](README.md): installation and everyday usage.
 - [docs/setup.md](docs/setup.md): configuration, model catalogs, and context limits.
 - [docs/operations.md](docs/operations.md): services, logs, and rollback.
+- [CONTRIBUTING.md](CONTRIBUTING.md): project layout and what each script does.
 - Development needs Node.js 20+; no dependency install or build step is required. Run `node --test` from the repository root. Tests use fake upstreams and need no credentials or network.
 
 ## Common changes
