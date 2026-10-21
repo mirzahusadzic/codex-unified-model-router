@@ -51,6 +51,24 @@ if (!/^[a-f0-9]{64}$/.test(routerToken)) {
   throw new Error('A 64-character hex CODEX_ROUTER_TOKEN is required; rerun the installer');
 }
 
+// Optional OpenRouter endpoint preferences, for example
+// `deepseek/deepseek-v4.1-flash-1017=deepseek`. Separate models with `;`.
+function parseProviderOrders(value) {
+  const orders = new Map();
+  for (const entry of value.split(';').map(part => part.trim()).filter(Boolean)) {
+    const match = entry.match(/^([^=\s]+)\s*=\s*(.+)$/);
+    const providers = match?.[2].split(',').map(provider => provider.trim()).filter(Boolean) || [];
+    if (!match || providers.length === 0 || providers.some(provider => /\s/.test(provider))) {
+      throw new Error('CODEX_ROUTER_PROVIDER_ORDER entries must look like model=provider[,provider]');
+    }
+    orders.set(match[1], providers);
+  }
+  return orders;
+}
+const providerOrders = parseProviderOrders(String(
+  process.env.CODEX_ROUTER_PROVIDER_ORDER || fileEnvironment.CODEX_ROUTER_PROVIDER_ORDER || '',
+));
+
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
 const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
 const openrouterRecoveryCompactBytes = 1024 * 1024;
@@ -672,7 +690,13 @@ const server = http.createServer((request, response) => {
 
     const upstreamModel = upstreamModelFor(model, target.provider);
     let toolHistoryRepairs = null;
+    let providerOrder = null;
     if (target.provider === 'openrouter') {
+      // Fallbacks stay enabled so an endpoint outage degrades to a cache miss.
+      if (providerOrders.has(upstreamModel) && parsed.provider === undefined) {
+        providerOrder = providerOrders.get(upstreamModel);
+        parsed.provider = { order: providerOrder };
+      }
       stateReset = normalizeStateForOpenRouter(parsed);
       normalizeReasoningForOpenRouter(parsed.reasoning);
       const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
@@ -745,6 +769,7 @@ const server = http.createServer((request, response) => {
         upstreamModel,
         requestedModel,
         fallbackReason,
+        providerOrder,
         stateReset,
         routingPolicy: routingPolicy || 'default',
         bytes: requestBody.length,

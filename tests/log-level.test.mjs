@@ -27,6 +27,7 @@ function start(level, envFile = fileURLToPath(new URL('./missing.env', import.me
     CODEX_ROUTER_TOKEN: 'a'.repeat(64),
     OPENROUTER_API_KEY: 'test-openrouter-key',
   };
+  delete env.CODEX_ROUTER_PROVIDER_ORDER;
   if (level === undefined) delete env.CODEX_ROUTER_LOG_LEVEL;
   else env.CODEX_ROUTER_LOG_LEVEL = level;
   return spawnSync(process.execPath, ['--input-type=module', '--eval', harness], { encoding: 'utf8', env });
@@ -50,6 +51,19 @@ test('router reads the log level from its environment file', t => {
   const info = start(undefined, envFile);
   assert.equal(info.status, 0, info.stderr);
   assert.match(info.stdout, /"event":"router\.ready"/);
+});
+
+test('router reads endpoint preferences from its environment file and rejects malformed ones', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-provider-order-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const envFile = join(directory, 'openrouter.env');
+  writeFileSync(envFile, 'CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek\n');
+  const valid = start(undefined, envFile);
+  assert.equal(valid.status, 0, valid.stderr);
+  writeFileSync(envFile, 'CODEX_ROUTER_PROVIDER_ORDER=google-vertex/us\n');
+  const invalid = start(undefined, envFile);
+  assert.notEqual(invalid.status, 0);
+  assert.match(invalid.stderr, /CODEX_ROUTER_PROVIDER_ORDER entries must look like model=provider/);
 });
 
 test('router rejects unknown log levels', () => {

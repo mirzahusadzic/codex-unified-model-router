@@ -35,6 +35,8 @@ $env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
 
 For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up.
 
+The installer also turns off Codex's ChatGPT apps (`[features] apps = false`). Their connector tools add about 65,000 tokens to every request, including OpenRouter requests. To keep them, install with `CODEX_ROUTER_DISABLE_APPS=0`. [Details →](docs/setup.md#chatgpt-apps)
+
 **Restart Codex and start a new thread after installation.** If you use the shared app-server daemon, [restart it once](docs/setup.md#activate-the-provider) to load the provider.
 
 ## Use
@@ -44,7 +46,7 @@ codex -m gpt-6-astra
 codex -m deepseek/deepseek-v4.1-flash-1017
 ```
 
-Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. By default, structured-output requests on OpenRouter routes fall back to OpenAI.
+Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. By default, structured-output requests on OpenRouter routes fall back to OpenAI. To prefer specific OpenRouter endpoints for a model, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
 A pre-stream OpenRouter rejection gets one bounded recovery attempt; a context-window rejection is reported to Codex so it can compact the thread. If recovery fails, the router returns a completed diagnostic instead of breaking the Codex thread; the real status and identifiers remain in the router error log.
 

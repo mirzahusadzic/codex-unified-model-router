@@ -13,11 +13,13 @@ function fixture(t) {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   return { home, envFile: join(home, 'unified-router', 'openrouter.env'), config: join(home, 'config.toml') };
 }
-function run(script, args, key = '') {
+function run(script, args, key = '', extraEnv = {}) {
   return spawnSync(process.execPath, [join(root, script), ...args], {
-    encoding: 'utf8', env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '' },
+    encoding: 'utf8',
+    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', ...extraEnv },
   });
 }
+const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
 function succeeds(result) {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, '', 'credentials must not be printed');
@@ -81,6 +83,66 @@ test('config upgrades preserve unrelated tables and synchronize the local token'
   assert.equal(readFileSync(config, 'utf8'), first);
   writeFileSync(config, first.replace(/X-Codex-Router-Token" = "[a-f0-9]+/, 'X-Codex-Router-Token" = "wrong'));
   assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
+});
+
+test('config merges disable Codex apps by default inside a single features table', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  const args = [config, home, config, envFile, profile];
+
+  succeeds(run('scripts/merge-config.mjs', args));
+  const created = readFileSync(config, 'utf8');
+  assert.match(created, /# BEGIN codex-unified-router features\n\[features\]\napps = false\n# END codex-unified-router features/);
+  assert.equal(featureHeaders(created), 1);
+  assert.doesNotMatch(readFileSync(profile, 'utf8'), /features/);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+
+  writeFileSync(config, '[features]\napps = true\nshell_tool = false\n\n[profiles.review]\nmodel = "review-model"\n');
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  assert.match(merged, /\[features\]\n# BEGIN codex-unified-router features\napps = false\n# END codex-unified-router features\nshell_tool = false/);
+  assert.doesNotMatch(merged, /apps = true/);
+  assert.equal(featureHeaders(merged), 1);
+  assert.match(merged, /\[profiles\.review\]\nmodel = "review-model"/);
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.equal(readFileSync(config, 'utf8'), merged);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+});
+
+test('CODEX_ROUTER_DISABLE_APPS=0 leaves Codex apps to the user', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  // A key added below the router-created header must keep its table.
+  writeFileSync(config, readFileSync(config, 'utf8')
+    .replace('# END codex-unified-router features\n', '# END codex-unified-router features\nshell_tool = false\n'));
+
+  const keep = { CODEX_ROUTER_DISABLE_APPS: '0' };
+  succeeds(run('scripts/merge-config.mjs', args, '', keep));
+  const text = readFileSync(config, 'utf8');
+  assert.doesNotMatch(text, /codex-unified-router features|apps = false/);
+  assert.match(text, /\[features\]\nshell_tool = false/);
+  succeeds(run('scripts/verify-credentials.mjs', [home], '', keep));
+  assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
+
+  succeeds(run('scripts/merge-config.mjs', args));
+  const restored = readFileSync(config, 'utf8');
+  assert.match(restored, /\[features\]\n# BEGIN codex-unified-router features\napps = false\n# END codex-unified-router features\nshell_tool = false/);
+  assert.equal(featureHeaders(restored), 1);
+});
+
+test('apps management refuses top-level feature keys and unknown settings without writing', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const output = join(home, 'merged.toml');
+  writeFileSync(config, 'features.apps = true\n');
+  assert.notEqual(run('scripts/merge-config.mjs', [config, home, output, envFile]).status, 0);
+  assert.notEqual(run('scripts/merge-config.mjs', [config, home, output, envFile], '', { CODEX_ROUTER_DISABLE_APPS: 'yes' }).status, 0);
+  assert.throws(() => statSync(output));
+  succeeds(run('scripts/merge-config.mjs', [config, home, output, envFile], '', { CODEX_ROUTER_DISABLE_APPS: '0' }));
+  assert.match(readFileSync(output, 'utf8'), /^features\.apps = true$/m);
 });
 
 test('router refuses to start without a local authentication token', t => {

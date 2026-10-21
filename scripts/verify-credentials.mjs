@@ -37,6 +37,11 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
   if (JSON.stringify(provider) !== JSON.stringify(expected)) {
     throw new Error('Managed transport settings or local tokens differ; rerun the installer');
   }
+  if (!openrouterOnly && (process.env.CODEX_ROUTER_DISABLE_APPS ?? '1') === '1'
+      && (!managedBlock(config, 'features').includes('apps = false')
+        || config.split(/\r?\n/).filter(line => line.trim() === '[features]').length !== 1)) {
+    throw new Error('Codex apps are not disabled by the managed configuration; rerun the installer');
+  }
 }
 if (process.platform !== 'win32') {
   for (const file of [envFile, configFile, profileFile, join(codexHome, 'unified-router')]) {

@@ -18,6 +18,7 @@ process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
 process.env.CODEX_ROUTER_LOG_LEVEL = 'info';
+process.env.CODEX_ROUTER_PROVIDER_ORDER = 'vendor/pinned = google-vertex/us, google-ai-studio; vendor/other=other-endpoint';
 const clientHeaders = {
   host: '127.0.0.1:18766',
   'content-type': 'application/json',
@@ -353,6 +354,22 @@ test('DeepSeek and other OpenRouter routes retain their reasoning history', asyn
     assert.equal(upstream.headers.authorization, 'Bearer test-openrouter-key');
     assert.equal(upstream.headers['chatgpt-account-id'], undefined);
   }
+});
+
+test('configured OpenRouter endpoint preferences apply only to their model', async () => {
+  const logsBefore = parsedLogEntries().length;
+  const pinned = await send({ model: 'openrouter/vendor/pinned', input: 'Hello' });
+  assert.deepEqual(pinned.body.provider, { order: ['google-vertex/us', 'google-ai-studio'] });
+  const forwardedLog = parsedLogEntries().slice(logsBefore).find(entry => entry.event === 'request.forwarded');
+  assert.deepEqual(forwardedLog.providerOrder, ['google-vertex/us', 'google-ai-studio']);
+
+  const unpinned = await send({ model: 'openrouter/vendor/model', input: 'Hello' });
+  assert.equal(unpinned.body.provider, undefined);
+  const explicit = await send({ model: 'openrouter/vendor/pinned', input: 'Hello', provider: { only: ['custom'] } });
+  assert.deepEqual(explicit.body.provider, { only: ['custom'] });
+  const native = await send({ model: 'vendor/pinned', input: 'Hello' });
+  assert.equal(native.hostname, 'chatgpt.com');
+  assert.equal(native.body.provider, undefined);
 });
 
 test('OpenRouter continuation is stateless without forwarding the native session ID', async () => {

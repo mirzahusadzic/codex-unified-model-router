@@ -13,6 +13,15 @@ const managedKeysMarker = '# BEGIN codex-unified-router managed keys';
 const managedKeysEnd = '# END codex-unified-router managed keys';
 const managedProviderMarker = '# BEGIN codex-unified-router provider';
 const managedProviderEnd = '# END codex-unified-router provider';
+const managedFeaturesMarker = '# BEGIN codex-unified-router features';
+const managedFeaturesEnd = '# END codex-unified-router features';
+
+// ChatGPT apps add tens of thousands of connector-tool tokens to every
+// request, including OpenRouter requests. Set CODEX_ROUTER_DISABLE_APPS=0 to
+// leave Codex's own apps setting untouched.
+const disableAppsSetting = process.env.CODEX_ROUTER_DISABLE_APPS ?? '1';
+if (!['0', '1'].includes(disableAppsSetting)) throw new Error('CODEX_ROUTER_DISABLE_APPS must be 0 or 1');
+const managedFeatures = disableAppsSetting === '1' ? ['apps = false'] : null;
 function readExisting(path) {
   return path && existsSync(path) ? readFileSync(path, 'utf8') : '';
 }
@@ -24,13 +33,43 @@ if (openrouterProfileFile && existsSync(profilePath) && force !== '--force'
   throw new Error('Existing unmanaged unified-openrouter profile; rerun the installer with --force (Windows: -Force) to merge it');
 }
 
-function merge(existing, ownedKeys, keys, provider) {
+function merge(existing, ownedKeys, keys, provider, features = null) {
   const preserved = [];
   let insideManagedKeys = false;
   let insideManagedProvider = false;
+  let insideManagedFeatures = false;
   let insideUnmanagedUnifiedProvider = false;
+  let insideFeatures = false;
+  let featuresPlaced = false;
+  let managedFeaturesHeader = false;
+  let orphanedFeatures = false;
   let topLevel = true;
   for (const line of existing.split(/\r?\n/)) {
+    if (line.trim() === managedFeaturesMarker) {
+      insideManagedFeatures = true;
+      managedFeaturesHeader = false;
+      continue;
+    }
+    if (line.trim() === managedFeaturesEnd) {
+      insideManagedFeatures = false;
+      // Keys added below a router-created [features] header still need it.
+      orphanedFeatures = managedFeaturesHeader;
+      continue;
+    }
+    if (insideManagedFeatures) {
+      if (line.trim() === '[features]') managedFeaturesHeader = true;
+      continue;
+    }
+    if (orphanedFeatures && line.trim() !== '' && !line.trim().startsWith('#')) {
+      orphanedFeatures = false;
+      if (!line.trim().startsWith('[')) {
+        preserved.push('[features]');
+        if (features && !featuresPlaced) preserved.push(managedFeaturesMarker, ...features, managedFeaturesEnd);
+        featuresPlaced ||= Boolean(features);
+        insideFeatures = true;
+        topLevel = false;
+      }
+    }
     if (line.trim() === managedKeysMarker) {
       insideManagedKeys = true;
       continue;
@@ -59,17 +98,32 @@ function merge(existing, ownedKeys, keys, provider) {
       if (tableName) insideUnmanagedUnifiedProvider = false;
       else continue;
     }
+    if (tableName) insideFeatures = tableName === 'features';
+    if (features && topLevel && /^\s*features\s*[.=]/.test(line)) {
+      throw new Error('Move top-level features settings into a [features] table, or set CODEX_ROUTER_DISABLE_APPS=0');
+    }
+    if (features && tableName === 'features' && !featuresPlaced) {
+      preserved.push(line, managedFeaturesMarker, ...features, managedFeaturesEnd);
+      featuresPlaced = true;
+      continue;
+    }
 
     const key = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1];
     if (topLevel && key && ownedKeys.includes(key)) continue;
+    if (features && insideFeatures && key === 'apps') continue;
     preserved.push(line);
   }
-  if (insideManagedKeys || insideManagedProvider) throw new Error('Unterminated managed configuration block; repair it before merging');
+  if (insideManagedKeys || insideManagedProvider || insideManagedFeatures) {
+    throw new Error('Unterminated managed configuration block; repair it before merging');
+  }
   while (preserved.length > 0 && preserved[0].trim() === '') preserved.shift();
   while (preserved.length > 0 && preserved.at(-1).trim() === '') preserved.pop();
   return [
     [managedKeysMarker, ...keys, managedKeysEnd].join('\n'),
     preserved.join('\n'),
+    features && !featuresPlaced
+      ? [managedFeaturesMarker, '[features]', ...features, managedFeaturesEnd].join('\n')
+      : '',
     [managedProviderMarker, ...provider, managedProviderEnd].join('\n'),
   ].filter(Boolean).join('\n\n') + '\n';
 }
@@ -91,7 +145,7 @@ const provider = [
   `http_headers = { "X-Codex-Router-Token" = "${routerToken}" }`,
 ];
 
-const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider);
+const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider, managedFeatures);
 const profile = openrouterProfileFile ? merge(existingProfile, ['model_provider', 'model_catalog_json'], [
   'model_provider = "unified"',
   `model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`,

@@ -8,7 +8,7 @@ The installer uses `~/.codex` by default and respects `CODEX_HOME`. It:
 
 1. Backs up existing configuration and catalog files.
 2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/).
-3. Updates managed settings in `config.toml`, preserving unrelated sections.
+3. Updates managed settings in `config.toml`, preserving unrelated sections, and [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`.
 4. Merges managed transport settings into `unified-openrouter.config.toml` for OpenRouter without ChatGPT authentication, preserving unrelated preferences.
 5. Installs the router and OpenRouter key under `unified-router/`.
 6. Configures automatic startup and checks the local health endpoint.
@@ -44,9 +44,18 @@ wire_api = "responses"
 requires_openai_auth = true
 supports_websockets = false
 http_headers = { "X-Codex-Router-Token" = "<generated-by-installer>" }
+
+[features]
+apps = false
 ```
 
 The installer supplies the actual catalog path and a random local router token. Rerunning it reapplies these managed values and retains the token.
+
+### ChatGPT apps
+
+Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
+
+The installer therefore manages `apps = false`. It edits an existing `[features]` table in place, keeping its other keys, or adds one; the managed line sits between `# BEGIN/END codex-unified-router features` markers. The OpenRouter-only profile inherits the setting. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0` (PowerShell: `$env:CODEX_ROUTER_DISABLE_APPS = '0'`) and run the verifier with the same value; the installer then removes its managed line and leaves `apps` to you. Top-level `features.*` keys must move into a `[features]` table first. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
 
 ## DeepSeek context window
 
@@ -79,6 +88,17 @@ The same catalog is available to main threads, child-thread model overrides, and
 - **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with a bounded recent tail of the latest turn. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread. Exact rejected bodies are never logged; an explicit `CODEX_ROUTER_REJECTED_REQUEST_DIR` setting can capture them privately for diagnosis.
 - **Structured output:** By default, OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback, or use the [model-preserving routing policy](#routing-policy) to reject substitution.
 - **Streaming:** Responses are piped through as they arrive. Client disconnects cancel unfinished upstream requests.
+- **Endpoint preferences:** `CODEX_ROUTER_PROVIDER_ORDER` can [prefer specific OpenRouter endpoints](#openrouter-endpoint-preferences) per model.
+
+### OpenRouter endpoint preferences
+
+OpenRouter chooses an endpoint for each request. To prefer particular endpoints for a model, add `CODEX_ROUTER_PROVIDER_ORDER` to `unified-router/openrouter.env`, which the installer keeps, and restart the router:
+
+```sh
+CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
+```
+
+The key is the upstream model slug, without the `openrouter/` prefix. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
 
 ## Routing policy
 

@@ -21,7 +21,7 @@ test('no-service installer guards collisions before mutation and preserves backe
     : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
   const environment = { ...process.env, HOME: directory, CODEX_HOME: home,
     PATH: bin + (windows ? ';' : ':') + process.env.PATH, OPENROUTER_API_KEY: 'synthetic-install-key',
-    CODEX_ROUTER_TOKEN: '' };
+    CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' };
   function invoke(verify = false, force = false) {
     const script = verify ? 'scripts/verify-install' : 'install';
     return spawnSync(windows ? 'powershell.exe' : 'bash', windows
