@@ -12,6 +12,7 @@ process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
+process.env.CODEX_ROUTER_LOG_LEVEL = 'info';
 const clientHeaders = {
   host: '127.0.0.1:18766',
   'content-type': 'application/json',
@@ -147,6 +148,8 @@ test('structured-output fallback also normalizes DeepSeek history for OpenAI', a
   assert.equal(upstream.body.model, 'gpt-6-astra');
   assert.deepEqual(upstream.body.input, mixedHistory.filter(item => item !== deepseekReasoning));
   assert.deepEqual(upstream.body.text.format, format);
+  const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
+  assert.equal(forwardedLog.fallbackReason, 'openrouter_structured_output_unsupported');
 });
 
 test('preserve-model policy refuses structured-output substitution without contacting an upstream', async () => {
@@ -338,11 +341,18 @@ test('OpenRouter keeps sequential tool rounds separate and orders parallel outpu
 });
 
 test('structured router logs correlate requests without recording bodies or credentials', async () => {
+  const ready = parsedLogEntries().find(entry => entry.event === 'router.ready');
+  assert.match(ready.revision, /^[a-f0-9]{64}$/);
   const before = logEntries.length;
   const sensitiveBody = 'ROUTER_PRIVATE_BODY_VALUE';
   await send({ model: 'openrouter/vendor/model', input: sensitiveBody }, {
     'x-private-header': 'ROUTER_PRIVATE_HEADER_VALUE', session_id: 'session-log-test',
   });
+  const rejected = await exchange(JSON.stringify({
+    model: 'openrouter/vendor/model',
+    text: { format: { type: 'json_schema' } },
+  }), { 'x-codex-routing-policy': 'preserve-model-v1' });
+  assert.equal(rejected.status, 422);
   await new Promise(resolve => setImmediate(resolve));
 
   const entries = parsedLogEntries().slice(before);
@@ -356,6 +366,11 @@ test('structured router logs correlate requests without recording bodies or cred
   const completed = entries.find(entry => entry.event === 'request.finished'
     && entry.requestId === forwarded.requestId);
   assert.equal(completed.sessionId, 'session-log-test');
+  assert.equal(completed.level, 'info');
+  assert.equal(completed.status, 200);
+  const rejectedFinished = entries.filter(entry => entry.event === 'request.finished').at(-1);
+  assert.equal(rejectedFinished.level, 'error');
+  assert.equal(rejectedFinished.status, 422);
   for (const entry of [started, finished]) {
     assert.equal(entry.generationId, 'gen_test');
     assert.equal(entry.providerName, 'TestProvider');
@@ -420,11 +435,16 @@ for (const phase of ['before headers', 'after headers', 'during streaming', 'aft
       assert.deepEqual(received, ['data: first chunk\n\n']);
       assert.equal(upstream.destroyed, false);
     }
+    const before = logEntries.length;
     const closed = once(response, 'close');
     if (phase === 'after completion') upstreamResponse.end();
     else response.destroy();
     await closed;
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(upstream.destroyed, phase !== 'after completion');
+    const events = parsedLogEntries().slice(before).map(entry => entry.event);
+    assert.equal(events.includes('request.aborted'), phase !== 'after completion');
+    assert.equal(events.includes('upstream.error'), false);
   });
 }
 
@@ -515,10 +535,14 @@ for (const failure of ['error', 'premature close']) {
     handleRequest(request, response);
     request.end('{"model":"gpt-6-astra"}');
     await new Promise(resolve => setImmediate(resolve));
+    const before = logEntries.length;
     upstreamResponse.write('data: first\n\n');
     upstreamResponse.destroy(failure === 'error' ? new Error('upstream reset') : undefined);
     await closed;
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(response.destroyed, true);
     assert.equal(upstream.destroyed, true);
+    const events = parsedLogEntries().slice(before).map(entry => entry.event);
+    assert.deepEqual(events, ['upstream.error']);
   });
 }

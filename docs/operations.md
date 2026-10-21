@@ -21,34 +21,11 @@ launchctl print "gui/$(id -u)/com.mirza.codex-unified-router"
 launchctl kickstart -k "gui/$(id -u)/com.mirza.codex-unified-router"
 ```
 
-Logs:
+Standard output (`info`) and standard error (`error`) logs:
 
 ```text
 ~/Library/Logs/codex-unified-router.log
 ~/Library/Logs/codex-unified-router.error.log
-```
-
-Router output is newline-delimited JSON. Request-scoped events share a
-`requestId`, while OpenRouter responses also record the upstream
-`generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when
-those headers are present. Useful events include:
-
-- `request.forwarded`: model route, request size, input item count, and any history repair.
-- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records that were normalized.
-- `upstream.response_started`: status and time to upstream headers.
-- `upstream.response_finished`: final status and duration.
-- `upstream.error`: transport failure code and duration.
-- `request.finished` and `request.aborted`: local request outcome and total duration.
-
-Logs never include request or response bodies, authorization headers, API
-keys, cookies, or environment values. For example:
-
-```sh
-jq -c 'select(.event == "history.repaired" or .event == "upstream.error")' \
-  ~/Library/Logs/codex-unified-router.log
-
-jq -c 'select(.event == "upstream.response_started" and .status >= 400)' \
-  ~/Library/Logs/codex-unified-router.error.log
 ```
 
 ### Linux
@@ -59,7 +36,7 @@ systemctl --user restart codex-unified-router.service
 journalctl --user -u codex-unified-router.service -f
 ```
 
-To keep a user service running after logout, enable lingering if your system policy allows it:
+`journald` captures both standard output and standard error in the user journal. To keep the user service running after logout, enable lingering if your system policy allows it:
 
 ```sh
 loginctl enable-linger "$USER"
@@ -69,11 +46,66 @@ loginctl enable-linger "$USER"
 
 The installer creates `Codex Unified Router.vbs` in the current user's Startup folder. It launches a hidden supervisor from `unified-router/start-router.cmd`. Rerun the installer to update and restart it.
 
-Logs are under the installation directory, which defaults to:
+Standard output (`info`) and standard error (`error`) logs are under the installation directory, which defaults to:
 
 ```text
 %USERPROFILE%\.codex\unified-router\router.log
 %USERPROFILE%\.codex\unified-router\router.error.log
+```
+
+## Structured logs
+
+The router emits newline-delimited JSON on every platform. Logging defaults to `error`; set `CODEX_ROUTER_LOG_LEVEL=info` in the router service environment to record successful requests and timings. `debug` is also accepted for future diagnostic detail. `error` records are written to standard error, while `info` and `debug` records use standard output. Request-scoped events share a `requestId`, and upstream responses include `generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when those headers are present.
+
+- `router.ready` and `router.shutdown`: listener address, OpenRouter key availability, running source `revision`, and shutdown signal.
+- `request.forwarded`: model route, routing policy, `fallbackReason` when structured output falls back to OpenAI, whether unsupported OpenRouter response state was reset, payload byte length, input item count, and any tool-history repair summary.
+- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records normalized before an OpenRouter request.
+- `upstream.response_started`: upstream HTTP status, time to headers, and trace identifiers (`error` level when `status >= 400`).
+- `upstream.response_finished`: final upstream HTTP status, total upstream duration, and trace identifiers (`error` level when `status >= 400`).
+- `upstream.error`: upstream transport or stream failure code (`errorCode`) and duration.
+- `request.finished` and `request.aborted`: local HTTP status (`error` level when `status >= 400`) or client disconnect before completion, with total request duration.
+
+Logs never include request or response bodies, authorization headers, API keys, local router tokens, cookies, or environment values.
+
+Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records now include the same opaque `sessionId` when Codex supplies its `session_id` header, so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
+
+For example, calculate a session's overall cache-read share:
+
+```sh
+jq -s '
+  [.[] | select(.type == "token_usage_record") | .payload.usage] as $usage
+  | ($usage | map(.input_tokens) | add // 0) as $input
+  | ($usage | map(.cached_input_tokens) | add // 0) as $cached
+  | {input_tokens: $input, cached_input_tokens: $cached,
+     cache_read_share: (if $input > 0 then $cached / $input else null end)}
+' ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+```
+
+Correlate router events with that session by filtering for its `sessionId`. The session file's `session_id` and router log's `sessionId` use the same value.
+
+Because `info` and `error` events use standard output and standard error respectively, macOS and Windows write them to separate `.log` and `.error.log` files, while Linux records both in `journald`. Pass both files when correlating a `requestId` across levels on file-based setups. The `info` examples below require `CODEX_ROUTER_LOG_LEVEL=info`:
+
+```sh
+# Inspect tool-history repairs (stdout) or error events (stderr) on macOS
+jq -c 'select(.event == "history.repaired")' ~/Library/Logs/codex-unified-router.log
+jq -c 'select(.level == "error")' ~/Library/Logs/codex-unified-router.error.log
+
+# Correlate all events for one requestId across stdout and stderr log files
+jq -c --arg id "<request-id>" 'select(.requestId == $id)' \
+  ~/Library/Logs/codex-unified-router.log \
+  ~/Library/Logs/codex-unified-router.error.log
+
+# Filter the combined stream from the Linux user journal
+journalctl --user -u codex-unified-router.service -o cat \
+  | jq -c 'select(.event == "history.repaired" or .level == "error")'
+```
+
+On Windows PowerShell, inspect `router.log` and `router.error.log` under `$HOME\.codex\unified-router` (or `$env:CODEX_HOME\unified-router`):
+
+```powershell
+Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-router\router.error.log" |
+  ForEach-Object { $_ | ConvertFrom-Json } |
+  Where-Object { $_.event -eq 'history.repaired' -or $_.level -eq 'error' }
 ```
 
 ## Troubleshooting
@@ -86,7 +118,7 @@ Logs are under the installation directory, which defaults to:
 | OpenRouter returns HTTP 401 | Rerun the installer with a valid `OPENROUTER_API_KEY` to replace the configured key. |
 | Structured output fails on DeepSeek | Verify the thread uses the unified provider and the fallback model is a native OpenAI model. |
 | Switching to OpenAI produces a reasoning-content error | Update and restart the installed router so history normalization is active. |
-| OpenRouter returns HTTP 400 with `provider_name: null` | Check `request.forwarded` and `history.repaired` for the same `requestId`; update and restart the router so tool-history normalization is active. |
+| OpenRouter returns HTTP 400 with `provider_name: null` | Check `request.forwarded` for `stateReset` and `historyRepairs`, plus `upstream.response_started`, for the same `requestId`. OpenRouter Responses is stateless; update and restart the router so unsupported continuation fields and tool history are normalized. |
 | Replies are slow | Inspect upstream header timings and request durations. Headers can arrive before model output; these timings do not measure first-token latency. |
 
 Restarting either service interrupts its active requests. Changing models inside a thread already using the unified provider does not require a service restart.

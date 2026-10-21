@@ -75,6 +75,7 @@ The same catalog is available to main threads, child-thread model overrides, and
 
 - **Reasoning effort:** OpenRouter requests map `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Native OpenAI requests retain the requested effort.
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results.
+- **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
 - **Structured output:** By default, OpenRouter requests with a non-text response format, including `json_schema`, route to `gpt-6-astra`. Set `CODEX_ROUTER_STRUCTURED_MODEL` in the router service environment to select another native OpenAI fallback, or use the [model-preserving routing policy](#routing-policy) to reject substitution.
 - **Streaming:** Responses are piped through as they arrive. Client disconnects cancel unfinished upstream requests.
 
@@ -194,7 +195,7 @@ The router rejects browser origins, unexpected Host headers, and non-JSON model 
 
 To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks both configurations against the stored token, their managed transport settings, and private ownership/permissions. Readiness checks require the current capabilities and the installed source's SHA-256; a reachable older router is not a successful upgrade. Health redirects are rejected.
 
-Logs contain routing metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged.
+Logging defaults to errors only. Set `CODEX_ROUTER_LOG_LEVEL=info` to record successful request metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged. See [Structured logs](operations.md#structured-logs) for event names and platform log locations.
 
 ## CI coverage
 

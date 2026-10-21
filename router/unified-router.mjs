@@ -13,6 +13,11 @@ const modelCatalogFile = process.env.CODEX_MODEL_CATALOG || join(homedir(), '.co
 const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MODEL || 'gpt-6-astra';
 const maxBodyBytes = 64 * 1024 * 1024;
 const routerRevision = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
+const logLevels = { error: 0, info: 1, debug: 2 };
+const configuredLogLevel = String(process.env.CODEX_ROUTER_LOG_LEVEL || 'error').trim().toLowerCase();
+if (!Object.hasOwn(logLevels, configuredLogLevel)) {
+  throw new Error('CODEX_ROUTER_LOG_LEVEL must be error, info, or debug');
+}
 
 function readEnvironmentFile(file) {
   if (!existsSync(file)) return {};
@@ -213,6 +218,7 @@ function normalizeInputForOpenAI(input) {
 }
 
 function logEvent(level, event, fields = {}) {
+  if (logLevels[level] > logLevels[configuredLogLevel]) return;
   const record = {
     timestamp: new Date().toISOString(),
     level,
@@ -309,15 +315,19 @@ const server = http.createServer((request, response) => {
       ? request.headers.session_id
       : null,
   };
+  let clientClosed = false;
+  let upstreamFailed = false;
   response.once('finish', () => {
-    logEvent('info', 'request.finished', {
+    const status = response.statusCode || null;
+    logEvent(status !== null && status >= 400 ? 'error' : 'info', 'request.finished', {
       ...requestInfo,
-      status: response.statusCode || null,
+      status,
       durationMs: Date.now() - requestStartedAt,
     });
   });
   response.once('close', () => {
-    if (!response.writableFinished) {
+    if (!response.writableFinished && !upstreamFailed) {
+      clientClosed = true;
       logEvent('info', 'request.aborted', {
         ...requestInfo,
         durationMs: Date.now() - requestStartedAt,
@@ -339,7 +349,10 @@ const server = http.createServer((request, response) => {
       openrouter: Boolean(openrouterApiKey),
       clientAuth: true,
       revision: routerRevision,
-      capabilities: { routingPolicies: ['preserve-model-v1'], revisionPrecondition: true },
+      capabilities: {
+        routingPolicies: ['preserve-model-v1'],
+        revisionPrecondition: true,
+      },
     });
     return;
   }
@@ -436,7 +449,7 @@ const server = http.createServer((request, response) => {
         return;
       }
       parsed.model = model;
-      fallbackReason = 'deepseek_structured_output_unsupported';
+      fallbackReason = 'openrouter_structured_output_unsupported';
     }
 
     const upstreamModel = upstreamModelFor(model, target.provider);
@@ -488,7 +501,11 @@ const server = http.createServer((request, response) => {
     });
 
     let upstream;
+    let upstreamErrorLogged = false;
     const upstreamError = error => {
+      if (clientClosed || response.writableFinished || upstreamErrorLogged) return;
+      upstreamFailed = true;
+      upstreamErrorLogged = true;
       logEvent('error', 'upstream.error', {
         requestId,
         sessionId: requestInfo.sessionId,
@@ -515,6 +532,12 @@ const server = http.createServer((request, response) => {
         }
         const status = upstreamResponse.statusCode || null;
         const trace = upstreamTrace(upstreamResponse.headers);
+        upstreamResponse.once('error', () => {
+          if (!clientClosed) upstreamFailed = true;
+        });
+        upstreamResponse.once('close', () => {
+          if (!clientClosed && !upstreamResponse.readableEnded) upstreamFailed = true;
+        });
         response.writeHead(upstreamResponse.statusCode || 502, responseHeaders(upstreamResponse.headers));
         pipeline(upstreamResponse, response, error => {
           if (error) {
@@ -532,6 +555,7 @@ const server = http.createServer((request, response) => {
           ...trace,
         });
         upstreamResponse.on('end', () => {
+          if (clientClosed || upstreamFailed) return;
           logEvent(status !== null && status >= 400 ? 'error' : 'info', 'upstream.response_finished', {
             requestId,
             sessionId: requestInfo.sessionId,
@@ -558,7 +582,12 @@ const server = http.createServer((request, response) => {
 });
 
 server.listen(port, host, () => {
-  logEvent('info', 'router.ready', { host, port, openrouterConfigured: Boolean(openrouterApiKey) });
+  logEvent('info', 'router.ready', {
+    host,
+    port,
+    openrouterConfigured: Boolean(openrouterApiKey),
+    revision: routerRevision,
+  });
 });
 
 function shutdown(signal) {
