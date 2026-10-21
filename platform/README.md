@@ -1,6 +1,6 @@
 # Platform entry points
 
-Each operating system has its own installer and verifier here. The shared Node.js code they call lives in [`scripts/`](../scripts/), and the cross-platform tests live in [`tests/`](../tests/). Run these files from the repository root.
+Each operating system has its own installer and verifier here. The shared Node.js code they call lives in [`scripts/`](../scripts/), and the cross-platform tests live in [`tests/`](../tests/). Run them through `node install.mjs` (`--verify` for the verifier) from the repository root; it picks the right file and translates flags such as `--force` to `-Force` on Windows.
 
 | Platform | File | Purpose |
 | --- | --- | --- |

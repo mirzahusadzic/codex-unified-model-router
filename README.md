@@ -103,34 +103,22 @@ flowchart LR
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. macOS/Linux also need `jq`.
+Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. macOS and Linux also need `jq`; Windows needs PowerShell 5.1 or later.
 
 ```sh
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
-./platform/unix/install.sh            # asks for your OpenRouter API key on the first install
-./platform/unix/verify-install.sh
+node install.mjs            # asks for your OpenRouter API key on the first install
+node install.mjs --verify
 ```
 
-<details>
-<summary>Windows · PowerShell 5.1+</summary>
-
-```powershell
-git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
-Set-Location codex-unified-model-router
-.\platform\windows\install.ps1         # asks for your OpenRouter API key on the first install
-.\platform\windows\verify-install.ps1
-```
-
-</details>
-
-Common variations:
+`install.mjs` runs the installer for your platform from [`platform/`](platform/README.md). Common variations:
 
 ```sh
-./platform/unix/install.sh --force                            # first install over an existing Codex configuration (backed up)
-./platform/unix/install.sh --api-key-file ~/openrouter.key    # read the key from a file instead of asking
-CODEX_ROUTER_NATIVE_MODELS=hide ./platform/unix/install.sh    # hide native OpenAI models from /model
-CODEX_ROUTER_DISABLE_ANALYTICS=0 ./platform/unix/install.sh   # keep Codex analytics on
+node install.mjs --force                             # first install over an existing Codex configuration (backed up)
+node install.mjs --api-key-file ~/openrouter.key     # read the key from a file instead of asking
+CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models from /model
+CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
 ```
 
 By default, the installer hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. [Installer settings](docs/setup.md#installer-settings) lists every option with its default.

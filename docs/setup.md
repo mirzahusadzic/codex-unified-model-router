@@ -26,25 +26,28 @@ The helper scripts behind these steps are listed in [CONTRIBUTING.md](../CONTRIB
 
 ### Installer settings
 
-Pass settings as flags or environment variables on each run; the installer does not store them:
+Pass settings to `node install.mjs` as flags or environment variables on each run; the installer does not store them:
 
 ```sh
-./platform/unix/install.sh --force
-CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 ./platform/unix/install.sh
+node install.mjs --force
+CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 node install.mjs
 ```
 
 ```powershell
 $env:CODEX_ROUTER_NATIVE_MODELS = 'hide'
-.\platform\windows\install.ps1 -Force
+node install.mjs --force
 ```
+
+`install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, and `-ApiKeyFile` when run directly.
 
 Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
-| `--force` (Windows: `-Force`) | flag | Allows the first conversion of an existing, unmanaged `config.toml` or `unified-openrouter.config.toml`. |
-| `--no-service` (Windows: `-NoService`) | flag | Writes configuration and router files without starting a service or restarting the Codex daemon. |
-| `--api-key-file <path>` (Windows: `-ApiKeyFile <path>`) | file path | Reads the OpenRouter key from the file's first line and replaces any stored key. Without it, the first install asks for the key without echoing it, and later installs reuse the stored key. |
+| `--verify` | flag | Verifies an existing installation instead of installing; accepts `--no-service`. |
+| `--force` | flag | Allows the first conversion of an existing, unmanaged `config.toml` or `unified-openrouter.config.toml`. |
+| `--no-service` | flag | Writes configuration and router files without starting a service or restarting the Codex daemon. |
+| `--api-key-file <path>` | file path | Reads the OpenRouter key from the file's first line and replaces any stored key. Without it, the first install asks for the key without echoing it, and later installs reuse the stored key. |
 | `OPENROUTER_API_KEY` | API key | Also supplies or replaces the key, for automation that cannot use a file. Prefer the prompt or `--api-key-file`: environment variables can leak to other processes and logs. |
 | `CODEX_HOME` | path; default `~/.codex` | Codex home directory to configure. |
 | `CODEX_ROUTER_NATIVE_MODELS` | `auto` (default), `show`, `hide` | Whether native OpenAI models appear in `/model`. See [Native OpenAI models](#native-openai-models). |

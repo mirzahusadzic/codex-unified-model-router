@@ -37,7 +37,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Check JavaScript syntax
         run: |
-          for file in router/*.mjs scripts/*.mjs tests/*.mjs; do
+          for file in install.mjs router/*.mjs scripts/*.mjs tests/*.mjs; do
             node --check "$file"
           done
       - name: Run regression tests

@@ -129,3 +129,32 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
   assert.doesNotMatch(installed.stdout + installed.stderr, /synthetic-file-key/);
   assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-file-key$/m);
 });
+
+test('install.mjs runs the platform installer and verifier with translated flags', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-entry-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(home);
+  mkdirSync(bin);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\necho {"models":[]}\r\n'
+    : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
+  const keyFile = join(directory, 'openrouter.key');
+  writeFileSync(keyFile, 'synthetic-entry-key\n', { mode: 0o600 });
+  const entry = args => spawnSync(process.execPath, [join(root, 'install.mjs'), ...args], {
+    encoding: 'utf8', timeout: 60000, input: '',
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: '', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+  });
+
+  const installed = entry(['--no-service', '--api-key-file', keyFile]);
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-entry-key$/m);
+  const verified = entry(['--verify', '--no-service']);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.match(verified.stdout, /Install looks valid/);
+  for (const args of [['--bogus'], ['--verify', '--force'], ['--api-key-file']]) {
+    assert.equal(entry(args).status, 2, args.join(' '));
+  }
+});

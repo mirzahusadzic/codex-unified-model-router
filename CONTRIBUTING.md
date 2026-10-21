@@ -12,7 +12,7 @@ bash -n platform/unix/*.sh                 # shell syntax
 node scripts/render-openrouter-entries.mjs # after editing prompts/ or adding a catalog entry
 ```
 
-The installed router is a separate copy under your Codex home directory. Rerun the installer to try a change in Codex, and run `./platform/unix/verify-install.sh` afterward.
+The installed router is a separate copy under your Codex home directory. Run `node install.mjs` to try a change in Codex, and `node install.mjs --verify` afterward.
 
 ## Project layout
 
@@ -21,6 +21,7 @@ The installed router is a separate copy under your Codex home directory. Rerun t
 | `router/unified-router.mjs` | The router: routing, request adaptation, recovery, provider isolation, and streaming. |
 | `catalog/` | OpenRouter model entries for the Codex catalog, each with a license notice. |
 | `prompts/` | Shared OpenRouter instructions and the Ultra Spark delegation policy. |
+| `install.mjs` | Cross-platform entry point that runs the installer or verifier for the current OS. |
 | `platform/` | Per-OS installers and verifiers in `unix/` and `windows/`, plus the Windows access-control helper; see the [platform index](platform/README.md). |
 | `scripts/` | Verifiers, installer helpers, and development tools; see [Scripts](#scripts). |
 | `tests/` | `node --test` suites, plus a Windows access-control test; see [Tests](#tests). |
@@ -32,6 +33,7 @@ Scripts you run:
 
 | Script | Purpose |
 | --- | --- |
+| `node install.mjs [--verify]` | Install, or with `--verify` check, through the platform scripts below. |
 | `platform/unix/verify-install.sh`, `platform/windows/verify-install.ps1` | Verify an installation: configuration, tokens, permissions, catalog prompts, router health, and the service. Pass `--no-service` (Windows: `-NoService`) after an install without a service. |
 | `scripts/render-openrouter-entries.mjs` | Render the maintained prompts into the checked-in catalog entries. Run it after editing `prompts/` or adding an entry. |
 | `scripts/chatgpt-plan.mjs <codex-home>` | Print `active`, `inactive`, or `unknown` for the ChatGPT plan in Codex's login, as the installer's `CODEX_ROUTER_NATIVE_MODELS=auto` check sees it. |
@@ -61,7 +63,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
 | `tests/catalog.test.mjs` | Catalog entries, rendered prompts, prompt suffixes, and catalog-build validation. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
-| `tests/install.test.mjs` | End-to-end installs without a service, collision guards, and setting validation. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
+| `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, and setting validation. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
 | `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
