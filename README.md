@@ -35,7 +35,7 @@ $env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
 
 </details>
 
-For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. To keep the ChatGPT connector tools or Codex's own agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0` or `CODEX_ROUTER_AGENT_THREADS=0` ([details](docs/setup.md#chatgpt-apps)).
+For an existing Codex configuration, add `--force` (Windows: `-Force`) on the first install. Existing files are backed up. Native OpenAI models are hidden from `/model` when Codex's login shows no active ChatGPT plan; set `CODEX_ROUTER_NATIVE_MODELS=show` or `hide` to override ([details](docs/setup.md#native-openai-models)). To keep the ChatGPT connector tools or Codex's own agent limit, install with `CODEX_ROUTER_DISABLE_APPS=0` or `CODEX_ROUTER_AGENT_THREADS=0` ([details](docs/setup.md#chatgpt-apps)).
 
 **Restart Codex and start a new thread after installation.** If you use the shared app-server daemon, [restart it once](docs/setup.md#activate-the-provider).
 

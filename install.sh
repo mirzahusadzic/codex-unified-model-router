@@ -34,6 +34,15 @@ for argument in "$@"; do
   esac
 done
 
+native_models="${CODEX_ROUTER_NATIVE_MODELS:-auto}"
+case "$native_models" in
+  auto|show|hide) ;;
+  *)
+    printf 'CODEX_ROUTER_NATIVE_MODELS must be auto, show, or hide\n' >&2
+    exit 2
+    ;;
+esac
+
 for command_name in codex jq node; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     printf 'Required command not found: %s\n' "$command_name" >&2
@@ -79,11 +88,19 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 codex debug models --bundled > "$tmp_dir/bundled-models.json"
 
+# Native OpenAI models need a ChatGPT plan. In auto mode, hide them from /model
+# only when Codex's login shows a missing or lapsed plan.
+if [[ "$native_models" == auto ]]; then
+  native_models=show
+  if [[ "$(node "$repo_dir/scripts/chatgpt-plan.mjs" "$codex_home")" == inactive ]]; then native_models=hide; fi
+fi
+
 node "$repo_dir/scripts/build-catalog.mjs" \
   --bundled "$tmp_dir/bundled-models.json" \
   --catalog-dir "$repo_dir/catalog" \
   --instructions "$repo_dir/prompts/openrouter-instructions.md" \
   --persistent "$repo_dir/prompts/openrouter-persistent.md" \
+  --native-models "$native_models" \
   --output "$tmp_dir/models.json"
 
 node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
@@ -232,7 +249,11 @@ fi
 printf 'Installed the Codex unified router in %s\n' "$codex_home"
 printf 'Backups: %s\n' "$backup_dir"
 printf '\nMain thread, DeepSeek: codex (default; or codex -m deepseek/deepseek-v4.1-flash-1017)\n'
-printf 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)\n'
+if [[ "$native_models" == hide ]]; then
+  printf 'Native OpenAI models:  hidden from /model (no active ChatGPT plan, or CODEX_ROUTER_NATIVE_MODELS=hide)\n'
+else
+  printf 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)\n'
+fi
 printf 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)\n'
 printf 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)\n'
 printf '\nIn an existing session, child threads may use the same model names through spawn_agent model overrides.\n'

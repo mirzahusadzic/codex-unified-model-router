@@ -38,6 +38,11 @@ for (const required of ['bundled', 'catalog-dir', 'output']) {
 
 const bundled = JSON.parse(readFileSync(options.bundled, 'utf8'));
 if (!Array.isArray(bundled.models)) throw new Error('The bundled catalog has no models array');
+// Bundled models are native OpenAI models. Hiding them removes them from the
+// /model picker without the ChatGPT plan they require; they stay usable by name.
+const nativeModels = options['native-models'] ?? 'show';
+if (!['show', 'hide'].includes(nativeModels)) throw new Error('--native-models must be show or hide');
+if (nativeModels === 'hide') bundled.models = bundled.models.map(model => ({ ...model, visibility: 'hide' }));
 
 // Prompts are optional, but a requested prompt file must exist.
 if (Boolean(options.instructions) !== Boolean(options.persistent)) {

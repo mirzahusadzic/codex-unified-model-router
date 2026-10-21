@@ -7,7 +7,7 @@ See the [README](../README.md) for installation commands.
 The installer uses `~/.codex` by default and respects `CODEX_HOME`. It:
 
 1. Backs up existing configuration and catalog files.
-2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/).
+2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/), [hiding native OpenAI models](#native-openai-models) without an active ChatGPT plan.
 3. Updates managed settings in `config.toml`, preserving unrelated sections, [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`, and [allows 10 spawned agents](#spawned-agent-limit) unless `CODEX_ROUTER_AGENT_THREADS` says otherwise.
 4. Merges managed transport settings into `unified-openrouter.config.toml` for OpenRouter without ChatGPT authentication, preserving unrelated preferences.
 5. Installs the router and OpenRouter key under `unified-router/`.
@@ -59,6 +59,17 @@ The installer supplies the actual catalog path and a random local router token. 
 Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
 
 The installer therefore manages `apps = false`. It edits an existing `[features]` table in place, keeping its other keys, or adds one; the managed line sits between `# BEGIN/END codex-unified-router features` markers. The OpenRouter-only profile inherits the setting. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0` (PowerShell: `$env:CODEX_ROUTER_DISABLE_APPS = '0'`) and run the verifier with the same value; the installer then removes its managed line and leaves `apps` to you. Top-level `features.*` keys must move into a `[features]` table first. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
+
+### Native OpenAI models
+
+Codex's bundled models are native OpenAI models and require a ChatGPT plan. `CODEX_ROUTER_NATIVE_MODELS` controls whether the installer lists them in `/model`:
+
+- `auto` (default) reads the plan claims in Codex's login (`auth.json`) locally and hides the models when the login is missing or the plan has lapsed. The claims are a snapshot from Codex's last token refresh, so an unclear result keeps them listed.
+- `hide` and `show` override the check.
+
+Hidden models stay usable by name, for example `codex -m gpt-6-astra`. Rerun the installer after your plan changes.
+
+Approval prompts do not depend on a plan: `approvals_reviewer` defaults to `user`, so you answer them yourself. Setting it to `auto_review` hands prompts to Codex's reviewer model, `codex-auto-review`, which is a native OpenAI model and fails without a plan. Full access is not needed to work without a plan.
 
 ### Spawned-agent limit
 

@@ -27,6 +27,11 @@ function Fail-Install([string]$Message, [int]$Code = 1) {
     exit $Code
 }
 
+$NativeModels = if ($env:CODEX_ROUTER_NATIVE_MODELS) { $env:CODEX_ROUTER_NATIVE_MODELS } else { 'auto' }
+if ($NativeModels -notin @('auto', 'show', 'hide')) {
+    Fail-Install 'CODEX_ROUTER_NATIVE_MODELS must be auto, show, or hide' 2
+}
+
 foreach ($CommandName in @('codex', 'node')) {
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
         Fail-Install "Required command not found: $CommandName"
@@ -81,12 +86,20 @@ try {
     }
     [System.IO.File]::WriteAllText($BundledFile, $BundledText + "`n", $Utf8NoBom)
 
+    # Native OpenAI models need a ChatGPT plan. In auto mode, hide them from /model
+    # only when Codex's login shows a missing or lapsed plan.
+    if ($NativeModels -eq 'auto') {
+        $PlanStatus = & node (Join-Path $RepoDir 'scripts\chatgpt-plan.mjs') $CodexHome
+        $NativeModels = if ($PlanStatus -eq 'inactive') { 'hide' } else { 'show' }
+    }
+
     $ModelsFile = Join-Path $TempDir 'models.json'
     & node (Join-Path $RepoDir 'scripts\build-catalog.mjs') `
         '--bundled' $BundledFile `
         '--catalog-dir' (Join-Path $RepoDir 'catalog') `
         '--instructions' (Join-Path $RepoDir 'prompts\openrouter-instructions.md') `
         '--persistent' (Join-Path $RepoDir 'prompts\openrouter-persistent.md') `
+        '--native-models' $NativeModels `
         '--output' $ModelsFile
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
 
@@ -188,7 +201,11 @@ Write-Host "Installed the Codex unified router in $CodexHome"
 Write-Host "Backups: $BackupDir"
 Write-Host ''
 Write-Host 'Main thread, DeepSeek: codex (default; or codex -m deepseek/deepseek-v4.1-flash-1017)'
-Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)'
+if ($NativeModels -eq 'hide') {
+    Write-Host 'Native OpenAI models:  hidden from /model (no active ChatGPT plan, or CODEX_ROUTER_NATIVE_MODELS=hide)'
+} else {
+    Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)'
+}
 Write-Host 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)'
 Write-Host 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)'
 Write-Host ''
