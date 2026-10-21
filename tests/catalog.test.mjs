@@ -49,12 +49,14 @@ test('Muse Spark 1.3 Contributor catalog entry matches the OpenRouter model capa
 });
 
 test('Ultra Spark is DeepSeek with a delegation policy that keeps thread history away from workers', () => {
-  const identity = ['slug', 'display_name', 'description', 'priority', suffixField, 'base_instructions', 'model_messages'];
+  const identity = ['slug', 'display_name', 'description', 'priority', 'default_reasoning_level', suffixField,
+    'base_instructions', 'model_messages'];
   const capabilities = entry => Object.fromEntries(Object.entries(entry).filter(([key]) => !identity.includes(key)));
   assert.equal(ultraSpark.slug, 'openrouter/deepseek/deepseek-v4.1-flash-1017');
   assert.equal(ultraSpark.display_name, 'DeepSeek V4.1 Flash 1017 · Ultra Spark');
   assert.deepEqual(capabilities(ultraSpark), capabilities(deepseek));
   assert.equal(ultraSpark[suffixField], 'ultra-spark.md');
+  assert.equal(ultraSpark.default_reasoning_level, 'max');
   const policy = readFileSync(join(root, 'prompts', 'ultra-spark.md'), 'utf8');
   assert.match(policy, new RegExp(`model: "${muse.slug.replaceAll('.', '\\.')}"`));
   assert.match(policy, /fork_context: false/);

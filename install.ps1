@@ -188,8 +188,8 @@ finally {
 Write-Host "Installed the Codex unified router in $CodexHome"
 Write-Host "Backups: $BackupDir"
 Write-Host ''
-Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra'
-Write-Host 'Main thread, DeepSeek: codex -m deepseek/deepseek-v4.1-flash-1017'
+Write-Host 'Main thread, DeepSeek: codex (default; or codex -m deepseek/deepseek-v4.1-flash-1017)'
+Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)'
 Write-Host 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)'
 Write-Host 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)'
 Write-Host ''

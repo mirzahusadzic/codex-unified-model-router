@@ -42,8 +42,8 @@ The installer also turns off Codex's ChatGPT apps (`[features] apps = false`). T
 ## Use
 
 ```sh
-codex -m gpt-6-astra
-codex -m deepseek/deepseek-v4.1-flash-1017
+codex                 # DeepSeek V4.1 Flash 1017, the default
+codex -m gpt-6-astra  # native OpenAI; requires a ChatGPT plan
 ```
 
 Use `/model` to switch within a thread. Native OpenAI models use your Codex ChatGPT authentication; `deepseek/*` and `openrouter/*` models route through OpenRouter. By default, structured-output requests on OpenRouter routes fall back to OpenAI. To prefer specific OpenRouter endpoints for a model, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).

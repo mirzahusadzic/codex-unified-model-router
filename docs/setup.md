@@ -8,7 +8,7 @@ The installer uses `~/.codex` by default and respects `CODEX_HOME`. It:
 
 1. Backs up existing configuration and catalog files.
 2. Merges Codex's bundled models with every JSON entry in [`catalog/`](../catalog/).
-3. Updates managed settings in `config.toml`, preserving unrelated sections, and [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`.
+3. Updates managed settings in `config.toml`, preserving unrelated sections, [turns off Codex's ChatGPT apps](#chatgpt-apps) unless `CODEX_ROUTER_DISABLE_APPS=0`, and [allows 10 spawned agents](#spawned-agent-limit) unless `CODEX_ROUTER_AGENT_THREADS` says otherwise.
 4. Merges managed transport settings into `unified-openrouter.config.toml` for OpenRouter without ChatGPT authentication, preserving unrelated preferences.
 5. Installs the router and OpenRouter key under `unified-router/`.
 6. Configures automatic startup and checks the local health endpoint.
@@ -32,7 +32,7 @@ This interrupts active work in that daemon. Start a new thread afterward. Once a
 ## Managed configuration
 
 ```toml
-model = "gpt-6-astra"
+model = "deepseek/deepseek-v4.1-flash-1017"
 model_provider = "unified"
 model_reasoning_effort = "xhigh"
 model_catalog_json = "/absolute/path/to/.codex/models.json"
@@ -47,6 +47,9 @@ http_headers = { "X-Codex-Router-Token" = "<generated-by-installer>" }
 
 [features]
 apps = false
+
+[agents]
+max_concurrent_threads_per_session = 10
 ```
 
 The installer supplies the actual catalog path and a random local router token. Rerunning it reapplies these managed values and retains the token.
@@ -56,6 +59,10 @@ The installer supplies the actual catalog path and a random local router token. 
 Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
 
 The installer therefore manages `apps = false`. It edits an existing `[features]` table in place, keeping its other keys, or adds one; the managed line sits between `# BEGIN/END codex-unified-router features` markers. The OpenRouter-only profile inherits the setting. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0` (PowerShell: `$env:CODEX_ROUTER_DISABLE_APPS = '0'`) and run the verifier with the same value; the installer then removes its managed line and leaves `apps` to you. Top-level `features.*` keys must move into a `[features]` table first. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
+
+### Spawned-agent limit
+
+The installer manages `max_concurrent_threads_per_session = 10` in the `[agents]` table, the number of spawned agents a session can keep open, excluding the main thread. [Ultra Spark](#ultra-spark-mode) uses it to run up to 10 workers in parallel. Like the apps setting, it edits an existing `[agents]` table in place, keeping custom roles and other keys, and replaces Codex's legacy `max_threads` alias. Install with `CODEX_ROUTER_AGENT_THREADS=<1-999>` for another limit, or `CODEX_ROUTER_AGENT_THREADS=0` to leave the limit to Codex, and run the verifier with the same value.
 
 ## DeepSeek context window
 
@@ -80,7 +87,7 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 ## Ultra Spark mode
 
-**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`openrouter/deepseek/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with one addition: [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) makes delegation the default: it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
+**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`openrouter/deepseek/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with one addition: [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) makes delegation the default: it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool, running up to 10 at once. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
 
 Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor): Meta trains on everything they receive. Use the mode only for code you are willing to share, and start it in a fresh thread. A thread that already holds other models' output, such as native OpenAI turns, should not be handed to it.
 

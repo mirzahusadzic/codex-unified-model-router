@@ -46,6 +46,12 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
         || logicalLines(config).filter(line => line.trim() === '[features]').length !== 1)) {
     throw new Error('Codex apps are not disabled by the managed configuration; rerun the installer');
   }
+  const agentThreads = process.env.CODEX_ROUTER_AGENT_THREADS ?? '10';
+  if (!openrouterOnly && agentThreads !== '0'
+      && (!managedBlock(config, 'agents').includes(`max_concurrent_threads_per_session = ${agentThreads}`)
+        || logicalLines(config).filter(line => line.trim() === '[agents]').length !== 1)) {
+    throw new Error('The managed agent thread limit differs; rerun the installer');
+  }
 }
 if (process.platform !== 'win32') {
   for (const file of [envFile, configFile, profileFile, join(codexHome, 'unified-router')]) {

@@ -59,5 +59,6 @@ if (-not $NoService) {
 }
 
 Write-Host 'Install looks valid.'
-Write-Host 'Default main model: gpt-6-astra'
-Write-Host 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, openrouter/deepseek/deepseek-v4.1-flash-1017 (Ultra Spark), and the rest of the catalog.'
+$DefaultModel = (Select-String -Path $ConfigPath -Pattern '^model = "(.*)"$' | Select-Object -First 1).Matches.Groups[1].Value
+Write-Host "Default main model: $DefaultModel"
+Write-Host 'Selectable models: deepseek/deepseek-v4.1-flash-1017, openrouter/deepseek/deepseek-v4.1-flash-1017 (Ultra Spark), openrouter/meta/muse-spark-1.3-contributor, gpt-6-astra (requires a ChatGPT plan), and the rest of the catalog.'

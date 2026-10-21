@@ -16,7 +16,7 @@ function fixture(t) {
 function run(script, args, key = '', extraEnv = {}) {
   return spawnSync(process.execPath, [join(root, script), ...args], {
     encoding: 'utf8',
-    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', ...extraEnv },
+    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_AGENT_THREADS: '10', ...extraEnv },
   });
 }
 const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
@@ -158,7 +158,7 @@ test('config merges never parse inside TOML multi-line strings', t => {
   assert.ok(merged.includes(instructions));
   assert.doesNotMatch(merged, /old-multiline-model/);
   assert.match(merged, /\[profiles\.review\]\nmodel = "review-model"/);
-  assert.equal(merged.split('\n').filter(line => line === 'model = "gpt-6-astra"').length, 1);
+  assert.equal(merged.split('\n').filter(line => line === 'model = "deepseek/deepseek-v4.1-flash-1017"').length, 1);
   succeeds(run('scripts/merge-config.mjs', args));
   assert.equal(readFileSync(config, 'utf8'), merged);
   succeeds(run('scripts/verify-credentials.mjs', [home]));
@@ -175,9 +175,39 @@ test('config merges ignore triple quotes inside comments and single-line strings
   const merged = readFileSync(config, 'utf8');
   // The user's top-level model is replaced, not duplicated next to the managed one.
   assert.doesNotMatch(merged, /model = "mine"/);
-  assert.equal(merged.split('\n').filter(line => line === 'model = "gpt-6-astra"').length, 1);
+  assert.equal(merged.split('\n').filter(line => line === 'model = "deepseek/deepseek-v4.1-flash-1017"').length, 1);
   assert.ok(merged.includes(unrelated));
   succeeds(run('scripts/verify-credentials.mjs', [home]));
+});
+
+test('config merges manage the spawned-agent limit inside an existing agents table', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const role = '[agents.reviewer]\ndescription = "Reviews changes"';
+  writeFileSync(config, `[agents]\nmax_threads = 3\ninterrupt_message = false\n\n${role}\n`, { mode: 0o600 });
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  assert.match(merged, /\[agents\]\n# BEGIN codex-unified-router agents\nmax_concurrent_threads_per_session = 10\n# END codex-unified-router agents\ninterrupt_message = false/);
+  assert.doesNotMatch(merged, /max_threads/);
+  assert.ok(merged.includes(role));
+  assert.equal(merged.split('\n').filter(line => line === '[agents]').length, 1);
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.equal(readFileSync(config, 'utf8'), merged);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+
+  succeeds(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_AGENT_THREADS: '6' }));
+  assert.match(readFileSync(config, 'utf8'), /^max_concurrent_threads_per_session = 6$/m);
+  assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
+  succeeds(run('scripts/verify-credentials.mjs', [home], '', { CODEX_ROUTER_AGENT_THREADS: '6' }));
+
+  succeeds(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_AGENT_THREADS: '0' }));
+  const unmanaged = readFileSync(config, 'utf8');
+  assert.doesNotMatch(unmanaged, /codex-unified-router agents|max_concurrent_threads_per_session/);
+  assert.match(unmanaged, /\[agents\]\ninterrupt_message = false/);
+  for (const value of ['-1', '1.5', 'ten', '1000']) {
+    assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_AGENT_THREADS: value }).status, 0);
+  }
 });
 
 test('router refuses to start without a local authentication token', t => {

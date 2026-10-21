@@ -13,15 +13,37 @@ if (!routerToken) throw new Error('Prepare router credentials before merging the
 const managedKeysEnd = '# END codex-unified-router managed keys';
 const managedProviderMarker = '# BEGIN codex-unified-router provider';
 const managedProviderEnd = '# END codex-unified-router provider';
-const managedFeaturesMarker = '# BEGIN codex-unified-router features';
-const managedFeaturesEnd = '# END codex-unified-router features';
+const tableMarker = (table, edge) => `# ${edge} codex-unified-router ${table.name}`;
 
+// Entries the router manages inside user tables. `lines: null` removes an
+// earlier managed block and leaves the setting to the user.
+//
 // ChatGPT apps add tens of thousands of connector-tool tokens to every
 // request, including OpenRouter requests. Set CODEX_ROUTER_DISABLE_APPS=0 to
 // leave Codex's own apps setting untouched.
 const disableAppsSetting = process.env.CODEX_ROUTER_DISABLE_APPS ?? '1';
 if (!['0', '1'].includes(disableAppsSetting)) throw new Error('CODEX_ROUTER_DISABLE_APPS must be 0 or 1');
-const managedFeatures = disableAppsSetting === '1' ? ['apps = false'] : null;
+// Ultra Spark fans work out to parallel workers; raise Codex's spawned-agent
+// limit. Set CODEX_ROUTER_AGENT_THREADS=0 to leave the limit to Codex.
+const agentThreadsSetting = process.env.CODEX_ROUTER_AGENT_THREADS ?? '10';
+if (!/^(0|[1-9][0-9]{0,2})$/.test(agentThreadsSetting)) {
+  throw new Error('CODEX_ROUTER_AGENT_THREADS must be 0 or a whole number from 1 to 999');
+}
+const managedTables = [
+  {
+    name: 'features',
+    lines: disableAppsSetting === '1' ? ['apps = false'] : null,
+    ownedKeys: ['apps'],
+    optOut: 'CODEX_ROUTER_DISABLE_APPS=0',
+  },
+  {
+    name: 'agents',
+    lines: agentThreadsSetting === '0' ? null : [`max_concurrent_threads_per_session = ${agentThreadsSetting}`],
+    // max_threads is Codex's legacy alias for the same limit.
+    ownedKeys: ['max_concurrent_threads_per_session', 'max_threads'],
+    optOut: 'CODEX_ROUTER_AGENT_THREADS=0',
+  },
+];
 function readExisting(path) {
   return path && existsSync(path) ? readFileSync(path, 'utf8') : '';
 }
@@ -33,62 +55,67 @@ if (openrouterProfileFile && existsSync(profilePath) && force !== '--force'
   throw new Error('Existing unmanaged unified-openrouter profile; rerun the installer with --force (Windows: -Force) to merge it');
 }
 
-function merge(existing, ownedKeys, keys, provider, features = null) {
+function merge(existing, ownedKeys, keys, provider, tables = []) {
   const preserved = [];
   let insideManagedKeys = false;
   let insideManagedProvider = false;
-  let insideManagedFeatures = false;
   let insideUnmanagedUnifiedProvider = false;
-  let insideFeatures = false;
-  let featuresPlaced = false;
-  let managedFeaturesHeader = false;
-  let orphanedFeatures = false;
+  let currentTable = null;
   let topLevel = true;
+  const state = new Map(tables.map(table => [table, { inside: false, header: false, placed: false }]));
+  // Keys written below the last router-created table header belong to it.
+  let orphanedTable = null;
+  const block = (table, ...header) => [tableMarker(table, 'BEGIN'), ...header, ...table.lines, tableMarker(table, 'END')];
   for (const line of logicalLines(existing)) {
-    if (line.trim() === managedFeaturesMarker) {
-      insideManagedFeatures = true;
-      managedFeaturesHeader = false;
+    const trimmed = line.trim();
+    const beginning = tables.find(table => trimmed === tableMarker(table, 'BEGIN'));
+    if (beginning) {
+      Object.assign(state.get(beginning), { inside: true, header: false });
+      orphanedTable = null;
       continue;
     }
-    if (line.trim() === managedFeaturesEnd) {
-      insideManagedFeatures = false;
-      // Keys added below a router-created [features] header still need it.
-      orphanedFeatures = managedFeaturesHeader;
+    const ending = tables.find(table => trimmed === tableMarker(table, 'END'));
+    if (ending) {
+      state.get(ending).inside = false;
+      orphanedTable = state.get(ending).header ? ending : null;
       continue;
     }
-    if (insideManagedFeatures) {
-      if (line.trim() === '[features]') managedFeaturesHeader = true;
+    const within = tables.find(table => state.get(table).inside);
+    if (within) {
+      if (trimmed === `[${within.name}]`) state.get(within).header = true;
       continue;
     }
-    if (orphanedFeatures && line.trim() !== '' && !line.trim().startsWith('#')) {
-      orphanedFeatures = false;
-      if (!line.trim().startsWith('[')) {
-        preserved.push('[features]');
-        if (features && !featuresPlaced) preserved.push(managedFeaturesMarker, ...features, managedFeaturesEnd);
-        featuresPlaced ||= Boolean(features);
-        insideFeatures = true;
+    if (orphanedTable && trimmed !== '' && !trimmed.startsWith('#')) {
+      const orphan = orphanedTable;
+      const managed = state.get(orphan);
+      orphanedTable = null;
+      if (!trimmed.startsWith('[')) {
+        preserved.push(`[${orphan.name}]`);
+        if (orphan.lines && !managed.placed) preserved.push(...block(orphan));
+        managed.placed ||= Boolean(orphan.lines);
+        currentTable = orphan.name;
         topLevel = false;
       }
     }
-    if (line.trim() === managedKeysMarker) {
+    if (trimmed === managedKeysMarker) {
       insideManagedKeys = true;
       continue;
     }
-    if (line.trim() === managedKeysEnd) {
+    if (trimmed === managedKeysEnd) {
       insideManagedKeys = false;
       continue;
     }
-    if (line.trim() === managedProviderMarker) {
+    if (trimmed === managedProviderMarker) {
       insideManagedProvider = true;
       continue;
     }
-    if (line.trim() === managedProviderEnd) {
+    if (trimmed === managedProviderEnd) {
       insideManagedProvider = false;
       continue;
     }
     if (insideManagedKeys || insideManagedProvider) continue;
 
-    const tableName = line.trim().match(/^\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/)?.[1]?.trim();
+    const tableName = trimmed.match(/^\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/)?.[1]?.trim();
     if (tableName) topLevel = false;
     if (tableName === 'model_providers.unified' || tableName?.startsWith('model_providers.unified.')) {
       insideUnmanagedUnifiedProvider = true;
@@ -98,22 +125,25 @@ function merge(existing, ownedKeys, keys, provider, features = null) {
       if (tableName) insideUnmanagedUnifiedProvider = false;
       else continue;
     }
-    if (tableName) insideFeatures = tableName === 'features';
-    if (features && topLevel && /^\s*features\s*[.=]/.test(line)) {
-      throw new Error('Move top-level features settings into a [features] table, or set CODEX_ROUTER_DISABLE_APPS=0');
+    if (tableName) currentTable = tableName;
+    const dotted = tables.find(table => table.lines && topLevel && new RegExp(`^\\s*${table.name}\\s*[.=]`).test(line));
+    if (dotted) {
+      throw new Error(`Move top-level ${dotted.name} settings into a [${dotted.name}] table, or set ${dotted.optOut}`);
     }
-    if (features && tableName === 'features' && !featuresPlaced) {
-      preserved.push(line, managedFeaturesMarker, ...features, managedFeaturesEnd);
-      featuresPlaced = true;
+    const opened = tables.find(table => table.lines && tableName === table.name && !state.get(table).placed);
+    if (opened) {
+      preserved.push(line, ...block(opened));
+      state.get(opened).placed = true;
       continue;
     }
 
     const key = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1];
     if (topLevel && key && ownedKeys.includes(key)) continue;
-    if (features && insideFeatures && key === 'apps') continue;
+    const owner = tables.find(table => table.lines && table.name === currentTable);
+    if (owner && key && owner.ownedKeys.includes(key)) continue;
     preserved.push(line);
   }
-  if (insideManagedKeys || insideManagedProvider || insideManagedFeatures) {
+  if (insideManagedKeys || insideManagedProvider || tables.some(table => state.get(table).inside)) {
     throw new Error('Unterminated managed configuration block; repair it before merging');
   }
   while (preserved.length > 0 && preserved[0].trim() === '') preserved.shift();
@@ -121,15 +151,14 @@ function merge(existing, ownedKeys, keys, provider, features = null) {
   return [
     [managedKeysMarker, ...keys, managedKeysEnd].join('\n'),
     preserved.join('\n'),
-    features && !featuresPlaced
-      ? [managedFeaturesMarker, '[features]', ...features, managedFeaturesEnd].join('\n')
-      : '',
+    ...tables.filter(table => table.lines && !state.get(table).placed)
+      .map(table => block(table, `[${table.name}]`).join('\n')),
     [managedProviderMarker, ...provider, managedProviderEnd].join('\n'),
   ].filter(Boolean).join('\n\n') + '\n';
 }
 
 const keys = [
-  'model = "gpt-6-astra"',
+  'model = "deepseek/deepseek-v4.1-flash-1017"',
   'model_provider = "unified"',
   'model_reasoning_effort = "xhigh"',
   `model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`,
@@ -145,7 +174,7 @@ const provider = [
   `http_headers = { "X-Codex-Router-Token" = "${routerToken}" }`,
 ];
 
-const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider, managedFeatures);
+const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider, managedTables);
 const profile = openrouterProfileFile ? merge(existingProfile, ['model_provider', 'model_catalog_json'], [
   'model_provider = "unified"',
   `model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`,
