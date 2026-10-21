@@ -145,6 +145,25 @@ test('apps management refuses top-level feature keys and unknown settings withou
   assert.match(readFileSync(output, 'utf8'), /^features\.apps = true$/m);
 });
 
+test('config merges never parse inside TOML multi-line strings', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const instructions = 'developer_instructions = """\nKeep this text intact:\n[model_providers.unified]\n'
+    + 'model = "not-a-key"\n# BEGIN codex-unified-router managed keys\n"""';
+  writeFileSync(config, `${instructions}\nmodel = '''\nold-multiline-model\n'''\n[profiles.review]\nmodel = "review-model"\n`,
+    { mode: 0o600 });
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  assert.ok(merged.includes(instructions));
+  assert.doesNotMatch(merged, /old-multiline-model/);
+  assert.match(merged, /\[profiles\.review\]\nmodel = "review-model"/);
+  assert.equal(merged.split('\n').filter(line => line === 'model = "gpt-6-astra"').length, 1);
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.equal(readFileSync(config, 'utf8'), merged);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+});
+
 test('router refuses to start without a local authentication token', t => {
   const { envFile } = fixture(t);
   const result = spawnSync(process.execPath, [join(root, 'router/unified-router.mjs')], {

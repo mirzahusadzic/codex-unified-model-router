@@ -4,7 +4,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { pipeline } from 'node:stream';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const host = '127.0.0.1';
 const port = Number(process.env.CODEX_ROUTER_PORT || 18766);
@@ -331,6 +331,15 @@ function captureRejectedRequest({
   requestId, attempt, requestBody, responseBody,
 }) {
   if (!rejectedRequestDir) return null;
+  // File modes do not restrict access on Windows. There, captures must stay in
+  // the router directory, whose current-user-only ACL new files inherit.
+  const fromRouterDir = relative(resolve(dirname(envFile)), resolve(rejectedRequestDir));
+  if (process.platform === 'win32' && (fromRouterDir.startsWith('..') || isAbsolute(fromRouterDir))) {
+    logEvent('error', 'openrouter.rejection_capture_refused', {
+      requestId, attempt, reason: 'outside_private_router_directory',
+    });
+    return null;
+  }
   const prefix = `${requestId}-attempt-${attempt}`;
   try {
     mkdirSync(rejectedRequestDir, { recursive: true, mode: 0o700 });
@@ -354,10 +363,12 @@ function parseUpstreamError(body) {
     const parsed = JSON.parse(body.toString('utf8'));
     const messages = [parsed?.error?.message, parsed?.error?.metadata?.raw]
       .filter(value => typeof value === 'string');
+    const errorType = parsed?.error_type ?? parsed?.error?.type ?? null;
     return {
       errorCode: parsed?.error?.code ?? null,
-      errorType: parsed?.error_type ?? parsed?.error?.type ?? null,
-      contextOverflow: parsed?.error?.code === 'context_length_exceeded'
+      errorType,
+      // OpenRouter's Responses API can report the overflow only in error_type.
+      contextOverflow: [parsed?.error?.code, errorType].includes('context_length_exceeded')
         || messages.some(message => contextOverflowPattern.test(message)),
     };
   } catch {
@@ -390,6 +401,7 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
     });
     stream.once('error', fail);
     stream.once('aborted', () => fail(new Error('Upstream response was aborted')));
+    stream.once('close', () => fail(new Error('Upstream response closed before it ended')));
     stream.once('end', () => {
       if (settled) return;
       settled = true;

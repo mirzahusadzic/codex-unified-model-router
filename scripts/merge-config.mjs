@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { logicalLines } from './toml-lines.mjs';
 
 const [existingFile, codexHome, outputFile, routerEnvFile, openrouterProfileFile, force] = process.argv.slice(2);
 if (!codexHome || !outputFile || !routerEnvFile || (force !== undefined && force !== '--force')) {
@@ -44,7 +45,7 @@ function merge(existing, ownedKeys, keys, provider, features = null) {
   let managedFeaturesHeader = false;
   let orphanedFeatures = false;
   let topLevel = true;
-  for (const line of existing.split(/\r?\n/)) {
+  for (const line of logicalLines(existing)) {
     if (line.trim() === managedFeaturesMarker) {
       insideManagedFeatures = true;
       managedFeaturesHeader = false;

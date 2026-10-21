@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { logicalLines } from './toml-lines.mjs';
 
 const [codexHome] = process.argv.slice(2);
 if (!codexHome) throw new Error('Usage: verify-credentials.mjs <codex-home>');
@@ -12,11 +13,14 @@ if (!token || !/^OPENROUTER_API_KEY=.+\r?$/m.test(env)) {
   throw new Error('Router credentials are missing; rerun the installer');
 }
 function managedBlock(text, name) {
-  const sections = text.split(`# BEGIN codex-unified-router ${name}`);
-  if (sections.length !== 2) throw new Error('Missing or duplicate managed configuration block; rerun the installer');
-  const block = sections[1].split(`# END codex-unified-router ${name}`);
-  if (block.length !== 2) throw new Error('Unterminated or duplicate managed configuration block; rerun the installer');
-  return block[0].split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = logicalLines(text).map(line => line.trim());
+  const begins = lines.flatMap((line, index) => (line === `# BEGIN codex-unified-router ${name}` ? [index] : []));
+  const ends = lines.flatMap((line, index) => (line === `# END codex-unified-router ${name}` ? [index] : []));
+  if (begins.length !== 1) throw new Error('Missing or duplicate managed configuration block; rerun the installer');
+  if (ends.length !== 1 || ends[0] < begins[0]) {
+    throw new Error('Unterminated or duplicate managed configuration block; rerun the installer');
+  }
+  return lines.slice(begins[0] + 1, ends[0]).filter(Boolean);
 }
 for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]]) {
   const config = readFileSync(file, 'utf8');
@@ -39,7 +43,7 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
   }
   if (!openrouterOnly && (process.env.CODEX_ROUTER_DISABLE_APPS ?? '1') === '1'
       && (!managedBlock(config, 'features').includes('apps = false')
-        || config.split(/\r?\n/).filter(line => line.trim() === '[features]').length !== 1)) {
+        || logicalLines(config).filter(line => line.trim() === '[features]').length !== 1)) {
     throw new Error('Codex apps are not disabled by the managed configuration; rerun the installer');
   }
 }

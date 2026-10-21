@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { after, mock, test } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 // Exercise the router's request handler without network access or real credentials.
-const rejectedRequestDir = mkdtempSync(join(tmpdir(), 'codex-router-rejections-'));
-process.env.CODEX_ROUTER_ENV_FILE = fileURLToPath(new URL('./missing.env', import.meta.url));
+// Captures sit beside the env file, as Windows requires for an inherited private ACL.
+const routerHome = mkdtempSync(join(tmpdir(), 'codex-router-home-'));
+const rejectedRequestDir = join(routerHome, 'rejections');
+mkdirSync(rejectedRequestDir);
+process.env.CODEX_ROUTER_ENV_FILE = join(routerHome, 'openrouter.env');
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
 process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
 process.env.CODEX_ROUTER_STRUCTURED_MODEL = 'gpt-6-astra';
@@ -70,7 +72,7 @@ mock.method(https, 'request', (options, onResponse) => {
 await import('../router/unified-router.mjs');
 after(() => {
   mock.restoreAll();
-  rmSync(rejectedRequestDir, { recursive: true, force: true });
+  rmSync(routerHome, { recursive: true, force: true });
 });
 
 async function exchangeRaw(rawBody, headers = {}, { method = 'POST', url = '/v1/responses' } = {}) {
@@ -645,6 +647,54 @@ test('an OpenRouter context-window rejection fails the response so Codex can com
   const rejected = parsedLogEntries().slice(logsBefore)
     .find(entry => entry.event === 'openrouter.request_rejected');
   assert.equal(rejected.contextOverflow, true);
+});
+
+test('a context overflow reported only through error_type also fails the response', async t => {
+  mockUpstreamSequence(t, [{
+    status: 400,
+    body: JSON.stringify({
+      error_type: 'context_length_exceeded',
+      error: { code: 'invalid_prompt', message: 'Request rejected' },
+    }),
+  }]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }));
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-context-overflow');
+  assert.equal(parseSse(result.rawBody)[1].response.error.code, 'context_length_exceeded');
+  assert.equal(forwarded.length, before + 1);
+});
+
+test('an OpenRouter 400 that closes before ending returns 502 instead of hanging', async t => {
+  t.mock.method(https, 'request', (options, onResponse) => new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+    final(callback) {
+      const response = new PassThrough();
+      response.statusCode = 400;
+      response.headers = { 'content-type': 'application/json' };
+      queueMicrotask(() => {
+        onResponse(response);
+        response.write('{"error":');
+        response.destroy();
+      });
+      callback();
+    },
+  }));
+  const result = await exchangeRaw(JSON.stringify({ model: 'openrouter/vendor/model', input: 'Hello' }));
+  assert.equal(result.status, 502);
+});
+
+test('tool-history repair keeps an answered retry that reuses an unanswered call ID', async () => {
+  const call = args => ({ type: 'function_call', call_id: 'call_retry', name: 'exec_command', arguments: args });
+  const output = { type: 'function_call_output', call_id: 'call_retry', output: 'done' };
+  const message = { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Retrying.' }] };
+  const upstream = await send({
+    model: 'openrouter/vendor/model',
+    input: [{ role: 'user', content: 'go' }, call('{"cmd":"first"}'), message, call('{"cmd":"second"}'), output],
+  });
+  // One call/output pair survives; neither the call nor its output is lost.
+  assert.deepEqual(upstream.body.input, [{ role: 'user', content: 'go' }, call('{"cmd":"first"}'), output, message]);
 });
 
 test('a repeated OpenRouter 400 completes with a router diagnostic instead of breaking Codex', async t => {

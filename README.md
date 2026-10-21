@@ -10,7 +10,7 @@ Switch between native OpenAI and OpenRouter models in Codex through a lightweigh
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. The default mixed-provider setup uses Codex ChatGPT authentication; users without it can select the [OpenRouter-only profile](docs/setup.md#openrouter-only-profile). macOS/Linux also need `jq` and `curl`.
+Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. The default mixed-provider setup uses Codex ChatGPT authentication; users without it can select the [OpenRouter-only profile](docs/setup.md#openrouter-only-profile). macOS/Linux also need `jq`.
 
 ```sh
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git

@@ -79,6 +79,31 @@ test('catalog builds append an entry suffix and omit the router-only field from 
   for (const model of models.values()) assert.equal(Object.hasOwn(model, suffixField), false);
 });
 
+test('catalog builds reject missing prompts, duplicate slugs, and replacements of bundled models', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-catalog-checks-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const instructions = join(root, 'prompts', 'openrouter-instructions.md');
+  const persistent = join(root, 'prompts', 'openrouter-persistent.md');
+  const build = (bundledModels, catalogEntries, promptArgs) => {
+    const catalogDir = mkdtempSync(join(directory, 'catalog-'));
+    catalogEntries.forEach((entry, index) => writeFileSync(join(catalogDir, `${index}.json`), JSON.stringify(entry)));
+    writeFileSync(join(directory, 'bundled.json'), JSON.stringify({ models: bundledModels }));
+    return spawnSync(process.execPath, [join(root, 'scripts', 'build-catalog.mjs'),
+      '--bundled', join(directory, 'bundled.json'), '--catalog-dir', catalogDir,
+      ...promptArgs, '--output', join(directory, 'models.json')], { encoding: 'utf8' });
+  };
+  const prompted = ['--instructions', instructions, '--persistent', persistent];
+  const entry = { slug: 'openrouter/vendor/model' };
+
+  assert.equal(build([], [entry], prompted).status, 0);
+  assert.match(build([], [entry], ['--instructions', instructions, '--persistent', join(directory, 'missing.md')]).stderr,
+    /Prompt file not found/);
+  assert.match(build([], [entry], ['--instructions', instructions]).stderr, /Pass both --instructions and --persistent/);
+  assert.match(build([], [entry, { ...entry }], prompted).stderr, /duplicate catalog slug openrouter\/vendor\/model/);
+  assert.match(build([{ slug: 'gpt-6-astra', context_window: 272000 }], [{ slug: 'gpt-6-astra', context_window: 999999 }], prompted).stderr,
+    /gpt-6-astra would replace a bundled Codex model/);
+});
+
 test('prompt suffixes must name a file in the prompts directory', () => {
   for (const suffix of ['../secret.md', 'ultra-spark.txt', '/etc/passwd']) {
     assert.throws(() => applyOpenRouterPrompts({ slug: 'openrouter/vendor/model', [suffixField]: suffix }, prompts),

@@ -39,19 +39,28 @@ for (const required of ['bundled', 'catalog-dir', 'output']) {
 const bundled = JSON.parse(readFileSync(options.bundled, 'utf8'));
 if (!Array.isArray(bundled.models)) throw new Error('The bundled catalog has no models array');
 
-const prompts = options.instructions && existsSync(options.instructions)
-    && options.persistent && existsSync(options.persistent)
-  ? readPrompts(options.instructions, options.persistent)
-  : null;
+// Prompts are optional, but a requested prompt file must exist.
+if (Boolean(options.instructions) !== Boolean(options.persistent)) {
+  throw new Error('Pass both --instructions and --persistent, or neither');
+}
+for (const file of [options.instructions, options.persistent].filter(Boolean)) {
+  if (!existsSync(file)) throw new Error(`Prompt file not found: ${file}`);
+}
+const prompts = options.instructions ? readPrompts(options.instructions, options.persistent) : null;
 
 const entries = readEntries(options['catalog-dir'])
   .map(entry => (prompts ? applyOpenRouterPrompts(entry, prompts) : entry));
 
+// Native models keep Codex's bundled definitions and limits.
 const order = bundled.models.map(model => model.slug);
 const bySlug = new Map(bundled.models.map(model => [model.slug, model]));
+const catalogSlugs = new Set();
 for (const entry of entries) {
   const { __source, [suffixField]: _suffix, ...model } = entry;
-  if (!order.includes(model.slug)) order.push(model.slug);
+  if (catalogSlugs.has(model.slug)) throw new Error(`${__source}: duplicate catalog slug ${model.slug}`);
+  if (bySlug.has(model.slug)) throw new Error(`${__source}: ${model.slug} would replace a bundled Codex model`);
+  catalogSlugs.add(model.slug);
+  order.push(model.slug);
   bySlug.set(model.slug, model);
 }
 

@@ -208,7 +208,7 @@ For an OpenRouter model:
 1. Copy [`catalog/deepseek-model.json`](../catalog/deepseek-model.json) to another JSON file in `catalog/`.
 2. Set `slug` to `openrouter/<exact-openrouter-model-slug>`.
 3. Update the display name, description, context limits, reasoning levels, and other capabilities to match the model.
-4. Rerun the installer.
+4. Rerun the installer. The catalog build fails on a duplicate slug, a slug that matches a bundled Codex model, or a missing prompt file.
 
 The router removes the `openrouter/` prefix before forwarding. The model becomes available through the shared catalog.
 
@@ -244,7 +244,7 @@ Tests use synthetic upstream responses and need no API credentials. Live provide
 
 This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse entry derives from the same template, as recorded in [its notice](../catalog/muse-model.json.license). Keep the licenses and applicable notices when redistributing an entry or a modified copy; record your own changes as well.
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse and Ultra Spark entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy; record your own changes as well.
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in that installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 

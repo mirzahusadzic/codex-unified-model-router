@@ -53,3 +53,27 @@ test('no-service installer guards collisions before mutation and preserves backe
   rmSync(profile);
   assert.notEqual(invoke(true).status, 0);
 });
+
+test('a comment that only mentions the managed marker still requires an explicit first conversion', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-marker-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(home);
+  mkdirSync(bin);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\necho {"models":[]}\r\n'
+    : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
+  const config = join(home, 'config.toml');
+  const original = 'model = "mine" # see # BEGIN codex-unified-router managed keys\n';
+  writeFileSync(config, original);
+  const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
+    ? ['-NoProfile', '-File', join(root, 'install.ps1'), '-NoService']
+    : [join(root, 'install.sh'), '--no-service'], {
+    encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: 'synthetic-install-key', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+  });
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(readFileSync(config, 'utf8'), original);
+});
