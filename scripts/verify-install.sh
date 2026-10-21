@@ -38,16 +38,7 @@ grep -q 'const structuredFallbackModel = process.env.CODEX_ROUTER_STRUCTURED_MOD
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000 and .max_context_window == 960000' \
   "$codex_home/models.json" >/dev/null
 
-if ! jq -e --rawfile instructions "$script_dir/../prompts/openrouter-instructions.md" \
-  --rawfile persistent "$script_dir/../prompts/openrouter-persistent.md" '
-    [.models[] | select(.slug | startswith("openrouter/") or startswith("deepseek/"))]
-    | length > 0 and all(.base_instructions == $instructions
-      and .model_messages.instructions_template == $instructions
-      and .model_messages.persistent_instructions == $persistent)
-  ' "$codex_home/models.json" >/dev/null; then
-  printf 'Installed OpenRouter prompts differ from the repository prompts; rerun the installer.\n' >&2
-  exit 1
-fi
+node "$script_dir/verify-prompts.mjs" "$codex_home"
 
 if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .base_instructions, .model_messages.persistent_instructions' \
   "$codex_home/models.json" | grep -E 'update_plan|send_user_message_async|clock\.sleep|update_up_next'; then
@@ -79,4 +70,4 @@ fi
 
 printf 'Install looks valid.\n'
 printf 'Default main model: %s\n' "$(sed -n 's/^model = "\(.*\)"$/\1/p' "$codex_home/config.toml" | head -1)"
-printf 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, and the rest of the catalog.\n'
+printf 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, openrouter/deepseek/deepseek-v4.1-flash-1017 (Ultra Spark), and the rest of the catalog.\n'

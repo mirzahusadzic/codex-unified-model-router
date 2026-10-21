@@ -48,16 +48,8 @@ if (-not $DeepSeek) { throw 'DeepSeek is missing from the model catalog.' }
 if ([int64]$DeepSeek.context_window -ne 960000 -or [int64]$DeepSeek.max_context_window -ne 960000) {
     throw 'DeepSeek context limits are not 960000.'
 }
-$Instructions = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\prompts\openrouter-instructions.md'), $Utf8NoBom)
-$Persistent = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\prompts\openrouter-persistent.md'), $Utf8NoBom)
-$OpenRouterEntries = @($Catalog.models | Where-Object { $_.slug.StartsWith('openrouter/') -or $_.slug.StartsWith('deepseek/') })
-foreach ($Entry in $OpenRouterEntries) {
-    if ($Entry.base_instructions -cne $Instructions -or
-        $Entry.model_messages.instructions_template -cne $Instructions -or
-        $Entry.model_messages.persistent_instructions -cne $Persistent) {
-        throw "Installed OpenRouter prompts differ from the repository prompts for $($Entry.slug); rerun the installer."
-    }
-}
+& node (Join-Path $PSScriptRoot 'verify-prompts.mjs') $CodexHome
+if ($LASTEXITCODE -ne 0) { throw 'Installed OpenRouter prompts differ from the repository; rerun the installer.' }
 
 if (-not $NoService) {
     & node (Join-Path $PSScriptRoot 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
@@ -68,4 +60,4 @@ if (-not $NoService) {
 
 Write-Host 'Install looks valid.'
 Write-Host 'Default main model: gpt-6-astra'
-Write-Host 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, and the rest of the catalog.'
+Write-Host 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, openrouter/deepseek/deepseek-v4.1-flash-1017 (Ultra Spark), and the rest of the catalog.'

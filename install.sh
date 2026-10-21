@@ -236,5 +236,6 @@ printf 'Backups: %s\n' "$backup_dir"
 printf '\nMain thread, OpenAI:  codex -m gpt-6-astra\n'
 printf 'Main thread, DeepSeek: codex -m deepseek/deepseek-v4.1-flash-1017\n'
 printf 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)\n'
+printf 'Ultra Spark mode:      codex -m openrouter/deepseek/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)\n'
 printf '\nIn an existing session, child threads may use the same model names through spawn_agent model overrides.\n'
 printf 'Restart Codex windows created before this install; they keep the provider they were started with.\n'

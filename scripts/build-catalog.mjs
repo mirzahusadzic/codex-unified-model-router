@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { applyOpenRouterPrompts, readPrompts, suffixField } from './openrouter-prompts.mjs';
 
 function parseArguments(values) {
   const options = {};
@@ -38,35 +39,18 @@ for (const required of ['bundled', 'catalog-dir', 'output']) {
 const bundled = JSON.parse(readFileSync(options.bundled, 'utf8'));
 if (!Array.isArray(bundled.models)) throw new Error('The bundled catalog has no models array');
 
-const instructions = options.instructions && existsSync(options.instructions)
-  ? readFileSync(options.instructions, 'utf8')
+const prompts = options.instructions && existsSync(options.instructions)
+    && options.persistent && existsSync(options.persistent)
+  ? readPrompts(options.instructions, options.persistent)
   : null;
-const persistent = options.persistent && existsSync(options.persistent)
-  ? readFileSync(options.persistent, 'utf8')
-  : null;
-// Every entry the router forwards to OpenRouter shares the maintained prompts.
-const usesOpenRouterPrompts = slug => slug.startsWith('openrouter/') || slug.startsWith('deepseek/');
 
 const entries = readEntries(options['catalog-dir'])
-  .map(entry => {
-    if (usesOpenRouterPrompts(entry.slug) && instructions && persistent) {
-      return {
-        ...entry,
-        base_instructions: instructions,
-        model_messages: {
-          ...entry.model_messages,
-          instructions_template: instructions,
-          persistent_instructions: persistent,
-        },
-      };
-    }
-    return entry;
-  });
+  .map(entry => (prompts ? applyOpenRouterPrompts(entry, prompts) : entry));
 
 const order = bundled.models.map(model => model.slug);
 const bySlug = new Map(bundled.models.map(model => [model.slug, model]));
 for (const entry of entries) {
-  const { __source, ...model } = entry;
+  const { __source, [suffixField]: _suffix, ...model } = entry;
   if (!order.includes(model.slug)) order.push(model.slug);
   bySlug.set(model.slug, model);
 }
