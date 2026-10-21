@@ -166,14 +166,17 @@ revision, not a restart of identical code or changes to service configuration.
 
 The installer writes `unified-openrouter.config.toml` beside `config.toml`, with
 the same private local router token and model catalog. It sets
-`requires_openai_auth = false`, so OpenRouter requests need no ChatGPT login,
-and enables `preserve-model-v1` to prevent fallback into a native OpenAI route.
-The default mixed-provider configuration is unchanged.
+`requires_openai_auth = false`, so OpenRouter requests need no ChatGPT login.
+It also sends the `preserve-model-v1` routing header, which now matches the
+router's default. The default mixed-provider configuration is unchanged.
 
-Select this profile with an OpenRouter model:
+Select this profile with any OpenRouter model in the catalog, including Ultra
+Spark, whose Muse workers use the same profile:
 
 ```sh
 codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
+codex --profile unified-openrouter --model openrouter/deepseek/deepseek-v4.1-flash-1017   # Ultra Spark
+codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
 ```
 
 Use the normal mixed-provider configuration for native OpenAI models or for

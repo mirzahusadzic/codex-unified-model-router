@@ -57,7 +57,7 @@ codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contrib
 
 Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives. Use them only for code you are willing to share, and start Ultra Spark in a fresh thread.
 
-Without a ChatGPT login, use `--profile unified-openrouter` with an OpenRouter model ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
+Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
 ## Develop
 
