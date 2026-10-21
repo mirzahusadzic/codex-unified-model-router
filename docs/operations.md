@@ -1,6 +1,6 @@
 # Services and troubleshooting
 
-The router and Codex's app-server daemon are separate processes. Restart the router after updating its installed code or service environment. Restart the Codex daemon when it needs to reload provider configuration.
+The router and Codex's app-server daemon are separate processes. Restart the router after updating its installed code or service environment. The installer restarts a running Codex daemon so it reloads provider configuration and the catalog; restart it yourself after `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0`, or a manual configuration change.
 
 ## Verify an installation
 
@@ -134,7 +134,7 @@ Restarting either service interrupts its active requests. Changing models inside
 
 ## Install without automatic startup
 
-After upgrading to router token authentication, rerun the installer and restart Codex, including its shared daemon if used. Start a new thread so Codex loads the generated provider header. A `401` about a missing router token usually means the client still has the previous configuration.
+After upgrading to router token authentication, rerun the installer, which restarts a running shared daemon, and restart other open Codex windows. Start a new thread so Codex loads the generated provider header. A `401` about a missing router token usually means the client still has the previous configuration.
 
 Use `./install.sh --no-service` on macOS/Linux or `.\install.ps1 -NoService` on Windows. These options write the configuration and router files but do not register or launch a background service.
 
@@ -182,4 +182,4 @@ On Windows, copy `config.toml` and `models.json` from the backup into your Codex
 
 Restore `unified-openrouter.config.toml` as well if it is present in the chosen backup and you use that profile.
 
-Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. Restart Codex, including its shared daemon if used, and start new threads to use the restored provider configuration.
+Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.

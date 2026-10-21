@@ -34,6 +34,12 @@ for argument in "$@"; do
   esac
 done
 
+restart_daemon="${CODEX_ROUTER_RESTART_DAEMON:-1}"
+if [[ "$restart_daemon" != 0 && "$restart_daemon" != 1 ]]; then
+  printf 'CODEX_ROUTER_RESTART_DAEMON must be 0 or 1\n' >&2
+  exit 2
+fi
+
 native_models="${CODEX_ROUTER_NATIVE_MODELS:-auto}"
 case "$native_models" in
   auto|show|hide) ;;
@@ -244,6 +250,30 @@ EOF_PLIST
       print_manual_start
       ;;
   esac
+fi
+
+run_by_codex_daemon() {
+  local pid=$$ command
+  while [[ -n "$pid" && "$pid" -gt 1 ]]; do
+    command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+    [[ "$command" =~ ^([^[:space:]]*/)?codex[[:space:]]+app-server([[:space:]]|$) ]] && return 0
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  done
+  return 1
+}
+
+# The shared app-server daemon keeps the configuration and catalog it started
+# with. Restarting it interrupts its open sessions, so skip it when it is not
+# running, when Codex itself runs this installer, or when asked not to.
+if [[ "$service" -eq 1 && "$restart_daemon" -eq 1 ]] \
+    && [[ "$(codex app-server daemon version 2>/dev/null | jq -r '.status // empty' 2>/dev/null)" == running ]]; then
+  if run_by_codex_daemon; then
+    printf 'Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart\n' >&2
+  elif codex app-server daemon restart >/dev/null 2>&1; then
+    printf 'Restarted the Codex app-server daemon.\n'
+  else
+    printf 'Could not restart the Codex app-server daemon. Run: codex app-server daemon restart\n' >&2
+  fi
 fi
 
 printf 'Installed the Codex unified router in %s\n' "$codex_home"

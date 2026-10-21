@@ -21,13 +21,13 @@ Automatic startup uses launchd on macOS, `systemd --user` on Linux, and a hidden
 
 Restart Codex windows that were open before installation and start a new thread. Existing threads retain the provider they were created with.
 
-If Codex uses the shared app-server daemon, restart it once to load the new configuration:
+The shared Codex app-server daemon keeps the configuration and catalog it started with, so the installer restarts it when it is running. That interrupts work in its open sessions. The installer skips the restart with `--no-service` (Windows: `-NoService`) or `CODEX_ROUTER_RESTART_DAEMON=0`, and when Codex itself runs the installer, which the restart would interrupt. In those cases, restart it yourself once:
 
 ```sh
 codex app-server daemon restart
 ```
 
-This interrupts active work in that daemon. Start a new thread afterward. Once a thread uses the unified provider, changing between OpenAI and OpenRouter models does not require another daemon restart.
+Start a new thread afterward. Once a thread uses the unified provider, changing between models does not require another daemon restart.
 
 ## Managed configuration
 
@@ -222,7 +222,7 @@ Credential-bearing files, including the OpenRouter-only profile, are private: th
 
 The router rejects browser origins, unexpected Host headers, and non-JSON model requests. Provider-specific header allowlists prevent unrelated credentials from being forwarded. Request bodies are limited to 64 MiB each; this is a local single-user service, not a shared network gateway.
 
-To upgrade an existing installation to token authentication, rerun the installer, restart Codex (including the shared daemon if used), and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks both configurations against the stored token, their managed transport settings, and private ownership/permissions. Readiness checks require the current capabilities and the installed source's SHA-256; a reachable older router is not a successful upgrade. Health redirects are rejected.
+To upgrade an existing installation to token authentication, rerun the installer, which restarts a running shared daemon, restart other open Codex windows, and start a new thread. Existing sessions do not acquire the new provider header automatically. The verifier checks both configurations against the stored token, their managed transport settings, and private ownership/permissions. Readiness checks require the current capabilities and the installed source's SHA-256; a reachable older router is not a successful upgrade. Health redirects are rejected.
 
 Logging defaults to errors only. Set `CODEX_ROUTER_LOG_LEVEL=info` in `unified-router/openrouter.env` or the service environment to record successful request metadata, status codes, and timings. Request and response bodies, authorization headers, and API keys are not logged. Set `CODEX_ROUTER_REJECTED_REQUEST_DIR` only when an exact OpenRouter-rejected payload is needed for diagnosis; captured files are private but contain complete conversation content. See [Structured logs](operations.md#structured-logs) for event names and platform log locations.
 

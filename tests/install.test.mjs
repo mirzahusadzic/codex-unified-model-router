@@ -78,3 +78,21 @@ test('marker text in a comment or string still requires an explicit first conver
   assert.equal(result.status, 2, result.stderr);
   assert.equal(readFileSync(config, 'utf8'), original);
 });
+
+test('installer settings are validated before anything is written', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-settings-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  mkdirSync(home);
+  for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe']]) {
+    const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
+      ? ['-NoProfile', '-File', join(root, 'install.ps1'), '-NoService']
+      : [join(root, 'install.sh'), '--no-service'], {
+      encoding: 'utf8', timeout: 30000,
+      env: { ...process.env, HOME: directory, CODEX_HOME: home, OPENROUTER_API_KEY: 'synthetic-install-key', [name]: value },
+    });
+    assert.equal(result.status, 2, `${name}: ${result.stderr}`);
+    assert.match(result.stderr, new RegExp(name));
+    assert.deepEqual(readdirSync(home), []);
+  }
+});
