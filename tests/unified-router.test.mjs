@@ -350,9 +350,23 @@ test('DeepSeek and other OpenRouter routes retain their reasoning history', asyn
     assert.equal(upstream.path, '/api/v1/responses');
     assert.equal(upstream.body.model, model.replace(/^openrouter\//, ''));
     assert.deepEqual(upstream.body.input, mixedHistory);
-    assert.deepEqual(upstream.body.reasoning, { effort: 'max' });
+    assert.deepEqual(upstream.body.reasoning, { effort: model.startsWith('deepseek/') ? 'max' : 'xhigh' });
     assert.equal(upstream.headers.authorization, 'Bearer test-openrouter-key');
     assert.equal(upstream.headers['chatgpt-account-id'], undefined);
+  }
+});
+
+test('only DeepSeek reasoning efforts are remapped; other OpenRouter models keep standard efforts', async () => {
+  for (const [requested, deepseek] of [
+    ['minimal', 'max'], ['low', 'low'], ['medium', 'high'], ['high', 'high'], ['xhigh', 'max'], ['max', 'max'],
+  ]) {
+    for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017']) {
+      const upstream = await send({ model, input: 'Hello', reasoning: { effort: requested } });
+      assert.deepEqual(upstream.body.reasoning, { effort: deepseek });
+    }
+    const muse = await send({ model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello', reasoning: { effort: requested } });
+    assert.equal(muse.body.model, 'meta/muse-spark-1.3-contributor');
+    assert.deepEqual(muse.body.reasoning, { effort: requested });
   }
 });
 

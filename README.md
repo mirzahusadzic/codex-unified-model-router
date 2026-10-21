@@ -57,6 +57,8 @@ without changing their authentication setup.
 
 DeepSeek is preconfigured for **960,000 context tokens**, with a **912,000-token effective budget**. [How it is configured →](docs/setup.md#deepseek-context-window)
 
+The catalog also includes `openrouter/meta/muse-spark-1.3-contributor`. Meta trains on this tier's prompts and completions, so use it only for code you are willing to share. [Details →](docs/setup.md#muse-spark-13-contributor)
+
 ## Develop
 
 ```sh

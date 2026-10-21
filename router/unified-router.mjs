@@ -126,8 +126,10 @@ function hasStructuredOutput(request) {
   return Boolean(format && format.type && format.type !== 'text');
 }
 
-function normalizeReasoningForOpenRouter(value) {
-  if (!value || typeof value !== 'object' || value.effort == null) return;
+// DeepSeek accepts only low, high, max, and none. Other OpenRouter models take
+// OpenRouter's standard efforts, which it translates for each provider.
+function normalizeReasoningForOpenRouter(value, model) {
+  if (!value || typeof value !== 'object' || value.effort == null || !model.startsWith('deepseek/')) return;
   const effort = String(value.effort);
   if (['low', 'high', 'max', 'none'].includes(effort)) return;
   value.effort = effort === 'medium' ? 'high' : 'max';
@@ -698,7 +700,7 @@ const server = http.createServer((request, response) => {
         parsed.provider = { order: providerOrder };
       }
       stateReset = normalizeStateForOpenRouter(parsed);
-      normalizeReasoningForOpenRouter(parsed.reasoning);
+      normalizeReasoningForOpenRouter(parsed.reasoning, upstreamModel);
       const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
       parsed.input = normalizedHistory.input;
       toolHistoryRepairs = normalizedHistory.repairs;

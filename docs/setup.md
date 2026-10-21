@@ -72,17 +72,24 @@ Both installers merge this entry into `models.json` under your Codex home direct
 
 The effective budget covers the conversation context, including instructions, messages, and tool results; it is not a maximum output length. These are the project's configured limits, not a live measurement of upstream capacity. Start a fresh DeepSeek thread after installing or updating the catalog to check the effective window.
 
+## Muse Spark 1.3 Contributor
+
+[`catalog/muse-model.json`](../catalog/muse-model.json) adds `openrouter/meta/muse-spark-1.3-contributor` with OpenRouter's published **1,048,576-token** context and a 95% effective budget. Reasoning is mandatory upstream, so the entry offers `low` through `max` (default `medium`) and no `none`; it also declares no parallel tool calls.
+
+This is Meta's contributor tier: the price is lower because Meta uses prompts and completions to improve its products, and Codex sends file contents and command output with each step. Use it only for code you are willing to share, such as public repositories. OpenRouter routes to it only after you allow endpoints that may train on inputs in your OpenRouter privacy settings.
+
 ## Routing and compatibility
 
 | Requested model | Upstream service | Upstream model |
 | --- | --- | --- |
 | `gpt-6-astra` | Native Codex backend | `gpt-6-astra` |
 | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
+| `openrouter/meta/muse-spark-1.3-contributor` | OpenRouter | `meta/muse-spark-1.3-contributor` |
 | `openrouter/vendor/model` | OpenRouter | `vendor/model` |
 
 The same catalog is available to main threads, child-thread model overrides, and scheduling interfaces that expose a model field.
 
-- **Reasoning effort:** OpenRouter requests map `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Native OpenAI requests retain the requested effort.
+- **Reasoning effort:** DeepSeek requests map `medium` to `high`, and values such as `xhigh` and `ultra` to `max`, because DeepSeek accepts only `low`, `high`, `max`, and `none`. Other OpenRouter requests keep the requested effort, which OpenRouter translates for each provider. Native OpenAI requests retain the requested effort.
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results.
 - **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
 - **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with a bounded recent tail of the latest turn. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread. Exact rejected bodies are never logged; an explicit `CODEX_ROUTER_REJECTED_REQUEST_DIR` setting can capture them privately for diagnosis.
@@ -230,7 +237,7 @@ Tests use synthetic upstream responses and need no API credentials. Live provide
 
 This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. Keep the license and applicable notices when redistributing this entry or a modified copy; record your own changes as well.
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse entry derives from the same template, as recorded in [its notice](../catalog/muse-model.json.license). Keep the licenses and applicable notices when redistributing an entry or a modified copy; record your own changes as well.
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in that installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 

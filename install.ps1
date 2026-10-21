@@ -186,5 +186,6 @@ Write-Host "Backups: $BackupDir"
 Write-Host ''
 Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra'
 Write-Host 'Main thread, DeepSeek: codex -m deepseek/deepseek-v4.1-flash-1017'
+Write-Host 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)'
 Write-Host ''
 Write-Host 'Restart Codex windows created before this install; they keep the provider they were started with.'

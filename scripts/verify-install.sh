@@ -79,4 +79,4 @@ fi
 
 printf 'Install looks valid.\n'
 printf 'Default main model: %s\n' "$(sed -n 's/^model = "\(.*\)"$/\1/p' "$codex_home/config.toml" | head -1)"
-printf 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, and the rest of the catalog.\n'
+printf 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, and the rest of the catalog.\n'

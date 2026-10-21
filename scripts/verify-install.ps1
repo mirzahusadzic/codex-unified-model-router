@@ -68,4 +68,4 @@ if (-not $NoService) {
 
 Write-Host 'Install looks valid.'
 Write-Host 'Default main model: gpt-6-astra'
-Write-Host 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, and the rest of the catalog.'
+Write-Host 'Selectable models: gpt-6-astra, deepseek/deepseek-v4.1-flash-1017, openrouter/meta/muse-spark-1.3-contributor, and the rest of the catalog.'
