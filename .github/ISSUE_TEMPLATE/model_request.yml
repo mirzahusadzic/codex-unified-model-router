@@ -1,0 +1,29 @@
+name: Model request
+description: Propose an OpenRouter model for the shared catalog.
+labels: [model request]
+body:
+  - type: input
+    id: slug
+    attributes:
+      label: OpenRouter model slug
+      placeholder: vendor/model-name
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why this model
+      description: What it does better for agentic coding in Codex, with benchmarks or experience.
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Capabilities
+      description: Context window, reasoning efforts, tool and parallel tool-call support, structured output, and prompt-caching behavior on OpenRouter.
+  - type: checkboxes
+    id: tested
+    attributes:
+      label: Testing
+      options:
+        - label: I tried this model in Codex through the router.

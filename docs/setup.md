@@ -98,7 +98,7 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 ## Ultra Spark mode
 
-**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with one addition: [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) makes delegation the default: it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool, running up to 10 at once. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
+**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) added, which makes delegation the default. It splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers, up to 10 at once, and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Its default reasoning effort is `max`. Design decisions, final edits, and verification stay in the DeepSeek thread, and workers are spawned with `fork_context: false`, so they see only their task.
 
 Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor): Meta trains on everything they receive. Use the mode only for code you are willing to share, and start it in a fresh thread. A thread that already holds other models' output, such as native OpenAI turns, should not be handed to it.
 
@@ -130,7 +130,7 @@ OpenRouter chooses an endpoint for each request. To prefer particular endpoints 
 CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
 ```
 
-The key is the upstream model slug, without the `openrouter/` prefix. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
+The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
 
 ## Routing policy
 
@@ -140,13 +140,7 @@ The `X-Codex-Routing-Policy: preserve-model-v1` header, which the OpenRouter-onl
 
 ## Router capabilities
 
-`GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the
-supported opt-in routing policies, `capabilities.openrouterRejectionRecovery`,
-the bounded OpenRouter 400 fallback contract, and `revision`, the running router
-source's SHA-256. These fields let clients check compatibility and diagnose
-outdated installed copies without sending an inference request.
-They do not attest upstream model identity, account access or the entire
-runtime configuration.
+`GET /health` (also `/v1/health`) exposes `capabilities.routingPolicies`, the supported opt-in routing policies, `capabilities.openrouterRejectionRecovery`, the bounded OpenRouter 400 fallback contract, and `revision`, the running router source's SHA-256. These fields let clients check compatibility and diagnose outdated installed copies without sending an inference request. They do not attest upstream model identity, account access or the entire runtime configuration.
 
 Clients that need to hold that revision across requests can require it with:
 
@@ -154,24 +148,13 @@ Clients that need to hold that revision across requests can require it with:
 X-Codex-Router-Revision: <lowercase-sha256-from-health>
 ```
 
-Support is advertised as `capabilities.revisionPrecondition: true`. After local
-authentication, the router rejects malformed digests with HTTP 400 and mismatches
-with HTTP 409 (`router_revision_mismatch`), before contacting either upstream.
-Matching or absent headers leave routing unchanged. The header stays local and
-is never forwarded. Check the capability before relying on it: older routers
-may ignore unknown headers. This optional precondition detects a changed source
-revision, not a restart of identical code or changes to service configuration.
+Support is advertised as `capabilities.revisionPrecondition: true`. After local authentication, the router rejects malformed digests with HTTP 400 and mismatches with HTTP 409 (`router_revision_mismatch`), before contacting either upstream. Matching or absent headers leave routing unchanged. The header stays local and is never forwarded. Check the capability before relying on it: older routers may ignore unknown headers. This optional precondition detects a changed source revision, not a restart of identical code or changes to service configuration.
 
 ## OpenRouter-only profile
 
-The installer writes `unified-openrouter.config.toml` beside `config.toml`, with
-the same private local router token and model catalog. It sets
-`requires_openai_auth = false`, so OpenRouter requests need no ChatGPT login.
-It also sends the `preserve-model-v1` routing header, which now matches the
-router's default. The default mixed-provider configuration is unchanged.
+The installer writes `unified-openrouter.config.toml` beside `config.toml`, with the same private local router token and model catalog. It sets `requires_openai_auth = false`, so OpenRouter requests need no ChatGPT login. It also sends the `preserve-model-v1` routing header, which now matches the router's default. The default mixed-provider configuration is unchanged.
 
-Select this profile with any OpenRouter model in the catalog, including Ultra
-Spark, whose Muse workers use the same profile:
+Select this profile with any OpenRouter model in the catalog, including Ultra Spark, whose Muse workers use the same profile:
 
 ```sh
 codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
@@ -179,20 +162,11 @@ codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017 
 codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
 ```
 
-Use the normal mixed-provider configuration for native OpenAI models or for
-switching between OpenAI and OpenRouter in one thread. The OpenRouter-only
-profile supplies transport settings, not prompts, plugins or task policies.
-It still inherits base user and project settings; it is not a sandbox or an
-isolated execution mode. Codex 0.163.0 does not load the sidecar profile with
-`--ignore-user-config`.
+Use the normal mixed-provider configuration for native OpenAI models or for switching between OpenAI and OpenRouter in one thread. The OpenRouter-only profile supplies transport settings, not prompts, plugins or task policies. It still inherits base user and project settings; it is not a sandbox or an isolated execution mode. Codex 0.163.0 does not load the sidecar profile with `--ignore-user-config`.
 
-Clients that need isolated execution must manage their own Codex home,
-instructions, tools, permissions and output validation. The router remains a
-transport and compatibility layer.
+Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions and output validation. The router remains a transport and compatibility layer.
 
-After updating sources, rerun the installer to install the profile and router;
-the repository copy alone does not change the running service. Installation and
-service activation should be scheduled around active requests.
+After updating sources, rerun the installer to install the profile and router; the repository copy alone does not change the running service. Installation and service activation should be scheduled around active requests.
 
 ## Add a model
 
@@ -207,7 +181,7 @@ For an OpenRouter model:
 
 The router removes the `openrouter/` prefix before forwarding. The model becomes available through the shared catalog.
 
-Every `deepseek/` and `openrouter/` entry uses the maintained instructions from [`prompts/`](../prompts/). An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field. After editing those files or adding an entry, refresh the checked-in entries:
+Every `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained instructions from [`prompts/`](../prompts/). An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field. After editing those files or adding an entry, refresh the checked-in entries:
 
 ```sh
 node scripts/render-openrouter-entries.mjs
@@ -243,4 +217,4 @@ The DeepSeek catalog entry includes model-message templates that match the bundl
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in that installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 
-The software license does not grant access to models or hosted services. OpenAI and OpenRouter access remains subject to their respective service terms.
+The software license does not grant access to models or hosted services. Access to OpenAI, OpenRouter, and each model provider, including Meta's contributor tier, remains subject to their respective service terms.

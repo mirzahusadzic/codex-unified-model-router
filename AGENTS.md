@@ -17,7 +17,8 @@ Keep this project a small local router that fits Codex's existing model picker a
 | Add or update an OpenRouter model | `catalog/*.json` |
 | Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
-| Catalog generation or managed Codex settings | `scripts/build-catalog.mjs`, `scripts/merge-config.mjs` |
+| Catalog generation and prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
+| Managed Codex settings and TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
 | Installation or service startup | `install.sh`, `install.ps1` |
 
 For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
@@ -34,6 +35,7 @@ After editing the maintained prompts or adding an OpenRouter entry, run `node sc
 - A pre-stream OpenRouter 400 may receive one bounded recovery attempt, but it must never escape as HTTP 400 to Codex. Context-window rejections instead return a streamed `response.failed` with `context_length_exceeded` so Codex compacts the thread. If recovery fails, return a completed router diagnostic while preserving the real rejection in logs and keeping exact bodies out of logs unless capture is explicitly enabled.
 - Never substitute a model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
+- Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, and keep Ultra Spark spawning workers with `fork_context: false`.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
 
 ## Validate and document
@@ -42,4 +44,4 @@ For router behavior changes, add a focused regression test in `tests/unified-rou
 
 Keep the README brief. Put detailed setup and troubleshooting in `docs/`. Documentation-only changes need link and factual checks, not a full test run.
 
-Edit repository sources first. The running router uses a separate installed copy under the Codex home directory; source edits do not update it. Run installers or restart services when deployment is part of the task. Installation changes live configuration, and restarts interrupt active requests. Use the documented verifier afterward; local health does not prove upstream model access.
+Edit repository sources first. The running router uses a separate installed copy under the Codex home directory; source edits do not update it. Run installers or restart services when deployment is part of the task. Installation changes live configuration and restarts the router and a running Codex app-server daemon, which interrupts active requests and sessions. Use the documented verifier afterward; local health does not prove upstream model access.

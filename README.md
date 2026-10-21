@@ -1,6 +1,11 @@
 # Codex Unified Model Router
 
 [![CI](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
+![Codex CLI 0.163](https://img.shields.io/badge/Codex%20CLI-0.163-111111)
+![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
+![Dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)
 
 Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
 
@@ -9,6 +14,20 @@ Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between th
 - **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
 - **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
 - **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
+
+## How it works
+
+```mermaid
+flowchart LR
+    codex["Codex CLI and app-server"] -->|"Responses API with a local token"| router["Unified router on 127.0.0.1"]
+    router -->|"deepseek/, ultra-spark/, openrouter/"| openrouter["OpenRouter"]
+    router -->|"other models, with your ChatGPT login"| openai["ChatGPT Codex backend"]
+    openrouter --> deepseek["DeepSeek V4.1 Flash"]
+    openrouter --> muse["Muse Spark 1.3"]
+    openrouter --> more["Any OpenRouter model"]
+```
+
+Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back unchanged.
 
 ## Install
 
@@ -69,4 +88,4 @@ CI tests Linux, macOS, and Windows, checks script syntax, and validates the mode
 
 ---
 
-[Setup & configuration](docs/setup.md) · [Services & troubleshooting](docs/operations.md) · [CI workflow](.github/workflows/ci.yml) · [Apache-2.0](LICENSE) · [Notices](NOTICE)
+[Setup & configuration](docs/setup.md) · [Services & troubleshooting](docs/operations.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Apache-2.0](LICENSE) · [Notices](NOTICE)

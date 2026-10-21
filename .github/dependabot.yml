@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # The router has no npm dependencies; keep the CI actions current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

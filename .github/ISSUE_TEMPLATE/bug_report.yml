@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in the router, installers, or catalog does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report security vulnerabilities privately instead; see SECURITY.md. Never paste API keys, router tokens, session files, or captured request bodies.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Install with ...
+        2. Run codex -m ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [macOS, Linux, Windows]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `codex --version` and `node --version`, plus the router commit (`git rev-parse --short HEAD`).
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: deepseek/deepseek-v4.1-flash-1017
+  - type: textarea
+    id: logs
+    attributes:
+      label: Router log excerpt
+      description: Relevant JSON log lines; see docs/operations.md. Logs contain no request bodies or credentials, but check before pasting.
+      render: text
