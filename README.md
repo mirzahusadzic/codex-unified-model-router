@@ -18,22 +18,77 @@ Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between th
 
 ## How it works
 
+Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI models and models that train on their inputs never share a session.
+
+**Key:** 🔵 router · 🟢 OpenRouter · 🔴 trains on its inputs · ⚪ Codex and native OpenAI.
+
 ```mermaid
 ---
 config:
-  look: neo
-  layout: elk
+    layout: elk
+    look: neo
+    flowchart:
+        wrappingWidth: 400
+    themeCSS: >-
+        foreignObject { overflow: visible; }
+        code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+        Consolas, monospace; font-size: 0.9em; line-height: inherit;
+        color: inherit !important; text-shadow: none !important;
+        padding: 0 4px; border-radius: 4px;
+        background: color-mix(in srgb, currentColor 14%, transparent)
+        !important; }
+        .edgeLabel, .edgeLabel p, .edgeLabel span {
+        background: transparent !important; }
+        .edgeLabel rect { fill: transparent !important; }
+        .labelBkg { --knock: var(--vscode-editor-background,
+        var(--bgColor-default, rgb(from currentColor
+        clamp(30, (128 - r) * 100, 255) clamp(30, (128 - r) * 100, 255)
+        clamp(30, (128 - r) * 100, 255)))); --ring: var(--knock);
+        --fill: color-mix(in srgb, var(--ring) 30%, var(--knock));
+        background: var(--fill) !important; border-radius: 4px;
+        box-shadow: 0 0 0 5px var(--fill), 0 0 0 7px var(--ring); }
+        .label[data-id^="L_CX_RT_"] .labelBkg {
+        --ring: #3869ad; }
+        .label[data-id^="L_RT_OR_"] .labelBkg {
+        --ring: #2e9e5b; }
+        .label[data-id^="L_RT_OA_"] .labelBkg {
+        --ring: #8a96a8; }
+        .label[data-id^="L_OA_MU_"] .labelBkg {
+        --ring: #c94a4a; }
+        .edgeLabel p, .edgeLabel span, .edgeLabel text {
+        --halo: var(--fill, var(--vscode-editor-background,
+        var(--bgColor-default,
+        rgb(from currentColor clamp(0, (128 - r) * 100, 255)
+        clamp(0, (128 - r) * 100, 255) clamp(0, (128 - r) * 100, 255)))));
+        text-shadow: 1px 0 var(--halo), -1px 0 var(--halo),
+        0 1px var(--halo), 0 -1px var(--halo), 1px 1px var(--halo),
+        -1px -1px var(--halo), 1px -1px var(--halo), -1px 1px var(--halo),
+        0 0 3px var(--halo), 0 0 4px var(--halo); }
 ---
 flowchart LR
-    codex["Codex CLI and app-server"] -->|"Responses API with a local token"| router["Unified router on 127.0.0.1"]
-    router -->|"deepseek/, ultra-spark/, openrouter/"| openrouter["OpenRouter"]
-    router -->|"other models, with your ChatGPT login"| openai["ChatGPT Codex backend"]
-    openrouter --> deepseek["DeepSeek V4.1 Flash"]
-    openrouter --> muse["Muse Spark 1.3"]
-    openrouter --> more["Any OpenRouter model"]
-```
+    CX["<b>Codex</b><br/>CLI and app-server"]
+    RT["<b>Unified router</b><br/>127.0.0.1, local token"]
+    OR["<b>OpenRouter</b><br/>your API key"]
+    OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
+    DS["<b>DeepSeek V4.1 Flash</b><br/>default; leads Ultra Spark"]
+    MU["<b>Muse Spark 1.3</b><br/>Ultra Spark workers"]
+    AM["<b>Any OpenRouter model</b><br/>with a catalog entry"]
+    CX -->|"Responses API"| RT
+    RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
+    RT -->|"native models"| OA
+    OR --> DS
+    OR --> MU
+    OR --> AM
+    OA -.-|"never in one session"| MU
 
-Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back unchanged.
+    classDef default fill:#8a96a82e,stroke:#8a96a8,stroke-width:1px
+    classDef router fill:#3869ad4d,stroke:#3869ad,stroke-width:2px
+    classDef openrouter fill:#2e9e5b4d,stroke:#2e9e5b,stroke-width:2px
+    classDef training fill:#c94a4a4d,stroke:#c94a4a,stroke-width:2px
+    class RT router
+    class OR,DS,AM openrouter
+    class MU training
+```
 
 ## Install
 
@@ -42,8 +97,7 @@ Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRout
 ```sh
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
-export OPENROUTER_API_KEY='your-openrouter-api-key'
-./platform/unix/install.sh
+./platform/unix/install.sh            # asks for your OpenRouter API key on the first install
 ./platform/unix/verify-install.sh
 ```
 
@@ -53,8 +107,7 @@ export OPENROUTER_API_KEY='your-openrouter-api-key'
 ```powershell
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 Set-Location codex-unified-model-router
-$env:OPENROUTER_API_KEY = 'your-openrouter-api-key'
-.\platform\windows\install.ps1
+.\platform\windows\install.ps1         # asks for your OpenRouter API key on the first install
 .\platform\windows\verify-install.ps1
 ```
 
@@ -64,6 +117,7 @@ Common variations:
 
 ```sh
 ./platform/unix/install.sh --force                            # first install over an existing Codex configuration (backed up)
+./platform/unix/install.sh --api-key-file ~/openrouter.key    # read the key from a file instead of asking
 CODEX_ROUTER_NATIVE_MODELS=hide ./platform/unix/install.sh    # hide native OpenAI models from /model
 CODEX_ROUTER_DISABLE_ANALYTICS=0 ./platform/unix/install.sh   # keep Codex analytics on
 ```

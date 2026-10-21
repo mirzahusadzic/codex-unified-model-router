@@ -98,3 +98,34 @@ test('installer settings are validated before anything is written', t => {
     assert.deepEqual(readdirSync(home), []);
   }
 });
+
+test('installs with a key file, and fails without a key when it cannot prompt', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-key-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(home);
+  mkdirSync(bin);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\necho {"models":[]}\r\n'
+    : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
+  const keyFile = join(directory, 'openrouter.key');
+  writeFileSync(keyFile, 'synthetic-file-key\n', { mode: 0o600 });
+  const install = extra => spawnSync(windows ? 'powershell.exe' : 'bash', windows
+    ? ['-NoProfile', '-File', platformScript('install'), '-NoService', ...extra]
+    : [platformScript('install'), '--no-service', ...extra], {
+    encoding: 'utf8', timeout: 30000, input: '',
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: '', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+  });
+
+  const missing = install([]);
+  assert.equal(missing.status, 1, missing.stderr);
+  assert.match(missing.stderr, windows ? /-ApiKeyFile/ : /--api-key-file/);
+  assert.deepEqual(readdirSync(home), []);
+
+  const installed = install(windows ? ['-ApiKeyFile', keyFile] : ['--api-key-file', keyFile]);
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.doesNotMatch(installed.stdout + installed.stderr, /synthetic-file-key/);
+  assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-file-key$/m);
+});

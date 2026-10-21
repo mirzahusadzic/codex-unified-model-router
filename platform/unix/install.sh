@@ -23,15 +23,23 @@ case "$platform" in
     ;;
 esac
 
-for argument in "$@"; do
-  case "$argument" in
+api_key_file=""
+usage() {
+  printf 'Usage: %s [--force] [--no-service] [--api-key-file <path>]\n' "$0" >&2
+  exit 2
+}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --force) force=1 ;;
     --no-service) service=0 ;;
-    *)
-      printf 'Usage: %s [--force] [--no-service]\n' "$0" >&2
-      exit 2
+    --api-key-file)
+      [[ $# -ge 2 ]] || usage
+      api_key_file="$2"
+      shift
       ;;
+    *) usage ;;
   esac
+  shift
 done
 
 restart_daemon="${CODEX_ROUTER_RESTART_DAEMON:-1}"
@@ -56,9 +64,25 @@ for command_name in codex jq node; do
   fi
 done
 
-if [[ -z "${OPENROUTER_API_KEY:-}" ]] && [[ ! -f "$router_env" ]]; then
-  printf 'OpenRouter is not configured. Export OPENROUTER_API_KEY before installing, or create %s with mode 600.\n' "$router_env" >&2
-  exit 1
+# The OpenRouter key comes from --api-key-file, OPENROUTER_API_KEY, or the
+# stored key; otherwise ask for it without echoing. It never appears in a
+# command line, where other processes could read it.
+prompted_key=""
+if [[ -n "$api_key_file" && ! -f "$api_key_file" ]]; then
+  printf 'API key file not found: %s\n' "$api_key_file" >&2
+  exit 2
+fi
+if [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]]; then
+  if [[ ! -t 0 ]]; then
+    printf 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass --api-key-file <path>.\n' >&2
+    exit 1
+  fi
+  read -r -s -p 'OpenRouter API key: ' prompted_key
+  printf '\n' >&2
+  if [[ -z "$prompted_key" ]]; then
+    printf 'No OpenRouter API key entered.\n' >&2
+    exit 1
+  fi
 fi
 
 existing_config="$codex_home/config.toml"
@@ -109,7 +133,14 @@ node "$repo_dir/scripts/build-catalog.mjs" \
   --native-models "$native_models" \
   --output "$tmp_dir/models.json"
 
-node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
+if [[ -n "$prompted_key" ]]; then
+  printf '%s\n' "$prompted_key" | node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env" --api-key-stdin
+  prompted_key=""
+elif [[ -n "$api_key_file" ]]; then
+  node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env" --api-key-file "$api_key_file"
+else
+  node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
+fi
 merge_flags=()
 if [[ "$force" -eq 1 ]]; then merge_flags+=(--force); fi
 node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env" "$tmp_dir/unified-openrouter.config.toml" ${merge_flags[@]+"${merge_flags[@]}"}

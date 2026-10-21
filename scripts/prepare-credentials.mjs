@@ -1,8 +1,21 @@
 import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-const [file] = process.argv.slice(2);
-if (!file) throw new Error('Usage: prepare-credentials.mjs <router-env-file>');
+const [file, ...options] = process.argv.slice(2);
+const validOptions = options.length === 0
+  || (options[0] === '--api-key-file' && options.length === 2 && options[1])
+  || (options[0] === '--api-key-stdin' && options.length === 1);
+if (!file || !validOptions) {
+  throw new Error('Usage: prepare-credentials.mjs <router-env-file> [--api-key-file <path> | --api-key-stdin]');
+}
+
+// A key from a file or stdin takes precedence over OPENROUTER_API_KEY, since
+// environment variables can leak to other processes; the stored key comes last.
+function suppliedKey() {
+  if (options[0] === '--api-key-file') return readFileSync(options[1], 'utf8').trim();
+  if (options[0] === '--api-key-stdin') return readFileSync(0, 'utf8').trim();
+  return '';
+}
 
 // The installers restrict the containing directory and Windows ACLs before this runs.
 const managedKeys = ['OPENROUTER_API_KEY', 'CODEX_ROUTER_TOKEN'];
@@ -25,8 +38,8 @@ if (existsSync(file)) {
     values[match[1]] = value;
   }
 }
-const key = process.env.OPENROUTER_API_KEY || values.OPENROUTER_API_KEY;
-if (!key || /[\r\n]/.test(key)) throw new Error('A nonempty, single-line OPENROUTER_API_KEY is required');
+const key = suppliedKey() || process.env.OPENROUTER_API_KEY || values.OPENROUTER_API_KEY;
+if (!key || /[\r\n]/.test(key)) throw new Error('A nonempty, single-line OpenRouter API key is required');
 const token = /^[a-f0-9]{64}$/.test(values.CODEX_ROUTER_TOKEN || '')
   ? values.CODEX_ROUTER_TOKEN : randomBytes(32).toString('hex');
 const lines = [`OPENROUTER_API_KEY=${key}`, `CODEX_ROUTER_TOKEN=${token}`, ...preserved];

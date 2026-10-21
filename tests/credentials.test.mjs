@@ -58,6 +58,28 @@ test('reinstallation keeps router settings stored beside the credentials', t => 
     + 'CODEX_ROUTER_REJECTED_REQUEST_DIR=/private/captures\\n$'));
 });
 
+test('a key file or stdin supplies the key, ahead of the environment, without printing it', t => {
+  const { home, envFile } = fixture(t);
+  const keyFile = join(home, 'openrouter.key');
+  writeFileSync(keyFile, 'synthetic-file-key\n', { mode: 0o600 });
+  const prepare = (args, input, key = '') => spawnSync(process.execPath,
+    [join(root, 'scripts/prepare-credentials.mjs'), envFile, ...args],
+    { encoding: 'utf8', input, env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '' } });
+
+  succeeds(prepare(['--api-key-file', keyFile], undefined, 'synthetic-environment-key'));
+  assert.match(readFileSync(envFile, 'utf8'), /^OPENROUTER_API_KEY=synthetic-file-key$/m);
+  succeeds(prepare(['--api-key-stdin'], 'synthetic-stdin-key\n'));
+  assert.match(readFileSync(envFile, 'utf8'), /^OPENROUTER_API_KEY=synthetic-stdin-key$/m);
+
+  writeFileSync(keyFile, 'synthetic-secret\nCODEX_ROUTER_TOKEN=injected\n');
+  for (const args of [['--api-key-file', keyFile], ['--api-key-file'], ['--api-key-stdin', 'extra'], ['--unknown']]) {
+    const result = prepare(args, '');
+    assert.notEqual(result.status, 0, args.join(' '));
+    assert.doesNotMatch(result.stdout + result.stderr, /synthetic-secret|injected/);
+  }
+  assert.match(readFileSync(envFile, 'utf8'), /^OPENROUTER_API_KEY=synthetic-stdin-key$/m);
+});
+
 test('rejects missing credentials and environment-file injection without exposing the key', t => {
   const { envFile } = fixture(t);
   for (const key of ['', 'synthetic-secret\nCODEX_ROUTER_TOKEN=injected']) {

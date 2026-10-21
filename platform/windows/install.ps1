@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$Force,
-    [switch]$NoService
+    [switch]$NoService,
+    [string]$ApiKeyFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,9 +44,22 @@ foreach ($CommandName in @('codex', 'node')) {
     }
 }
 
-$HasStoredKey = Test-Path $RouterEnv
-if ([string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and -not $HasStoredKey) {
-    Fail-Install "OpenRouter is not configured. Set OPENROUTER_API_KEY before installing, or create $RouterEnv."
+# The OpenRouter key comes from -ApiKeyFile, OPENROUTER_API_KEY, or the stored
+# key; otherwise ask for it without echoing. It never appears in a command
+# line, where other processes could read it.
+$PromptedKey = $null
+if ($ApiKeyFile -and -not (Test-Path -LiteralPath $ApiKeyFile -PathType Leaf)) {
+    Fail-Install "API key file not found: $ApiKeyFile" 2
+}
+if (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and -not (Test-Path $RouterEnv)) {
+    if ([Console]::IsInputRedirected) {
+        Fail-Install 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass -ApiKeyFile <path>.'
+    }
+    $SecureKey = Read-Host 'OpenRouter API key' -AsSecureString
+    $KeyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureKey)
+    try { $PromptedKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($KeyPointer) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($KeyPointer) }
+    if ([string]::IsNullOrWhiteSpace($PromptedKey)) { Fail-Install 'No OpenRouter API key entered.' }
 }
 
 $ConfigManaged = Join-Path $RepoDir 'scripts\config-managed.mjs'
@@ -109,7 +123,15 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
 
     $ConfigOut = Join-Path $TempDir 'config.toml'
-    & node (Join-Path $RepoDir 'scripts\prepare-credentials.mjs') $RouterEnv
+    $PrepareCredentials = Join-Path $RepoDir 'scripts\prepare-credentials.mjs'
+    if ($PromptedKey) {
+        $PromptedKey | & node $PrepareCredentials $RouterEnv --api-key-stdin
+        $PromptedKey = $null
+    } elseif ($ApiKeyFile) {
+        & node $PrepareCredentials $RouterEnv --api-key-file $ApiKeyFile
+    } else {
+        & node $PrepareCredentials $RouterEnv
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Router credential setup failed.' }
     Set-PrivatePath $RouterEnv
     $OpenRouterOut = Join-Path $TempDir 'unified-openrouter.config.toml'
