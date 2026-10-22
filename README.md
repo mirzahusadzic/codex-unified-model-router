@@ -68,7 +68,7 @@ config:
 ---
 flowchart LR
     CX["<b>Codex</b><br/>CLI and app-server"]
-    RT["<b>Unified router</b><br/>127.0.0.1, local token"]
+    RT["<b>Unified Model Router</b><br/>127.0.0.1, local token"]
     OR["<b>OpenRouter</b><br/>your API key"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
     DS["<b>DeepSeek V4.1 Flash</b><br/>default"]
@@ -122,7 +122,7 @@ CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models
 CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
 ```
 
-On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. [Installer settings](docs/setup.md#installer-settings) lists every option with its default.
+On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. `node install.mjs --help` summarizes the options; [Installer settings](docs/setup.md#installer-settings) explains each one with its default.
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you; restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 

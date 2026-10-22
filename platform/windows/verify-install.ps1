@@ -1,3 +1,15 @@
+<#
+.SYNOPSIS
+Verifies a Codex Unified Model Router installation on Windows.
+.DESCRIPTION
+Usually run through the cross-platform entry point: node install.mjs --verify
+.PARAMETER NoService
+Skips the router service checks, for installations made with -NoService.
+.EXAMPLE
+node install.mjs --verify
+.LINK
+https://github.com/mirzahusadzic/codex-unified-model-router/blob/main/docs/setup.md
+#>
 [CmdletBinding()]
 param(
     [switch]$NoService
@@ -55,7 +67,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Installed OpenRouter prompts differ from the r
 if (-not $NoService) {
     & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
     if ($LASTEXITCODE -ne 0) {
-        throw 'The unified router health check failed.'
+        throw 'The Codex Unified Model Router health check failed.'
     }
 }
 

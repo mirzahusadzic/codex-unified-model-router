@@ -86,7 +86,8 @@ test('installer settings are validated before anything is written', t => {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const home = join(directory, 'codex-home');
   mkdirSync(home);
-  for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe']]) {
+  for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe'],
+    ['CODEX_ROUTER_DISABLE_APPS', 'yes'], ['CODEX_ROUTER_DISABLE_ANALYTICS', 'no'], ['CODEX_ROUTER_AGENT_THREADS', '1000']]) {
     const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
       ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
       : [platformScript('install'), '--no-service'], {
@@ -128,6 +129,11 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
   assert.equal(installed.status, 0, installed.stderr);
   assert.doesNotMatch(installed.stdout + installed.stderr, /synthetic-file-key/);
   assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-file-key$/m);
+  // The closing summary lists one model per entry, with its command on its own line.
+  const summary = installed.stdout.slice(installed.stdout.indexOf('Start Codex'));
+  assert.match(summary, /^ {4}codex -m ultra-spark\/deepseek-v4\.1-flash-1017\r?$/m);
+  assert.match(summary, /^ {4}codex -m openrouter\/meta\/muse-spark-1\.3-contributor\r?$/m);
+  for (const line of summary.split(/\r?\n/)) assert.ok(line.length <= 80, line);
 });
 
 test('install.mjs runs the platform installer and verifier with translated flags', t => {
@@ -184,4 +190,50 @@ test('install.mjs warns, without stopping, when Codex differs from the tested ve
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /tested with Codex 0\.163\.0, but the Codex CLI is 9\.9\.9/);
   assert.match(result.stderr, /npm install -g @openai\/codex@0\.163\.0/);
+});
+
+test('install.mjs --help lists every installer setting in docs/setup.md, and errors point to it', () => {
+  const entry = args => spawnSync(process.execPath, [join(root, 'install.mjs'), ...args], { encoding: 'utf8', timeout: 30000 });
+  const help = entry(['--help']);
+  assert.equal(help.status, 0, help.stderr);
+  assert.equal(help.stderr, '');
+  assert.equal(entry(['-h']).stdout, help.stdout);
+  assert.match(help.stdout, /^Examples:$/m);
+  const setup = readFileSync(join(root, 'docs', 'setup.md'), 'utf8');
+  const table = setup.slice(setup.indexOf('### Installer settings'), setup.indexOf('### Codex version'));
+  const settings = [...table.matchAll(/^\| `([^` ]+)/gm)].map(match => match[1]);
+  assert.ok(settings.length >= 10, settings.join(' '));
+  for (const setting of settings) assert.match(help.stdout, new RegExp(`^ {2}${setting}\\b`, 'm'), setting);
+  for (const line of help.stdout.split('\n')) {
+    if (!line.includes('https://')) assert.ok(line.length <= 80, line);
+  }
+
+  for (const [args, message] of [
+    [['--change-api-ke'], /^Unknown option: --change-api-ke\nDid you mean --change-api-key\?$/m],
+    [['--frce'], /Did you mean --force\?/],
+    [['-x'], /^Unknown option: -x\nRun/m],
+    [['.'], /^Unexpected argument: \.$/m],
+    [['--api-key-file'], /--api-key-file needs a path/],
+    [['--api-key-file', '--force'], /--api-key-file needs a path/],
+    [['--api-key-file='], /--api-key-file needs a path/],
+    [['--verify', '--force'], /--verify checks an installation/],
+    [['--change-api-key', '--api-key-file', 'key'], /either --api-key-file or --change-api-key/],
+  ]) {
+    const result = entry(args);
+    assert.equal(result.status, 2, args.join(' '));
+    assert.equal(result.stdout, '', args.join(' '));
+    assert.match(result.stderr, message, args.join(' '));
+    assert.match(result.stderr, /Run 'node install\.mjs --help' for usage\.$/m, args.join(' '));
+  }
+
+  if (!windows) {
+    for (const name of ['install', 'verify-install']) {
+      const platformHelp = spawnSync('bash', [platformScript(name), '--help'], { encoding: 'utf8', timeout: 30000 });
+      assert.equal(platformHelp.status, 0, platformHelp.stderr);
+      assert.equal(platformHelp.stdout, help.stdout, name);
+      const unknown = spawnSync('bash', [platformScript(name), '--bogus'], { encoding: 'utf8', timeout: 30000 });
+      assert.equal(unknown.status, 2, name);
+      assert.match(unknown.stderr, /^Unknown option: --bogus\nRun 'node install\.mjs --help' for usage\.$/m, name);
+    }
+  }
 });

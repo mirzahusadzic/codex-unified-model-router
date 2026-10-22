@@ -33,7 +33,7 @@ Scripts you run:
 
 | Script | Purpose |
 | --- | --- |
-| `node install.mjs [--verify]` | Install, or with `--verify` check, through the platform scripts below. |
+| `node install.mjs [--verify]` | Install, or with `--verify` check, through the platform scripts below. `--help` lists every option and setting; keep it in step with [Installer settings](docs/setup.md#installer-settings), which a test enforces. |
 | `platform/unix/verify-install.sh`, `platform/windows/verify-install.ps1` | Verify an installation: configuration, tokens, permissions, catalog prompts, router health, and the service. Pass `--no-service` (Windows: `-NoService`) after an install without a service. |
 | `scripts/render-openrouter-entries.mjs` | Render the maintained prompts into the checked-in catalog entries. Run it after editing `prompts/` or adding an entry. |
 | `scripts/chatgpt-plan.mjs <codex-home>` | Print `active`, `inactive`, or `unknown` for the ChatGPT plan in Codex's login, as the installer's `CODEX_ROUTER_NATIVE_MODELS=auto` check sees it. |
@@ -63,7 +63,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
 | `tests/catalog.test.mjs` | Catalog entries, rendered prompts, prompt suffixes, and catalog-build validation. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
-| `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, and setting validation. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
+| `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary, and the help text and argument errors. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
 | `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |

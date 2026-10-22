@@ -15,12 +15,16 @@ case "$platform" in
     ;;
 esac
 
-if [[ "${1:-}" == "--no-service" ]]; then
-  check_service=0
-elif [[ -n "${1:-}" ]]; then
-  printf 'Usage: %s [--no-service]\n' "$0" >&2
-  exit 2
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --no-service) check_service=0 ;;
+    -h|--help) exec node "$script_dir/../install.mjs" --help ;;
+    *)
+      printf 'Unknown option: %s\nRun '\''node install.mjs --help'\'' for usage.\n' "$arg" >&2
+      exit 2
+      ;;
+  esac
+done
 
 test -f "$codex_home/config.toml"
 test -f "$codex_home/unified-openrouter.config.toml"

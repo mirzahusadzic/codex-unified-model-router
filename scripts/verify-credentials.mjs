@@ -31,7 +31,7 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
   }
   const provider = managedBlock(config, 'provider');
   const expected = [
-    '[model_providers.unified]', 'name = "Codex Unified Router"',
+    '[model_providers.unified]', 'name = "Codex Unified Model Router"',
     'base_url = "http://127.0.0.1:18766/v1"', 'wire_api = "responses"',
     `requires_openai_auth = ${!openrouterOnly}`, 'supports_websockets = false',
     openrouterOnly

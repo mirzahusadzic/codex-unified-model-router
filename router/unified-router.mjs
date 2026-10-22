@@ -362,7 +362,7 @@ function upstreamHeaders(requestHeaders, provider, bodyLength) {
 
   if (provider === 'openrouter') {
     if (!openrouterApiKey) {
-      const error = new Error('OPENROUTER_API_KEY is not configured for the unified router');
+      const error = new Error('OPENROUTER_API_KEY is not configured for the Codex Unified Model Router');
       error.statusCode = 503;
       throw error;
     }
@@ -723,7 +723,7 @@ const server = http.createServer((request, response) => {
     if (receivedBytes > maxBodyBytes) {
       rejected = true;
       response.once('finish', () => request.destroy());
-      sendJson(response, 413, { error: { message: 'Request body exceeds the unified router limit' } });
+      sendJson(response, 413, { error: { message: 'Request body exceeds the Codex Unified Model Router limit' } });
       return;
     }
     chunks.push(chunk);
@@ -829,7 +829,7 @@ const server = http.createServer((request, response) => {
       });
       if (response.destroyed) return;
       if (response.headersSent) response.destroy();
-      else sendJson(response, 502, { error: { message: 'Unified router upstream request failed' } });
+      else sendJson(response, 502, { error: { message: 'Codex Unified Model Router upstream request failed' } });
     };
 
     response.once('close', () => {

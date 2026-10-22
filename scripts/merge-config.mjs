@@ -176,7 +176,7 @@ const keys = [
 
 const provider = [
   '[model_providers.unified]',
-  'name = "Codex Unified Router"',
+  'name = "Codex Unified Model Router"',
   'base_url = "http://127.0.0.1:18766/v1"',
   'wire_api = "responses"',
   'requires_openai_auth = true',

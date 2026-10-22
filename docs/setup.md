@@ -26,7 +26,7 @@ The helper scripts behind these steps are listed in [CONTRIBUTING.md](../CONTRIB
 
 ### Installer settings
 
-Pass settings to `node install.mjs` as flags or environment variables on each run; the installer does not store them:
+Pass settings to `node install.mjs` as flags or environment variables on each run; the installer does not store them. `node install.mjs --help` prints a summary. An unknown flag or invalid value stops the installer before it asks anything or changes a file:
 
 ```sh
 node install.mjs --api-key-file ~/openrouter.key
@@ -48,7 +48,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | `--force` | flag | Merges into an existing configuration without asking. Needed only where no terminal is available for the question, such as in scripts. |
 | `--no-service` | flag | Writes configuration and router files without starting a service or restarting the Codex daemon. |
 | `--change-api-key` | flag | Asks for a new OpenRouter key, hidden as you type, and replaces the stored one. Needs a terminal; use `--api-key-file` in scripts. |
-| `--api-key-file <path>` | file path | Reads the OpenRouter key from the file's first line and replaces any stored key. Without it, the first install asks for the key without echoing it, and later installs reuse the stored key. |
+| `--api-key-file <path>` | file path; also `--api-key-file=<path>` | Reads the OpenRouter key from the file's first line and replaces any stored key. Without it, the first install asks for the key without echoing it, and later installs reuse the stored key. |
 | `OPENROUTER_API_KEY` | API key | Also supplies or replaces the key, for automation that cannot use a file. Prefer the prompt or `--api-key-file`: environment variables can leak to other processes and logs. |
 | `CODEX_HOME` | path; default `~/.codex` | Codex home directory to configure. |
 | `CODEX_ROUTER_NATIVE_MODELS` | `auto` (default), `show`, `hide` | Whether native OpenAI models appear in `/model`. See [Native OpenAI models](#native-openai-models). |
@@ -126,7 +126,7 @@ model_reasoning_effort = "xhigh"
 model_catalog_json = "/absolute/path/to/.codex/models.json"
 
 [model_providers.unified]
-name = "Codex Unified Router"
+name = "Codex Unified Model Router"
 base_url = "http://127.0.0.1:18766/v1"
 wire_api = "responses"
 requires_openai_auth = true

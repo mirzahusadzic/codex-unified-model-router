@@ -25,8 +25,9 @@ esac
 
 api_key_file=""
 change_api_key=0
-usage() {
-  printf 'Usage: %s [--force] [--no-service] [--api-key-file <path> | --change-api-key]\n' "$0" >&2
+# install.mjs owns the help text and runs this script with validated options.
+usage_error() {
+  printf '%s\nRun '\''node install.mjs --help'\'' for usage.\n' "$1" >&2
   exit 2
 }
 while [[ $# -gt 0 ]]; do
@@ -35,14 +36,18 @@ while [[ $# -gt 0 ]]; do
     --no-service) service=0 ;;
     --change-api-key) change_api_key=1 ;;
     --api-key-file)
-      [[ $# -ge 2 ]] || usage
+      [[ $# -ge 2 && -n "$2" ]] || usage_error '--api-key-file needs a path, for example: --api-key-file ~/openrouter.key'
       api_key_file="$2"
       shift
       ;;
-    *) usage ;;
+    -h|--help) exec node "$repo_dir/install.mjs" --help ;;
+    *) usage_error "Unknown option: $1" ;;
   esac
   shift
 done
+if [[ -n "$api_key_file" && "$change_api_key" -eq 1 ]]; then
+  usage_error 'Use either --api-key-file or --change-api-key, not both.'
+fi
 
 restart_daemon="${CODEX_ROUTER_RESTART_DAEMON:-1}"
 if [[ "$restart_daemon" != 0 && "$restart_daemon" != 1 ]]; then
@@ -58,6 +63,17 @@ case "$native_models" in
     exit 2
     ;;
 esac
+# merge-config.mjs applies these; checking them here fails before any prompt.
+for setting in CODEX_ROUTER_DISABLE_APPS CODEX_ROUTER_DISABLE_ANALYTICS; do
+  if [[ -n "${!setting+set}" && "${!setting}" != 0 && "${!setting}" != 1 ]]; then
+    printf '%s must be 0 or 1\n' "$setting" >&2
+    exit 2
+  fi
+done
+if [[ -n "${CODEX_ROUTER_AGENT_THREADS+set}" && ! "$CODEX_ROUTER_AGENT_THREADS" =~ ^(0|[1-9][0-9]{0,2})$ ]]; then
+  printf 'CODEX_ROUTER_AGENT_THREADS must be 0 or a whole number from 1 to 999\n' >&2
+  exit 2
+fi
 
 for command_name in codex jq node; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -99,7 +115,6 @@ fi
 # stored key; otherwise ask for it without echoing. It never appears in a
 # command line, where other processes could read it.
 prompted_key=""
-if [[ -n "$api_key_file" && "$change_api_key" -eq 1 ]]; then usage; fi
 if [[ -n "$api_key_file" && ! -f "$api_key_file" ]]; then
   printf 'API key file not found: %s\n' "$api_key_file" >&2
   exit 2
@@ -123,7 +138,7 @@ fi
 # Progress goes to standard error, so the final summary stays on standard output.
 step() { printf '==> %s\n' "$*" >&2; }
 
-step "Installing the Codex unified router into $codex_home"
+step "Installing the Codex Unified Model Router into $codex_home"
 if [[ -n "$prompted_key" ]]; then step "Using the OpenRouter API key you entered"
 elif [[ -n "$api_key_file" ]]; then step "Reading the OpenRouter API key from $api_key_file"
 elif [[ -n "${OPENROUTER_API_KEY:-}" ]]; then step "Using the OpenRouter API key from OPENROUTER_API_KEY"
@@ -148,9 +163,13 @@ codex debug models --bundled > "$tmp_dir/bundled-models.json"
 
 # Native OpenAI models need a ChatGPT plan. In auto mode, hide them from /model
 # only when Codex's login shows a missing or lapsed plan.
+native_reason="CODEX_ROUTER_NATIVE_MODELS=hide"
 if [[ "$native_models" == auto ]]; then
   native_models=show
-  if [[ "$(node "$repo_dir/scripts/chatgpt-plan.mjs" "$codex_home")" == inactive ]]; then native_models=hide; fi
+  if [[ "$(node "$repo_dir/scripts/chatgpt-plan.mjs" "$codex_home")" == inactive ]]; then
+    native_models=hide
+    native_reason="no active ChatGPT plan"
+  fi
 fi
 
 node "$repo_dir/scripts/build-catalog.mjs" \
@@ -160,7 +179,7 @@ node "$repo_dir/scripts/build-catalog.mjs" \
   --persistent "$repo_dir/prompts/openrouter-persistent.md" \
   --native-models "$native_models" \
   --output "$tmp_dir/models.json"
-if [[ "$native_models" == hide ]]; then step "Native OpenAI models are hidden from /model"; fi
+if [[ "$native_models" == hide ]]; then step "Hiding native OpenAI models from /model ($native_reason)"; fi
 
 step "Updating the Codex configuration"
 
@@ -179,7 +198,7 @@ node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000' \
   "$tmp_dir/models.json" >/dev/null
 
-step "Installing the router"
+step "Installing the loopback router at 127.0.0.1:18766"
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
@@ -271,7 +290,7 @@ EOF_PLIST
         launchctl kickstart -k "gui/$(id -u)/$service_label"
 
         if ! wait_for_router; then
-          printf 'The unified router was installed but did not become healthy. Check %s.\n' "$HOME/Library/Logs/codex-unified-router.error.log" >&2
+          printf 'The Codex Unified Model Router was installed but did not become healthy. Check %s.\n' "$HOME/Library/Logs/codex-unified-router.error.log" >&2
           exit 1
         fi
       fi
@@ -283,7 +302,7 @@ EOF_PLIST
         mkdir -p "$(dirname "$linux_unit")"
         {
           printf '[Unit]\n'
-          printf 'Description=Codex Unified Router\n'
+          printf 'Description=Codex Unified Model Router\n'
           printf 'After=network-online.target\n\n'
           printf '[Service]\n'
           printf 'Type=simple\n'
@@ -303,7 +322,7 @@ EOF_PLIST
         systemctl --user restart "$linux_service"
 
         if ! wait_for_router; then
-          printf 'The unified router was installed but did not become healthy. Check:\n' >&2
+          printf 'The Codex Unified Model Router was installed but did not become healthy. Check:\n' >&2
           printf '  journalctl --user -u %s\n' "$linux_service" >&2
           exit 1
         fi
@@ -341,15 +360,29 @@ if [[ "$service" -eq 1 && "$restart_daemon" -eq 1 ]] \
   fi
 fi
 
-printf 'Installed the Codex unified router in %s\n' "$codex_home"
+printf 'Installed the Codex Unified Model Router in %s\n' "$codex_home"
 printf 'Backups: %s\n' "$backup_dir"
-printf '\nMain thread, DeepSeek: codex (default; or codex -m deepseek/deepseek-v4.1-flash-1017)\n'
-if [[ "$native_models" == hide ]]; then
-  printf 'Native OpenAI models:  hidden from /model (no active ChatGPT plan, or CODEX_ROUTER_NATIVE_MODELS=hide)\n'
-else
-  printf 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)\n'
+cat <<'EOF'
+
+Start Codex with a model, or switch with /model:
+  DeepSeek V4.1 Flash 1017 (default)
+    codex
+  Ultra Spark: DeepSeek delegating to Muse workers
+    codex -m ultra-spark/deepseek-v4.1-flash-1017
+  Muse Spark 1.3 Contributor
+    codex -m openrouter/meta/muse-spark-1.3-contributor
+EOF
+if [[ "$native_models" == show ]]; then
+  printf '  GPT-6 Astra (requires a ChatGPT plan)\n    codex -m gpt-6-astra\n'
 fi
-printf 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)\n'
-printf 'Ultra Spark mode:      codex -m ultra-spark/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)\n'
-printf '\nIn an existing session, child threads may use the same model names through spawn_agent model overrides.\n'
-printf 'Restart Codex windows created before this install; they keep the provider they were started with.\n'
+cat <<'EOF'
+
+Meta trains on everything sent to Muse, including Ultra Spark's workers,
+so use them for share-safe code only.
+EOF
+if [[ "$native_models" == hide ]]; then
+  printf 'Native OpenAI models are hidden from /model (%s).\n' "$native_reason"
+else
+  printf 'One session never mixes native OpenAI models with Muse or Ultra Spark.\n'
+fi
+printf 'Restart Codex windows opened before this install to pick up the changes.\n'

@@ -1,3 +1,24 @@
+<#
+.SYNOPSIS
+Installs or updates the Codex Unified Model Router on Windows.
+.DESCRIPTION
+Usually run through the cross-platform entry point, which also lists the
+environment settings: node install.mjs --help
+.PARAMETER Force
+Merges into an unmanaged Codex configuration without asking. It is backed up first.
+.PARAMETER NoService
+Writes files only: does not start the router or restart the Codex daemon.
+.PARAMETER ApiKeyFile
+Reads the OpenRouter key from this file.
+.PARAMETER ChangeApiKey
+Asks for a new OpenRouter key and replaces the stored one.
+.EXAMPLE
+node install.mjs
+.EXAMPLE
+node install.mjs --change-api-key
+.LINK
+https://github.com/mirzahusadzic/codex-unified-model-router/blob/main/docs/setup.md
+#>
 [CmdletBinding()]
 param(
     [switch]$Force,
@@ -30,6 +51,10 @@ function Fail-Install([string]$Message, [int]$Code = 1) {
     exit $Code
 }
 
+if ($ApiKeyFile -and $ChangeApiKey) {
+    Fail-Install "Use either -ApiKeyFile or -ChangeApiKey, not both.`nRun 'node install.mjs --help' for usage." 2
+}
+
 $RestartDaemon = if ($env:CODEX_ROUTER_RESTART_DAEMON) { $env:CODEX_ROUTER_RESTART_DAEMON } else { '1' }
 if ($RestartDaemon -notin @('0', '1')) {
     Fail-Install 'CODEX_ROUTER_RESTART_DAEMON must be 0 or 1' 2
@@ -37,6 +62,15 @@ if ($RestartDaemon -notin @('0', '1')) {
 $NativeModels = if ($env:CODEX_ROUTER_NATIVE_MODELS) { $env:CODEX_ROUTER_NATIVE_MODELS } else { 'auto' }
 if ($NativeModels -notin @('auto', 'show', 'hide')) {
     Fail-Install 'CODEX_ROUTER_NATIVE_MODELS must be auto, show, or hide' 2
+}
+# merge-config.mjs applies these; checking them here fails before any prompt.
+foreach ($Setting in @('CODEX_ROUTER_DISABLE_APPS', 'CODEX_ROUTER_DISABLE_ANALYTICS')) {
+    $Value = [Environment]::GetEnvironmentVariable($Setting)
+    if ($null -ne $Value -and $Value -notin @('0', '1')) { Fail-Install "$Setting must be 0 or 1" 2 }
+}
+$AgentThreads = $env:CODEX_ROUTER_AGENT_THREADS
+if ($null -ne $AgentThreads -and $AgentThreads -cnotmatch '^(0|[1-9][0-9]{0,2})$') {
+    Fail-Install 'CODEX_ROUTER_AGENT_THREADS must be 0 or a whole number from 1 to 999' 2
 }
 
 foreach ($CommandName in @('codex', 'node')) {
@@ -72,7 +106,6 @@ if (-not $Force -and $Unmanaged.Count -gt 0) {
 # key; otherwise ask for it without echoing. It never appears in a command
 # line, where other processes could read it.
 $PromptedKey = $null
-if ($ApiKeyFile -and $ChangeApiKey) { Fail-Install 'Use either -ApiKeyFile or -ChangeApiKey.' 2 }
 if ($ApiKeyFile -and -not (Test-Path -LiteralPath $ApiKeyFile -PathType Leaf)) {
     Fail-Install "API key file not found: $ApiKeyFile" 2
 }
@@ -92,7 +125,7 @@ if ($ChangeApiKey -or (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:O
 
 function Write-Step([string]$Message) { [Console]::Error.WriteLine("==> $Message") }
 
-Write-Step "Installing the Codex unified router into $CodexHome"
+Write-Step "Installing the Codex Unified Model Router into $CodexHome"
 if ($PromptedKey) { Write-Step 'Using the OpenRouter API key you entered' }
 elseif ($ApiKeyFile) { Write-Step "Reading the OpenRouter API key from $ApiKeyFile" }
 elseif (-not [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY)) { Write-Step 'Using the OpenRouter API key from OPENROUTER_API_KEY' }
@@ -127,9 +160,11 @@ try {
 
     # Native OpenAI models need a ChatGPT plan. In auto mode, hide them from /model
     # only when Codex's login shows a missing or lapsed plan.
+    $NativeReason = 'CODEX_ROUTER_NATIVE_MODELS=hide'
     if ($NativeModels -eq 'auto') {
         $PlanStatus = & node (Join-Path $RepoDir 'scripts\chatgpt-plan.mjs') $CodexHome
         $NativeModels = if ($PlanStatus -eq 'inactive') { 'hide' } else { 'show' }
+        if ($NativeModels -eq 'hide') { $NativeReason = 'no active ChatGPT plan' }
     }
 
     $ModelsFile = Join-Path $TempDir 'models.json'
@@ -141,7 +176,7 @@ try {
         '--native-models' $NativeModels `
         '--output' $ModelsFile
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
-    if ($NativeModels -eq 'hide') { Write-Step 'Native OpenAI models are hidden from /model' }
+    if ($NativeModels -eq 'hide') { Write-Step "Hiding native OpenAI models from /model ($NativeReason)" }
 
     Write-Step 'Updating the Codex configuration'
     $ConfigOut = Join-Path $TempDir 'config.toml'
@@ -179,7 +214,7 @@ try {
     }
     Set-PrivatePath $OpenRouterProfile
     [System.IO.File]::WriteAllText($OpenRouterProfile, [System.IO.File]::ReadAllText($OpenRouterOut, $Utf8NoBom), $Utf8NoBom)
-    Write-Step 'Installing the router'
+    Write-Step 'Installing the loopback router at 127.0.0.1:18766'
     Copy-Item -Force $ModelsFile (Join-Path $CodexHome 'models.json')
     Copy-Item -Force (Join-Path $RepoDir 'router\unified-router.mjs') $RouterFile
 
@@ -240,7 +275,7 @@ goto run
             Start-Sleep -Milliseconds 200
         }
         if (-not $Healthy) {
-            throw "The unified router was installed but did not become healthy. Check $RouterErrorLog."
+            throw "The Codex Unified Model Router was installed but did not become healthy. Check $RouterErrorLog."
         }
 
         # The shared app-server daemon keeps the configuration and catalog it
@@ -279,16 +314,29 @@ finally {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
 
-Write-Host "Installed the Codex unified router in $CodexHome"
+Write-Host "Installed the Codex Unified Model Router in $CodexHome"
 Write-Host "Backups: $BackupDir"
-Write-Host ''
-Write-Host 'Main thread, DeepSeek: codex (default; or codex -m deepseek/deepseek-v4.1-flash-1017)'
-if ($NativeModels -eq 'hide') {
-    Write-Host 'Native OpenAI models:  hidden from /model (no active ChatGPT plan, or CODEX_ROUTER_NATIVE_MODELS=hide)'
-} else {
-    Write-Host 'Main thread, OpenAI:   codex -m gpt-6-astra (requires a ChatGPT plan)'
+Write-Host @'
+
+Start Codex with a model, or switch with /model:
+  DeepSeek V4.1 Flash 1017 (default)
+    codex
+  Ultra Spark: DeepSeek delegating to Muse workers
+    codex -m ultra-spark/deepseek-v4.1-flash-1017
+  Muse Spark 1.3 Contributor
+    codex -m openrouter/meta/muse-spark-1.3-contributor
+'@
+if ($NativeModels -eq 'show') {
+    Write-Host "  GPT-6 Astra (requires a ChatGPT plan)`n    codex -m gpt-6-astra"
 }
-Write-Host 'Main thread, Muse:     codex -m openrouter/meta/muse-spark-1.3-contributor (Meta trains on its prompts; share-safe code only)'
-Write-Host 'Ultra Spark mode:      codex -m ultra-spark/deepseek-v4.1-flash-1017 (DeepSeek delegating to Muse workers; fresh threads, share-safe code)'
-Write-Host ''
-Write-Host 'Restart Codex windows created before this install; they keep the provider they were started with.'
+Write-Host @'
+
+Meta trains on everything sent to Muse, including Ultra Spark's workers,
+so use them for share-safe code only.
+'@
+if ($NativeModels -eq 'hide') {
+    Write-Host "Native OpenAI models are hidden from /model ($NativeReason)."
+} else {
+    Write-Host 'One session never mixes native OpenAI models with Muse or Ultra Spark.'
+}
+Write-Host 'Restart Codex windows opened before this install to pick up the changes.'
