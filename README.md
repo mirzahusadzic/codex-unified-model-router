@@ -6,10 +6,10 @@
 ![Codex CLI 0.163](https://img.shields.io/badge/Codex%20CLI-0.163-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
-Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
+Run Codex on DeepSeek, Meta's Muse Spark 1.3 Contributor, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
 
 - **DeepSeek by default.** DeepSeek V4.1 Flash 1017 with a 960,000-token context (912,000 effective at 95%). Prompts stay cache-friendly, so long agent sessions read most of each prompt from cache.
-- **Ultra Spark mode.** DeepSeek leads and up to 10 Muse workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
+- **Ultra Spark mode.** DeepSeek leads and up to 10 Muse Spark 1.3 Contributor workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
 - **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
 - **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
 - **Private by default.** Codex analytics and its OpenAI-hosted guardian reviewer are off, and native OpenAI models never share a tracked Codex session with a provider that trains on its inputs.
@@ -74,7 +74,7 @@ flowchart LR
     AM["<b>Any OpenRouter model</b><br/>with a catalog entry"]
     subgraph TT["Training tier"]
         US["<b>Ultra Spark</b><br/>DeepSeek leading workers"]
-        MU["<b>Muse Spark 1.3</b><br/>Meta, contributor tier"]
+        MU["<b>Muse Spark 1.3 Contributor</b><br/>Meta, trains on inputs"]
     end
     CX -->|"Responses API"| RT
     RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
