@@ -160,6 +160,9 @@ test('install.mjs runs the platform installer and verifier with translated flags
   const verified = entry(['--verify', '--no-service']);
   assert.equal(verified.status, 0, verified.stderr);
   assert.match(verified.stdout, /Install looks valid/);
+  // The fake Codex bundles no native models, so the report lists only router models.
+  assert.match(verified.stdout, /^Router models: deepseek\/deepseek-v4\.1-flash-1017, ultra-spark\/deepseek-v4\.1-flash-1017, /m);
+  assert.match(verified.stdout, /^Native OpenAI models: hidden from \/model\r?$/m);
   for (const args of [['--bogus'], ['--verify', '--force'], ['--api-key-file'], ['--verify', '--change-api-key'],
     ['--change-api-key', '--api-key-file', keyFile]]) {
     assert.equal(entry(args).status, 2, args.join(' '));
@@ -235,5 +238,13 @@ test('install.mjs --help lists every installer setting in docs/setup.md, and err
       assert.equal(unknown.status, 2, name);
       assert.match(unknown.stderr, /^Unknown option: --bogus\nRun 'node install\.mjs --help' for usage\.$/m, name);
     }
+  }
+});
+
+test('Unix scripts need no jq, since CI runner images ship it and would hide a new dependency', () => {
+  for (const name of ['install.sh', 'verify-install.sh']) {
+    const code = readFileSync(join(root, 'platform', 'unix', name), 'utf8')
+      .split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
+    assert.doesNotMatch(code, /\bjq\b/, name);
   }
 });

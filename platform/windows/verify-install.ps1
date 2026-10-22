@@ -74,4 +74,12 @@ if (-not $NoService) {
 Write-Host 'Install looks valid.'
 $DefaultModel = (Select-String -Path $ConfigPath -Pattern '^model = "(.*)"$' | Select-Object -First 1).Matches.Groups[1].Value
 Write-Host "Default main model: $DefaultModel"
-Write-Host 'Selectable models: deepseek/deepseek-v4.1-flash-1017, ultra-spark/deepseek-v4.1-flash-1017 (Ultra Spark), openrouter/meta/muse-spark-1.3-contributor, gpt-6-astra (requires a ChatGPT plan), and the rest of the catalog.'
+# Report what /model lists, from the installed catalog.
+$Routed = '^(deepseek|openrouter|ultra-spark)/'
+Write-Host "Router models: $(@($Catalog.models | Where-Object { $_.slug -match $Routed } | ForEach-Object { $_.slug }) -join ', ')"
+$NativeListed = @($Catalog.models | Where-Object { $_.slug -notmatch $Routed -and $_.visibility -ne 'hide' }).Count
+if ($NativeListed -gt 0) {
+    Write-Host "Native OpenAI models: $NativeListed in /model (require a ChatGPT plan)"
+} else {
+    Write-Host 'Native OpenAI models: hidden from /model'
+}

@@ -36,6 +36,19 @@ test('checked-in OpenRouter entries carry the rendered maintained prompts', () =
   assert.equal(checked, 3);
 });
 
+test('OpenRouter prompts never mention Codex tools that OpenRouter threads lack', () => {
+  // The verifier pins installed prompts to these entries, so checking them here covers installations too.
+  for (const name of readdirSync(join(root, 'catalog')).filter(value => value.endsWith('.json'))) {
+    const value = readEntry(name);
+    for (const entry of (Array.isArray(value) ? value : [value]).filter(item => usesOpenRouterPrompts(item.slug))) {
+      for (const text of [entry.base_instructions, entry.model_messages?.instructions_template,
+        entry.model_messages?.persistent_instructions]) {
+        assert.doesNotMatch(text ?? '', /update_plan|send_user_message_async|clock\.sleep|update_up_next/, `${name}: ${entry.slug}`);
+      }
+    }
+  }
+});
+
 test('Muse Spark 1.3 Contributor catalog entry matches the OpenRouter model capabilities', () => {
   assert.equal(muse.slug, 'openrouter/meta/muse-spark-1.3-contributor');
   assert.equal(muse.context_window, 1048576);

@@ -78,7 +78,7 @@ To retain the exact rejected request and response bodies for diagnosis, opt in b
 
 Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records include the same opaque `sessionId` from Codex's `session-id` header (`session_id` in earlier Codex versions), so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
 
-For example, calculate a session's overall cache-read share:
+The examples below use [`jq`](https://jqlang.org/), which the router itself does not need. For example, calculate a session's overall cache-read share:
 
 ```sh
 jq -s '

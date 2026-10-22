@@ -61,9 +61,9 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | --- | --- | --- |
 | `tests/unified-router.test.mjs` | Routing, history repair, reasoning and structured-output adaptation, OpenRouter recovery, provider isolation, endpoint preferences, header allowlists, streaming, and logs. | All |
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
-| `tests/catalog.test.mjs` | Catalog entries, rendered prompts, prompt suffixes, and catalog-build validation. | All |
+| `tests/catalog.test.mjs` | Catalog entries, rendered prompts and the Codex tools they must not mention, prompt suffixes, and catalog-build validation. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
-| `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary, and the help text and argument errors. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
+| `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary and verifier report, the help text and argument errors, and that the Unix scripts need no `jq`. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
 | `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |

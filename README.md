@@ -102,13 +102,13 @@ flowchart LR
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. macOS and Linux also need `jq`; Windows needs PowerShell 5.1 or later.
+Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
 
 ```sh
 npm install -g @openai/codex@0.163.0    # skip if you already have Codex 0.163.0
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
-node install.mjs            # asks for your OpenRouter API key on the first install
+node install.mjs                        # asks for your OpenRouter API key on the first install
 node install.mjs --verify
 ```
 

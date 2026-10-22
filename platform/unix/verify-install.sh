@@ -38,16 +38,14 @@ grep -q '^\[model_providers\.unified\]$' "$codex_home/config.toml"
 grep -q '^requires_openai_auth = true$' "$codex_home/config.toml"
 grep -q '^supports_websockets = false$' "$codex_home/config.toml"
 
-jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000 and .max_context_window == 960000' \
-  "$codex_home/models.json" >/dev/null
-
-node "$script_dir/verify-prompts.mjs" "$codex_home"
-
-if jq -r '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .base_instructions, .model_messages.persistent_instructions' \
-  "$codex_home/models.json" | grep -E 'update_plan|send_user_message_async|clock\.sleep|update_up_next'; then
-  printf 'DeepSeek prompt still references unavailable tools.\n' >&2
+if ! node -e 'const model = JSON.parse(require("fs").readFileSync(0, "utf8")).models
+    .find(entry => entry.slug === "deepseek/deepseek-v4.1-flash-1017");
+  process.exit(model?.context_window === 960000 && model.max_context_window === 960000 ? 0 : 1)' <"$codex_home/models.json"; then
+  printf 'DeepSeek context limits are not 960000.\n' >&2
   exit 1
 fi
+
+node "$script_dir/verify-prompts.mjs" "$codex_home"
 
 if [[ "$check_service" -eq 1 ]]; then
   node "$script_dir/verify-health.mjs" "$codex_home/unified-router/router.mjs" http://127.0.0.1:18766/health
@@ -73,4 +71,10 @@ fi
 
 printf 'Install looks valid.\n'
 printf 'Default main model: %s\n' "$(sed -n 's/^model = "\(.*\)"$/\1/p' "$codex_home/config.toml" | head -1)"
-printf 'Selectable models: deepseek/deepseek-v4.1-flash-1017, ultra-spark/deepseek-v4.1-flash-1017 (Ultra Spark), openrouter/meta/muse-spark-1.3-contributor, gpt-6-astra (requires a ChatGPT plan), and the rest of the catalog.\n'
+# Report what /model lists, from the installed catalog.
+node -e 'const models = JSON.parse(require("fs").readFileSync(0, "utf8")).models;
+  const routed = model => /^(deepseek|openrouter|ultra-spark)\//.test(model.slug);
+  const native = models.filter(model => !routed(model) && model.visibility !== "hide").length;
+  console.log(`Router models: ${models.filter(routed).map(model => model.slug).join(", ")}`);
+  console.log(native ? `Native OpenAI models: ${native} in /model (require a ChatGPT plan)` : "Native OpenAI models: hidden from /model");' \
+  <"$codex_home/models.json"
