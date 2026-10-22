@@ -113,49 +113,50 @@ function recordSessionSide(sessionId, side) {
 }
 
 // Ultra Spark workers must start with fork_context: false, but only the prompt
-// asks for that. For each tool call ID in an Ultra Spark request, the router
-// remembers the thread that sent it first, and refuses a Muse or other
-// training-tier request carrying an ID that another thread in the same session
-// sent first: that request holds a forked Ultra Spark history. A fork before
-// the lead's first tool call carries no known ID and is not detected. Records
-// are in memory only and keep each session's most recent IDs; after a restart
-// the check resumes with the lead's next request. Requests without a session
-// or thread ID are not checked.
-const leadCallThreads = new Map();
+// asks for that. Codex gives a session's main thread a thread ID equal to the
+// session ID, and each spawned agent its own thread ID. The router remembers
+// the tool call IDs in Ultra Spark requests from a main thread and refuses a
+// Muse or other training-tier request from a spawned agent in the same session
+// that carries one of them: that request holds the lead's forked history. A
+// fork before the lead's first tool call carries no known ID and is not
+// detected. Records are in memory only and keep each session's most recent
+// IDs; after a restart the check resumes with the lead's next request.
+// Requests without a session or thread ID are not checked.
+const leadCallIds = new Map();
 const maxLeadSessions = 256;
 const maxLeadCallIdsPerSession = 4096;
+const maxCallIdLength = 256;
 
 function callIdsIn(input) {
   if (!Array.isArray(input)) return [];
   return input
     .filter(item => (item?.type === 'function_call' || item?.type === 'function_call_output')
-      && typeof item.call_id === 'string' && item.call_id.length > 0)
+      && typeof item.call_id === 'string' && item.call_id.length > 0 && item.call_id.length <= maxCallIdLength)
     .map(item => item.call_id);
 }
 
-function recordLeadCallIds(sessionId, threadId, input) {
-  const callThreads = leadCallThreads.get(sessionId) ?? new Map();
-  leadCallThreads.delete(sessionId);
-  leadCallThreads.set(sessionId, callThreads);
+function recordLeadCallIds(sessionId, input) {
+  const ids = leadCallIds.get(sessionId) ?? new Set();
+  leadCallIds.delete(sessionId);
+  leadCallIds.set(sessionId, ids);
   for (const id of callIdsIn(input)) {
-    const firstThread = callThreads.get(id) ?? threadId;
-    callThreads.delete(id);
-    callThreads.set(id, firstThread);
+    ids.delete(id);
+    ids.add(id);
   }
-  for (const id of callThreads.keys()) {
-    if (callThreads.size <= maxLeadCallIdsPerSession) break;
-    callThreads.delete(id);
+  for (const id of ids) {
+    if (ids.size <= maxLeadCallIdsPerSession) break;
+    ids.delete(id);
   }
-  for (const id of leadCallThreads.keys()) {
-    if (leadCallThreads.size <= maxLeadSessions) break;
-    leadCallThreads.delete(id);
+  for (const id of leadCallIds.keys()) {
+    if (leadCallIds.size <= maxLeadSessions) break;
+    leadCallIds.delete(id);
   }
 }
 
-function forkedLeadCallIds(sessionId, threadId, input) {
-  const callThreads = leadCallThreads.get(sessionId);
-  if (!callThreads) return 0;
-  return new Set(callIdsIn(input).filter(id => callThreads.has(id) && callThreads.get(id) !== threadId)).size;
+function forkedLeadCallIds(sessionId, input) {
+  const ids = leadCallIds.get(sessionId);
+  if (!ids) return 0;
+  return new Set(callIdsIn(input).filter(id => ids.has(id))).size;
 }
 
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
@@ -876,10 +877,11 @@ const server = http.createServer((request, response) => {
       recordSessionSide(requestInfo.sessionId, recorded.side);
     }
     if (requestInfo.sessionId && threadId) {
-      if (requestedModel.startsWith('ultra-spark/')) {
-        recordLeadCallIds(requestInfo.sessionId, threadId, parsed.input);
-      } else if (side === 'training') {
-        const forkedCallIds = forkedLeadCallIds(requestInfo.sessionId, threadId, parsed.input);
+      const ultraSpark = requestedModel.startsWith('ultra-spark/');
+      if (threadId === requestInfo.sessionId) {
+        if (ultraSpark) recordLeadCallIds(requestInfo.sessionId, parsed.input);
+      } else if (side === 'training' && !ultraSpark) {
+        const forkedCallIds = forkedLeadCallIds(requestInfo.sessionId, parsed.input);
         if (forkedCallIds > 0) {
           logEvent('error', 'session.forked_lead_context', {
             requestId, sessionId: requestInfo.sessionId, model: requestedModel, forkedCallIds,

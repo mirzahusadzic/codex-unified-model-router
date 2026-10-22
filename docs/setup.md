@@ -207,11 +207,12 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor), so use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI model; see [Provider isolation](#provider-isolation).
 
-As a backstop, the router detects workers forked with the lead's history by their tool call IDs. For each tool call ID in an Ultra Spark request, it remembers in memory which thread sent it first. A Muse or other training-tier request that carries an ID first sent by another thread in the same session gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed. The check matches tool call IDs only, so it misses:
+As a backstop, the router detects workers forked with the lead's history by their tool call IDs. Codex gives a session's main thread a thread ID equal to the session ID, and each spawned agent its own. The router remembers, in memory, the tool call IDs in Ultra Spark requests from a main thread. If a spawned agent in the same session sends one of them to Muse or another training-tier model other than Ultra Spark, the request gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed. The check matches tool call IDs only, so it misses:
 
 - a fork made before the lead's first tool call;
-- requests without both a session ID and a thread ID, which Codex 0.163 sends on every request;
-- IDs that aged out of the most recent 4,096 kept per session, or were forgotten when the router restarted, until the lead's next request records them again.
+- an Ultra Spark lead that is itself a spawned agent rather than a main thread;
+- requests without both a session ID and a thread ID, which Codex 0.163 sends as `session-id` and `thread-id`;
+- the lead's IDs that aged out of the most recent 4,096 kept per session, or were forgotten when the router restarted, until the lead's next request records them again.
 
 ### Add a model
 
