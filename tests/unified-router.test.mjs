@@ -954,7 +954,8 @@ test('a repeated OpenRouter 400 completes with a router diagnostic instead of br
   const created = captureAfter.filter(name => !captureBefore.includes(name));
   assert.equal(created.length, 4);
   for (const name of created) {
-    assert.equal(statSync(join(rejectedRequestDir, name)).mode & 0o777, 0o600);
+    // Windows has no file modes; the router directory's access list protects captures there.
+    if (process.platform !== 'win32') assert.equal(statSync(join(rejectedRequestDir, name)).mode & 0o777, 0o600);
     assert.doesNotThrow(() => JSON.parse(readFileSync(join(rejectedRequestDir, name), 'utf8')));
   }
 });
