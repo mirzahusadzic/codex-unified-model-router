@@ -24,14 +24,16 @@ case "$platform" in
 esac
 
 api_key_file=""
+change_api_key=0
 usage() {
-  printf 'Usage: %s [--force] [--no-service] [--api-key-file <path>]\n' "$0" >&2
+  printf 'Usage: %s [--force] [--no-service] [--api-key-file <path> | --change-api-key]\n' "$0" >&2
   exit 2
 }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) force=1 ;;
     --no-service) service=0 ;;
+    --change-api-key) change_api_key=1 ;;
     --api-key-file)
       [[ $# -ge 2 ]] || usage
       api_key_file="$2"
@@ -97,13 +99,15 @@ fi
 # stored key; otherwise ask for it without echoing. It never appears in a
 # command line, where other processes could read it.
 prompted_key=""
+if [[ -n "$api_key_file" && "$change_api_key" -eq 1 ]]; then usage; fi
 if [[ -n "$api_key_file" && ! -f "$api_key_file" ]]; then
   printf 'API key file not found: %s\n' "$api_key_file" >&2
   exit 2
 fi
-if [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]]; then
+# --change-api-key asks for a new key even when one is stored or set.
+if [[ "$change_api_key" -eq 1 ]] || [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]]; then
   if [[ ! -t 0 ]]; then
-    printf 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass --api-key-file <path>.\n' >&2
+    printf 'No terminal to ask for the OpenRouter API key. Run the installer in a terminal, or pass --api-key-file <path>.\n' >&2
     exit 1
   fi
   printf 'Enter your OpenRouter API key (create one at https://openrouter.ai/keys).\n' >&2

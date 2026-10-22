@@ -5,14 +5,15 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const usage = 'Usage: node install.mjs [--verify] [--force] [--no-service] [--api-key-file <path>]';
-const options = { verify: false, force: false, noService: false, apiKeyFile: null };
+const usage = 'Usage: node install.mjs [--verify] [--force] [--no-service] [--api-key-file <path> | --change-api-key]';
+const options = { verify: false, force: false, noService: false, apiKeyFile: null, changeApiKey: false };
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index += 1) {
   switch (args[index]) {
     case '--verify': options.verify = true; break;
     case '--force': options.force = true; break;
     case '--no-service': options.noService = true; break;
+    case '--change-api-key': options.changeApiKey = true; break;
     case '--api-key-file':
       options.apiKeyFile = args[index + 1] ?? null;
       if (!options.apiKeyFile) {
@@ -31,8 +32,12 @@ for (let index = 0; index < args.length; index += 1) {
       process.exit(2);
   }
 }
-if (options.verify && (options.force || options.apiKeyFile)) {
+if (options.verify && (options.force || options.apiKeyFile || options.changeApiKey)) {
   console.error('--verify accepts only --no-service');
+  process.exit(2);
+}
+if (options.apiKeyFile && options.changeApiKey) {
+  console.error('Use either --api-key-file or --change-api-key');
   process.exit(2);
 }
 
@@ -64,8 +69,10 @@ if (versionNotes.length > 0) {
 const script = join(fileURLToPath(new URL('.', import.meta.url)), 'platform', windows ? 'windows' : 'unix',
   `${options.verify ? 'verify-install' : 'install'}.${windows ? 'ps1' : 'sh'}`);
 const flags = windows
-  ? [options.force && '-Force', options.noService && '-NoService', ...(options.apiKeyFile ? ['-ApiKeyFile', options.apiKeyFile] : [])]
-  : [options.force && '--force', options.noService && '--no-service', ...(options.apiKeyFile ? ['--api-key-file', options.apiKeyFile] : [])];
+  ? [options.force && '-Force', options.noService && '-NoService', options.changeApiKey && '-ChangeApiKey',
+    ...(options.apiKeyFile ? ['-ApiKeyFile', options.apiKeyFile] : [])]
+  : [options.force && '--force', options.noService && '--no-service', options.changeApiKey && '--change-api-key',
+    ...(options.apiKeyFile ? ['--api-key-file', options.apiKeyFile] : [])];
 // Bypass applies to this one PowerShell process, so a restrictive default
 // execution policy does not block the installer the user just asked to run.
 const [command, commandArgs] = windows

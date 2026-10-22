@@ -2,7 +2,8 @@
 param(
     [switch]$Force,
     [switch]$NoService,
-    [string]$ApiKeyFile
+    [string]$ApiKeyFile,
+    [switch]$ChangeApiKey
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,12 +72,14 @@ if (-not $Force -and $Unmanaged.Count -gt 0) {
 # key; otherwise ask for it without echoing. It never appears in a command
 # line, where other processes could read it.
 $PromptedKey = $null
+if ($ApiKeyFile -and $ChangeApiKey) { Fail-Install 'Use either -ApiKeyFile or -ChangeApiKey.' 2 }
 if ($ApiKeyFile -and -not (Test-Path -LiteralPath $ApiKeyFile -PathType Leaf)) {
     Fail-Install "API key file not found: $ApiKeyFile" 2
 }
-if (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and -not (Test-Path $RouterEnv)) {
+# -ChangeApiKey asks for a new key even when one is stored or set.
+if ($ChangeApiKey -or (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) -and -not (Test-Path $RouterEnv))) {
     if ([Console]::IsInputRedirected) {
-        Fail-Install 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass -ApiKeyFile <path>.'
+        Fail-Install 'No terminal to ask for the OpenRouter API key. Run the installer in a terminal, or pass -ApiKeyFile <path>.'
     }
     Write-Host 'Enter your OpenRouter API key (create one at https://openrouter.ai/keys).'
     Write-Host 'Typing is hidden: paste the key and press Enter.'

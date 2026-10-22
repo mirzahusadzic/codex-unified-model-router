@@ -154,9 +154,15 @@ test('install.mjs runs the platform installer and verifier with translated flags
   const verified = entry(['--verify', '--no-service']);
   assert.equal(verified.status, 0, verified.stderr);
   assert.match(verified.stdout, /Install looks valid/);
-  for (const args of [['--bogus'], ['--verify', '--force'], ['--api-key-file']]) {
+  for (const args of [['--bogus'], ['--verify', '--force'], ['--api-key-file'], ['--verify', '--change-api-key'],
+    ['--change-api-key', '--api-key-file', keyFile]]) {
     assert.equal(entry(args).status, 2, args.join(' '));
   }
+  // Without a terminal, --change-api-key stops before replacing the stored key.
+  const unchanged = entry(['--no-service', '--change-api-key']);
+  assert.equal(unchanged.status, 1, unchanged.stderr);
+  assert.match(unchanged.stderr, /No terminal to ask for the OpenRouter API key/);
+  assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-entry-key$/m);
 });
 
 test('install.mjs warns, without stopping, when Codex differs from the tested version', t => {

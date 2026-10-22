@@ -116,6 +116,7 @@ node install.mjs --verify
 `install.mjs` runs the installer for your platform from [`platform/`](platform/README.md). Common variations:
 
 ```sh
+node install.mjs --change-api-key                    # replace the stored OpenRouter key; asks for the new one
 node install.mjs --api-key-file ~/openrouter.key     # read the key from a file instead of asking
 CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models from /model
 CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on

@@ -130,7 +130,7 @@ Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-rout
 | A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
 | The local endpoint is unavailable | Check the service status and router error log. |
 | Requests fail with HTTP 401 about the router token | The client still has an older configuration: rerun the installer, restart other open Codex windows, and start a new thread. |
-| OpenRouter returns HTTP 401 | Replace the stored key: rerun `node install.mjs --api-key-file <path>`. |
+| OpenRouter returns HTTP 401 | Replace the stored key with `node install.mjs --change-api-key`, or `--api-key-file <path>` without a terminal. |
 | Structured output from DeepSeek misses a field | DeepSeek receives the schema as an instruction, not an enforced format; check `structuredOutputAdapted` in `request.forwarded`, and validate the JSON in the caller. |
 | Switching to OpenAI produces a reasoning-content error | Update and restart the installed router so history normalization is active. |
 | OpenRouter rejects a step | Codex should remain in the thread and show a `[router diagnostic]` completion, or its context-window error if the rejection was an overflow; run `/compact` if Codex does not compact automatically. Correlate `openrouter.request_rejected`, `openrouter.recovery_attempt`, and `openrouter.fallback_completion` by `requestId`. Enable `CODEX_ROUTER_REJECTED_REQUEST_DIR` before reproducing if the body is required. |
