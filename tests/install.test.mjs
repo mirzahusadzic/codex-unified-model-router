@@ -158,3 +158,24 @@ test('install.mjs runs the platform installer and verifier with translated flags
     assert.equal(entry(args).status, 2, args.join(' '));
   }
 });
+
+test('install.mjs warns, without stopping, when Codex differs from the tested version', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-version-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(home);
+  mkdirSync(bin);
+  // A Codex stand-in that reports a newer version but still serves an empty bundled catalog.
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\nif "%1"=="--version" (echo codex-cli 9.9.9) else (echo {"models":[]})\r\n'
+    : '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex-cli 9.9.9"; else printf \'{"models":[]}\\n\'; fi\n', { mode: 0o700 });
+  const result = spawnSync(process.execPath, [join(root, 'install.mjs'), '--no-service'], {
+    encoding: 'utf8', timeout: 60000, input: '',
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: 'synthetic-install-key', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /tested with Codex 0\.163\.0, but the Codex CLI is 9\.9\.9/);
+  assert.match(result.stderr, /npm install -g @openai\/codex@0\.163\.0/);
+});

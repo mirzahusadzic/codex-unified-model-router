@@ -56,6 +56,16 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | `CODEX_ROUTER_AGENT_THREADS` | `10` (default), `1`–`999`, `0` | Spawned-agent limit per session; `0` leaves it to Codex. See [Spawned-agent limit](#spawned-agent-limit). |
 | `CODEX_ROUTER_RESTART_DAEMON` | `1` (default), `0` | `0` skips restarting a running Codex app-server daemon. See [Activate the provider](#activate-the-provider). |
 
+### Codex version
+
+The router is tested with Codex **0.163.0**. Newer versions can change what it relies on, such as request headers and catalog templates; Codex 0.163.0 itself renamed the `session_id` header to `session-id`. To install the tested version:
+
+```sh
+npm install -g @openai/codex@0.163.0
+```
+
+`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version. The daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home directory and can update it separately from the CLI; `codex app-server daemon version` shows both versions. After any Codex update, run `node install.mjs --verify`.
+
 ### Existing configuration
 
 When `config.toml` or `unified-openrouter.config.toml` exists but has no router settings yet, the installer lists the files and asks before merging into them; answering no, or running without a terminal and without `--force`, stops it before anything changes. Both files are backed up before merging, and later runs update the managed blocks without asking. In the profile, the managed blocks own only `model_provider`, `model_catalog_json`, and `[model_providers.unified]`; keep custom models, reasoning settings, instructions, and other tables outside them.

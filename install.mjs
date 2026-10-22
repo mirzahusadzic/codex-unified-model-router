@@ -37,6 +37,30 @@ if (options.verify && (options.force || options.apiKeyFile)) {
 }
 
 const windows = process.platform === 'win32';
+
+// Codex can change request headers and catalog templates between versions.
+// Warn, without stopping, when the CLI or the shared app-server daemon, which
+// keeps and may update its own copy of Codex, differs from the tested version.
+const testedCodexVersion = '0.163.0';
+function codex(commandArgs) {
+  const run = spawnSync('codex', commandArgs, { encoding: 'utf8', shell: windows, timeout: 15000 });
+  return run.status === 0 ? run.stdout : '';
+}
+const cliVersion = codex(['--version']).match(/\b(\d+\.\d+\.\d+)\b/)?.[1];
+let daemon = null;
+try {
+  daemon = JSON.parse(codex(['app-server', 'daemon', 'version']));
+} catch {}
+const versionNotes = [
+  cliVersion && cliVersion !== testedCodexVersion && `the Codex CLI is ${cliVersion}`,
+  daemon?.status === 'running' && typeof daemon.appServerVersion === 'string'
+    && daemon.appServerVersion !== testedCodexVersion && `the Codex app-server daemon runs ${daemon.appServerVersion}`,
+].filter(Boolean);
+if (versionNotes.length > 0) {
+  console.error(`Warning: this router is tested with Codex ${testedCodexVersion}, but ${versionNotes.join(' and ')}.`
+    + ` To match it: npm install -g @openai/codex@${testedCodexVersion}`);
+}
+
 const script = join(fileURLToPath(new URL('.', import.meta.url)), 'platform', windows ? 'windows' : 'unix',
   `${options.verify ? 'verify-install' : 'install'}.${windows ? 'ps1' : 'sh'}`);
 const flags = windows
