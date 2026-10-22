@@ -116,6 +116,17 @@ if [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]
   fi
 fi
 
+# Progress goes to standard error, so the final summary stays on standard output.
+step() { printf '==> %s\n' "$*" >&2; }
+
+step "Installing the Codex unified router into $codex_home"
+if [[ -n "$prompted_key" ]]; then step "Using the OpenRouter API key you entered"
+elif [[ -n "$api_key_file" ]]; then step "Reading the OpenRouter API key from $api_key_file"
+elif [[ -n "${OPENROUTER_API_KEY:-}" ]]; then step "Using the OpenRouter API key from OPENROUTER_API_KEY"
+else step "Using the stored OpenRouter API key"
+fi
+
+step "Backing up the current configuration to $backup_dir"
 mkdir -p "$codex_home" "$backup_dir" "$router_dir"
 chmod 700 "$router_dir" "$backup_dir"
 
@@ -128,6 +139,7 @@ done
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-unified-router.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+step "Building the model catalog"
 codex debug models --bundled > "$tmp_dir/bundled-models.json"
 
 # Native OpenAI models need a ChatGPT plan. In auto mode, hide them from /model
@@ -144,6 +156,9 @@ node "$repo_dir/scripts/build-catalog.mjs" \
   --persistent "$repo_dir/prompts/openrouter-persistent.md" \
   --native-models "$native_models" \
   --output "$tmp_dir/models.json"
+if [[ "$native_models" == hide ]]; then step "Native OpenAI models are hidden from /model"; fi
+
+step "Updating the Codex configuration"
 
 if [[ -n "$prompted_key" ]]; then
   printf '%s\n' "$prompted_key" | node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env" --api-key-stdin
@@ -160,6 +175,7 @@ node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp
 jq -e '.models[] | select(.slug == "deepseek/deepseek-v4.1-flash-1017") | .context_window == 960000' \
   "$tmp_dir/models.json" >/dev/null
 
+step "Installing the router"
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
@@ -245,6 +261,7 @@ if [[ "$service" -eq 1 ]]; then
 </plist>
 EOF_PLIST
 
+        step "Starting the router service with launchd and checking its health"
         launchctl bootout "gui/$(id -u)" "$launch_agent" >/dev/null 2>&1 || true
         launchctl bootstrap "gui/$(id -u)" "$launch_agent"
         launchctl kickstart -k "gui/$(id -u)/$service_label"
@@ -276,6 +293,7 @@ EOF_PLIST
           printf 'WantedBy=default.target\n'
         } > "$linux_unit"
 
+        step "Starting the router service with systemd and checking its health"
         systemctl --user daemon-reload
         systemctl --user enable "$linux_service"
         systemctl --user restart "$linux_service"
@@ -312,7 +330,7 @@ if [[ "$service" -eq 1 && "$restart_daemon" -eq 1 ]] \
     && [[ "$(codex app-server daemon version 2>/dev/null | jq -r '.status // empty' 2>/dev/null)" == running ]]; then
   if run_by_codex_daemon; then
     printf 'Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart\n' >&2
-  elif codex app-server daemon restart >/dev/null 2>&1; then
+  elif step "Restarting the Codex app-server daemon" && codex app-server daemon restart >/dev/null 2>&1; then
     printf 'Restarted the Codex app-server daemon.\n'
   else
     printf 'Could not restart the Codex app-server daemon. Run: codex app-server daemon restart\n' >&2

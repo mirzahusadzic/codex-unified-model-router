@@ -87,6 +87,15 @@ if (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) 
     if ([string]::IsNullOrWhiteSpace($PromptedKey)) { Fail-Install 'No OpenRouter API key entered.' }
 }
 
+function Write-Step([string]$Message) { [Console]::Error.WriteLine("==> $Message") }
+
+Write-Step "Installing the Codex unified router into $CodexHome"
+if ($PromptedKey) { Write-Step 'Using the OpenRouter API key you entered' }
+elseif ($ApiKeyFile) { Write-Step "Reading the OpenRouter API key from $ApiKeyFile" }
+elseif (-not [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY)) { Write-Step 'Using the OpenRouter API key from OPENROUTER_API_KEY' }
+else { Write-Step 'Using the stored OpenRouter API key' }
+
+Write-Step "Backing up the current configuration to $BackupDir"
 New-Item -ItemType Directory -Force -Path $CodexHome, $BackupDir, $RouterDir | Out-Null
 Set-PrivatePath $BackupDir
 Set-PrivatePath $RouterDir
@@ -105,6 +114,7 @@ New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
 Set-PrivatePath $TempDir
 
 try {
+    Write-Step 'Building the model catalog'
     $BundledFile = Join-Path $TempDir 'bundled-models.json'
     $BundledText = (& codex debug models --bundled) -join "`n"
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($BundledText)) {
@@ -128,7 +138,9 @@ try {
         '--native-models' $NativeModels `
         '--output' $ModelsFile
     if ($LASTEXITCODE -ne 0) { throw 'Catalog merge failed.' }
+    if ($NativeModels -eq 'hide') { Write-Step 'Native OpenAI models are hidden from /model' }
 
+    Write-Step 'Updating the Codex configuration'
     $ConfigOut = Join-Path $TempDir 'config.toml'
     $PrepareCredentials = Join-Path $RepoDir 'scripts\prepare-credentials.mjs'
     if ($PromptedKey) {
@@ -164,6 +176,7 @@ try {
     }
     Set-PrivatePath $OpenRouterProfile
     [System.IO.File]::WriteAllText($OpenRouterProfile, [System.IO.File]::ReadAllText($OpenRouterOut, $Utf8NoBom), $Utf8NoBom)
+    Write-Step 'Installing the router'
     Copy-Item -Force $ModelsFile (Join-Path $CodexHome 'models.json')
     Copy-Item -Force (Join-Path $RepoDir 'router\unified-router.mjs') $RouterFile
 
@@ -210,6 +223,7 @@ goto run
 
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\wscript.exe') -ArgumentList "`"$StartupScript`""
 
+        Write-Step 'Starting the router and checking its health'
         $Healthy = $false
         for ($Attempt = 0; $Attempt -lt 25; $Attempt += 1) {
             try {
@@ -247,6 +261,7 @@ goto run
             if ($RunByDaemon) {
                 [Console]::Error.WriteLine('Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart')
             } else {
+                Write-Step 'Restarting the Codex app-server daemon'
                 & codex app-server daemon restart *> $null
                 if ($LASTEXITCODE -eq 0) {
                     Write-Host 'Restarted the Codex app-server daemon.'
