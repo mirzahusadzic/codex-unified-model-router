@@ -450,6 +450,58 @@ test('native OpenAI and training-tier models never share a session, including it
   if (process.platform !== 'win32') assert.equal(statSync(sidesFile).mode & 0o777, 0o600);
 });
 
+test('a training-tier worker that carries the Ultra Spark lead history is refused before forwarding', async () => {
+  const session = { 'session-id': 'fork-guard' };
+  const leadHistory = [
+    { type: 'message', role: 'user', content: 'Review the router' },
+    { type: 'function_call', call_id: 'lead_call_1', name: 'shell', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'lead_call_1', output: 'ok' },
+  ];
+  const workerHistory = [
+    { type: 'message', role: 'user', content: 'Search for TODOs' },
+    { type: 'function_call', call_id: 'worker_call_1', name: 'shell', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'worker_call_1', output: 'none' },
+  ];
+  const muse = 'openrouter/meta/muse-spark-1.3-contributor';
+  await send({ model: 'ultra-spark/deepseek-v4.1-flash-1017', input: leadHistory },
+    { ...session, 'thread-id': 'fork-lead' });
+
+  // A worker spawned with fork_context: false has only its own call IDs.
+  await send({ model: muse, input: workerHistory }, { ...session, 'thread-id': 'fork-clean-worker' });
+
+  // A forked worker replays the lead's calls; nothing leaves the machine.
+  const forwardedBefore = forwarded.length;
+  const forked = await exchange(JSON.stringify({ model: muse, input: [...leadHistory, ...workerHistory] }),
+    { ...session, 'thread-id': 'fork-forked-worker' });
+  assert.equal(forked.status, 409);
+  assert.equal(forked.body.error.code, 'forked_lead_context');
+  assert.equal(forwarded.length, forwardedBefore);
+  const logged = parsedLogEntries().findLast(entry => entry.event === 'session.forked_lead_context');
+  assert.equal(logged.forkedCallIds, 1);
+  assert.equal(JSON.stringify(logged).includes('Review the router'), false);
+
+  // A forked worker that inherited the Ultra Spark model gains no exemption by
+  // sending Ultra Spark requests: the lead's calls still belong to the lead.
+  const inherited = { ...session, 'thread-id': 'fork-inherited-worker' };
+  const inheritedHistory = [
+    { type: 'function_call', call_id: 'inherited_call_1', name: 'shell', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'inherited_call_1', output: 'ok' },
+  ];
+  await send({ model: 'ultra-spark/deepseek-v4.1-flash-1017', input: [...leadHistory, ...inheritedHistory] }, inherited);
+  const switched = await exchange(JSON.stringify({ model: muse, input: [...leadHistory, ...inheritedHistory] }), inherited);
+  assert.equal(switched.status, 409);
+  // Its own calls are its own, and the lead thread itself may switch to Muse with /model.
+  await send({ model: muse, input: inheritedHistory }, inherited);
+  await send({ model: muse, input: leadHistory }, { ...session, 'thread-id': 'fork-lead' });
+  // The legacy conversation_id header identifies threads too.
+  const legacy = await exchange(JSON.stringify({ model: muse, input: leadHistory }),
+    { ...session, conversation_id: 'fork-legacy-worker' });
+  assert.equal(legacy.status, 409);
+  // Requests without a session or thread ID are not checked.
+  await send({ model: muse, input: leadHistory }, session);
+  await send({ model: muse, input: leadHistory }, { 'thread-id': 'fork-sessionless-worker' });
+});
+
 test('isolation records survive restarts, refresh on use, and expire after 30 idle days', async () => {
   const muse = { model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' };
   // A record loaded from disk is enforced, and a neutral request refreshes it.

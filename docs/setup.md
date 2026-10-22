@@ -207,6 +207,12 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor), so use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI model; see [Provider isolation](#provider-isolation).
 
+As a backstop, the router detects workers forked with the lead's history by their tool call IDs. For each tool call ID in an Ultra Spark request, it remembers in memory which thread sent it first. A Muse or other training-tier request that carries an ID first sent by another thread in the same session gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed. The check matches tool call IDs only, so it misses:
+
+- a fork made before the lead's first tool call;
+- requests without both a session ID and a thread ID, which Codex 0.163 sends on every request;
+- IDs that aged out of the most recent 4,096 kept per session, or were forgotten when the router restarted, until the lead's next request records them again.
+
 ### Add a model
 
 Native models come from Codex's bundled catalog; update Codex and rerun the installer to refresh them. For an OpenRouter model:

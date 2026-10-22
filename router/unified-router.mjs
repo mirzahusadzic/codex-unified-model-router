@@ -112,6 +112,52 @@ function recordSessionSide(sessionId, side) {
   }
 }
 
+// Ultra Spark workers must start with fork_context: false, but only the prompt
+// asks for that. For each tool call ID in an Ultra Spark request, the router
+// remembers the thread that sent it first, and refuses a Muse or other
+// training-tier request carrying an ID that another thread in the same session
+// sent first: that request holds a forked Ultra Spark history. A fork before
+// the lead's first tool call carries no known ID and is not detected. Records
+// are in memory only and keep each session's most recent IDs; after a restart
+// the check resumes with the lead's next request. Requests without a session
+// or thread ID are not checked.
+const leadCallThreads = new Map();
+const maxLeadSessions = 256;
+const maxLeadCallIdsPerSession = 4096;
+
+function callIdsIn(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(item => (item?.type === 'function_call' || item?.type === 'function_call_output')
+      && typeof item.call_id === 'string' && item.call_id.length > 0)
+    .map(item => item.call_id);
+}
+
+function recordLeadCallIds(sessionId, threadId, input) {
+  const callThreads = leadCallThreads.get(sessionId) ?? new Map();
+  leadCallThreads.delete(sessionId);
+  leadCallThreads.set(sessionId, callThreads);
+  for (const id of callIdsIn(input)) {
+    const firstThread = callThreads.get(id) ?? threadId;
+    callThreads.delete(id);
+    callThreads.set(id, firstThread);
+  }
+  for (const id of callThreads.keys()) {
+    if (callThreads.size <= maxLeadCallIdsPerSession) break;
+    callThreads.delete(id);
+  }
+  for (const id of leadCallThreads.keys()) {
+    if (leadCallThreads.size <= maxLeadSessions) break;
+    leadCallThreads.delete(id);
+  }
+}
+
+function forkedLeadCallIds(sessionId, threadId, input) {
+  const callThreads = leadCallThreads.get(sessionId);
+  if (!callThreads) return 0;
+  return new Set(callIdsIn(input).filter(id => callThreads.has(id) && callThreads.get(id) !== threadId)).size;
+}
+
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
 const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
 const openrouterRecoveryCompactBytes = 1024 * 1024;
@@ -683,6 +729,9 @@ const server = http.createServer((request, response) => {
   // Codex 0.163 sends `session-id`; earlier versions sent `session_id`.
   const suppliedSessionId = request.headers['session-id'] ?? request.headers.session_id;
   if (typeof suppliedSessionId === 'string' && suppliedSessionId.length <= 256) requestInfo.sessionId = suppliedSessionId;
+  // Codex 0.163 sends `thread-id`; earlier versions sent `conversation_id`.
+  const suppliedThreadId = request.headers['thread-id'] ?? request.headers.conversation_id;
+  const threadId = typeof suppliedThreadId === 'string' && suppliedThreadId.length <= 256 ? suppliedThreadId : null;
   let clientClosed = false;
   let upstreamFailed = false;
   response.once('finish', () => {
@@ -825,6 +874,23 @@ const server = http.createServer((request, response) => {
     }
     if (recorded && Date.now() - recorded.at > sessionSideRefreshMs) {
       recordSessionSide(requestInfo.sessionId, recorded.side);
+    }
+    if (requestInfo.sessionId && threadId) {
+      if (requestedModel.startsWith('ultra-spark/')) {
+        recordLeadCallIds(requestInfo.sessionId, threadId, parsed.input);
+      } else if (side === 'training') {
+        const forkedCallIds = forkedLeadCallIds(requestInfo.sessionId, threadId, parsed.input);
+        if (forkedCallIds > 0) {
+          logEvent('error', 'session.forked_lead_context', {
+            requestId, sessionId: requestInfo.sessionId, model: requestedModel, forkedCallIds,
+          });
+          sendJson(response, 409, { error: {
+            code: 'forked_lead_context',
+            message: 'This worker request carries the Ultra Spark lead thread\'s history, and its provider trains on its inputs. Spawn workers with fork_context: false.',
+          } });
+          return;
+        }
+      }
     }
     let toolHistoryRepairs = null;
     let providerOrder = null;
