@@ -74,7 +74,7 @@ For a pre-stream OpenRouter 400 that reports a context-window overflow, the rout
 
 For any other pre-stream OpenRouter 400, the router retries once without encrypted reasoning items, which are bound to the provider that produced them. Histories over 80 items or 1 MiB are also compacted to the current developer message, the latest user message, and the newest items that fit those limits; earlier user messages, including injected `AGENTS.md` and environment context, are dropped for that retry. No retry runs if neither change applies. If the second request is also rejected, Codex receives a normal completed response containing `[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.` The upstream rejection remains visible in the error log; it is not represented as successful model output.
 
-To retain the exact rejected request and response bodies for diagnosis, opt in by setting `CODEX_ROUTER_REJECTED_REQUEST_DIR` in `unified-router/openrouter.env` or the router service environment and restarting the router. On macOS and Linux, the router creates that directory with mode `700` and writes each request/response pair with mode `600`. File modes do not restrict access on Windows, so there the directory must be `unified-router` itself, whose current-user-only access list new files inherit, not a subdirectory that could carry its own access list; the router refuses other locations and logs `openrouter.rejection_capture_refused`. Files are named `<requestId>-attempt-<n>.request.json` and `.response.json`. This setting is off by default. Do not commit or share these files; they can contain the complete conversation.
+To retain rejected request bodies and up to 256 KiB of each response body for diagnosis, opt in by setting `CODEX_ROUTER_REJECTED_REQUEST_DIR` in `unified-router/openrouter.env` or the router service environment and restarting the router. On macOS and Linux, the router creates that directory with mode `700` and writes each request/response pair with mode `600`. File modes do not restrict access on Windows, so there the directory must be `unified-router` itself, whose current-user-only access list new files inherit, not a subdirectory that could carry its own access list; the router refuses other locations and logs `openrouter.rejection_capture_refused`. Files are named `<requestId>-attempt-<n>.request.json` and `.response.json`. This setting is off by default. Do not use a synchronized folder such as Dropbox, iCloud Drive, OneDrive, or a network share, and do not commit or share these files; they can contain the complete conversation.
 
 Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records include the same opaque `sessionId` from Codex's `session-id` header (`session_id` in earlier Codex versions), so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
 
@@ -146,7 +146,7 @@ Use `node install.mjs --verify --no-service` to validate those files. The instal
 
 ## Rollback
 
-The installer prints the backup directory for each run. Stop automatic startup, then restore the configuration and catalog from your chosen backup.
+The installer prints the backup directory for each run. Stop the running router and its automatic startup before restoring files. The installer backs up Codex configuration and catalog files, but not `unified-router/router.mjs` or `unified-router/openrouter.env`; keep a copy of a router revision and its credentials before upgrading if you need to return to them.
 
 ### Stop automatic startup
 
@@ -165,9 +165,24 @@ rm ~/.config/systemd/user/codex-unified-router.service
 systemctl --user daemon-reload
 ```
 
-On Windows, remove the Startup entry, then sign out and back in to stop the supervisor and router:
+On Windows, stop the running supervisor and router, then remove the Startup entry:
 
 ```powershell
+$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
+$routerDir = Join-Path $codexHome 'unified-router'
+$routerFile = Join-Path $routerDir 'router.mjs'
+$startCmd = Join-Path $routerDir 'start-router.cmd'
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.CommandLine -and (
+      ($_.CommandLine.IndexOf($routerFile, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        $_.CommandLine -match '(?i)(^|[\\/"])node(\.exe)?([" ]|$)') -or
+      ($_.CommandLine.IndexOf($startCmd, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        $_.CommandLine -match '(?i)(cmd\.exe|wscript\.exe|start-router\.cmd)')
+    )
+  } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
 $startupEntry = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Unified Router.vbs'
 Remove-Item -LiteralPath $startupEntry
 ```
@@ -186,4 +201,6 @@ On Windows, copy `config.toml` and `models.json` from the backup into your Codex
 
 Restore `unified-openrouter.config.toml` as well if it is present in the chosen backup and you use that profile.
 
-Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.
+If the backup contains `deepseek.config.toml.retired`, restore it as `deepseek.config.toml` only if you still use the old `--profile deepseek` setup.
+
+Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. When returning fully to the pre-router state, move `unified-router/` aside after confirming the restored configuration no longer references it, so the stored key, local token, isolation records, and generated service files are not left behind. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.

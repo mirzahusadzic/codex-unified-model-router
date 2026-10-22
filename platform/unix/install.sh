@@ -240,6 +240,7 @@ print_manual_start() {
   printf 'Automatic router startup was not configured. Start it manually with:\n' >&2
   printf '  CODEX_ROUTER_ENV_FILE=%q CODEX_MODEL_CATALOG=%q CODEX_ROUTER_PORT=18766 node %q\n' \
     "$router_env" "$codex_home/models.json" "$router_file" >&2
+  printf 'Verify this installation with: node install.mjs --verify --no-service\n' >&2
 }
 
 if [[ "$service" -eq 1 ]]; then
@@ -383,6 +384,6 @@ EOF
 if [[ "$native_models" == hide ]]; then
   printf 'Native OpenAI models are hidden from /model (%s).\n' "$native_reason"
 else
-  printf 'One session never mixes native OpenAI models with Muse or Ultra Spark.\n'
+  printf 'Tracked Codex sessions never mix native OpenAI models with Muse or Ultra Spark.\n'
 fi
 printf 'Restart Codex windows opened before this install to pick up the changes.\n'

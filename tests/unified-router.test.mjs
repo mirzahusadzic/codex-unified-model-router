@@ -470,7 +470,7 @@ test('OpenRouter continuation is stateless without forwarding the native session
     previous_response_id: 'resp_upstream_state',
     store: true,
   }, { 'session-id': 'codex-thread-session' });
-  assert.equal(upstream.headers['x-session-id'], undefined);
+  assert.equal(upstream.headers['session-id'], undefined);
   assert.equal(upstream.body.previous_response_id, undefined);
   assert.equal(upstream.body.store, false);
   const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
@@ -481,7 +481,6 @@ test('OpenRouter continuation is stateless without forwarding the native session
   assert.equal(native.headers['session-id'], 'native-session');
   assert.equal(native.headers['thread-id'], 'native-thread');
   assert.equal(native.headers['x-codex-window-id'], 'native-window');
-  assert.equal(native.headers['x-session-id'], undefined);
   assert.equal(native.body.store, true);
 });
 
@@ -595,6 +594,71 @@ test('OpenRouter retries one compacted history after a pre-stream 400', async t 
   assert.equal(retry.inputItems, 4);
   assert.ok(retry.droppedItems > 0);
   assert.match(retry.payloadSha256, /^[a-f0-9]{64}$/);
+});
+
+test('DeepSeek structured-output recovery keeps the real developer instructions before the schema', async t => {
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_structured_recovery","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const format = { type: 'json_schema', name: 'result', schema: { type: 'object', properties: { value: { type: 'string' } } } };
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: recoveryHistory,
+    text: { format },
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const recovery = forwarded.at(-1).body.input;
+  assert.equal(recovery[0].id, 'msg_current_developer');
+  assert.equal(recovery.at(-1).role, 'developer');
+  assert.match(recovery.at(-1).content[0].text, /conforms to this JSON schema/);
+  assert.equal(recovery.filter(item => item.id === 'msg_current_developer').length, 1);
+});
+
+test('OpenRouter recovery keeps a tool call paired with an output selected at the tail boundary', async t => {
+  const call = { type: 'function_call', id: 'fc_boundary', call_id: 'call_boundary', name: 'exec_command', arguments: '{}' };
+  const output = { type: 'function_call_output', id: 'fco_boundary', call_id: 'call_boundary', output: 'boundary result' };
+  const history = [
+    recoveryHistory[0],
+    ...recoveryHistory.slice(1, 50),
+    recoveryHistory.at(-3),
+    call,
+    output,
+    ...Array.from({ length: 77 }, (_, index) => ({
+      type: 'message',
+      id: `msg_after_output_${index}`,
+      role: 'assistant',
+      content: [{ type: 'output_text', text: `After output ${index}` }],
+    })),
+  ];
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_boundary","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: history,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const recovery = forwarded.at(-1).body.input;
+  const callIndex = recovery.findIndex(item => item.call_id === 'call_boundary' && item.type === 'function_call');
+  const outputIndex = recovery.findIndex(item => item.call_id === 'call_boundary' && item.type === 'function_call_output');
+  assert.ok(callIndex >= 0, 'recovery retained the tool call');
+  assert.equal(outputIndex, callIndex + 1, 'the tool output immediately follows its call after normalization');
 });
 
 test('OpenRouter recovery keeps a bounded recent tail for a long single-turn history', async t => {
@@ -740,6 +804,46 @@ test('a context overflow reported only through error_type also fails the respons
   assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-context-overflow');
   assert.equal(parseSse(result.rawBody)[1].response.error.code, 'context_length_exceeded');
   assert.equal(forwarded.length, before + 1);
+});
+
+test('OpenRouter rejection capture stops reading an error body at the 256 KiB limit', async t => {
+  const body = JSON.stringify({ error: { message: 'x'.repeat(300 * 1024), code: 400 } });
+  mockUpstreamSequence(t, [{ status: 400, body }]);
+  const before = forwarded.length;
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'openrouter/vendor/model', input: 'Hello' }));
+
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-request-rejected');
+  assert.equal(forwarded.length, before + 1);
+  const rejected = parsedLogEntries().slice(logsBefore)
+    .find(entry => entry.event === 'openrouter.request_rejected');
+  assert.equal(rejected.upstreamErrorBytes, 256 * 1024);
+  assert.equal(rejected.upstreamErrorTruncated, true);
+});
+
+test('an endless OpenRouter 400 body is closed at the capture limit instead of drained', { timeout: 5000 }, async t => {
+  let upstreamResponse;
+  t.mock.method(https, 'request', (options, onResponse) => new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+    final(callback) {
+      upstreamResponse = new PassThrough();
+      upstreamResponse.statusCode = 400;
+      upstreamResponse.headers = { 'content-type': 'application/json' };
+      queueMicrotask(() => {
+        onResponse(upstreamResponse);
+        // More than the 256 KiB limit, and the body never ends.
+        for (let chunk = 0; chunk < 5; chunk += 1) upstreamResponse.write('x'.repeat(64 * 1024));
+      });
+      callback();
+    },
+  }));
+  const result = await exchangeRaw(JSON.stringify({ model: 'openrouter/vendor/model', input: 'Hello' }));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'openrouter-request-rejected');
+  assert.equal(upstreamResponse.destroyed, true);
 });
 
 test('Windows rejection captures are limited to the private router directory itself', () => {

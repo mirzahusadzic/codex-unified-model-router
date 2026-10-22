@@ -8,16 +8,16 @@
 
 Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
 
-- **DeepSeek by default.** DeepSeek V4.1 Flash 1017 with a 960,000-token context. Prompts stay cache-friendly, so long agent sessions read most of each prompt from cache.
+- **DeepSeek by default.** DeepSeek V4.1 Flash 1017 with a 960,000-token context (912,000 effective at 95%). Prompts stay cache-friendly, so long agent sessions read most of each prompt from cache.
 - **Ultra Spark mode.** DeepSeek leads and up to 10 Muse workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
 - **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
 - **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
-- **Private by default.** Codex analytics are off, and native OpenAI models never share a session with a provider that trains on its inputs.
+- **Private by default.** Codex analytics are off, and native OpenAI models never share a tracked Codex session with a provider that trains on its inputs.
 - **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
 
 ## How it works
 
-Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI models and models that train on their inputs never share a session.
+Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI and training-tier models never share a tracked Codex session; requests without a session ID are not tracked.
 
 **Key:** 🟢 router · 🟡 OpenRouter · 🔵 DeepSeek · ⚪ OpenAI · 🔴 training tier, where Meta trains on the inputs.
 
@@ -141,7 +141,7 @@ codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contrib
 | **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
 | **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 
-Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. The router never mixes them with native OpenAI models in one session ([details](docs/setup.md#provider-isolation)).
+Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. The router refuses to mix them with native OpenAI models in a tracked Codex session; requests without a session ID are not tracked ([details](docs/setup.md#provider-isolation)).
 
 Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 

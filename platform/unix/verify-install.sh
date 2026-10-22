@@ -56,7 +56,8 @@ if [[ "$check_service" -eq 1 ]]; then
           exit 1
         fi
       else
-        printf 'Warning: systemd --user is unavailable; the router is running but automatic startup could not be verified.\n' >&2
+        printf 'systemd --user is unavailable, so automatic startup could not be verified. If the router was installed without a service, run: node install.mjs --verify --no-service\n' >&2
+        exit 1
       fi
       ;;
   esac

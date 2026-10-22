@@ -1,7 +1,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applyOpenRouterPrompts, readPrompts, usesOpenRouterPrompts } from './openrouter-prompts.mjs';
+import { isDeepStrictEqual } from 'node:util';
+import { applyOpenRouterPrompts, readPrompts, suffixField, usesOpenRouterPrompts } from './openrouter-prompts.mjs';
 
 // Check a generated or installed Codex catalog against this checkout: every
 // router entry must be present with the repository's context limits and
@@ -56,6 +57,12 @@ for (const name of readdirSync(join(root, 'catalog')).filter(value => value.ends
         || model.model_messages?.instructions_template !== expected.model_messages.instructions_template
         || model.model_messages?.persistent_instructions !== expected.model_messages.persistent_instructions) {
       fail(`The prompts for ${entry.slug} differ from the repository`);
+    }
+    const { [suffixField]: _suffix, ...expectedModel } = expected;
+    if (!isDeepStrictEqual(model, expectedModel)) {
+      const fields = [...new Set([...Object.keys(model), ...Object.keys(expectedModel)])]
+        .filter(field => !isDeepStrictEqual(model[field], expectedModel[field]));
+      fail(`${entry.slug} differs from the repository${fields.length ? ` in ${fields.join(', ')}` : ''}`);
     }
     checked += 1;
   }

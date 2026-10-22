@@ -115,8 +115,11 @@ test('catalog builds reject missing prompts, duplicate slugs, and replacements o
     /Prompt file not found/);
   assert.match(build([], [entry], ['--instructions', instructions]).stderr, /Pass both --instructions and --persistent/);
   assert.match(build([], [entry, { ...entry }], prompted).stderr, /duplicate catalog slug openrouter\/vendor\/model/);
-  assert.match(build([{ slug: 'gpt-6-astra', context_window: 272000 }], [{ slug: 'gpt-6-astra', context_window: 999999 }], prompted).stderr,
-    /gpt-6-astra would replace a bundled Codex model/);
+  assert.match(build([{ slug: 'openrouter/vendor/bundled', context_window: 272000 }],
+    [{ slug: 'openrouter/vendor/bundled', context_window: 999999 }], prompted).stderr,
+    /openrouter\/vendor\/bundled would replace a bundled Codex model/);
+  assert.match(build([], [{ slug: 'open-router/vendor/typo' }], prompted).stderr,
+    /open-router\/vendor\/typo must start with deepseek\/, openrouter\/, or ultra-spark\//);
 });
 
 test('prompt suffixes must name a file in the prompts directory', () => {
@@ -162,6 +165,17 @@ test('verify-catalog checks router entries against the repository and reports wh
   assert.equal(build('hide').status, 0);
   edit(models => { models.get(muse.slug).model_messages.persistent_instructions += 'x'; });
   assert.match(verify(catalogFile).stderr, /^The prompts for openrouter\/meta\/muse-spark-1\.3-contributor differ/);
+  assert.equal(build('show').status, 0);
+  edit(models => { models.get(muse.slug).supported_reasoning_levels[0].effort = 'none'; });
+  result = verify(catalogFile);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^openrouter\/meta\/muse-spark-1\.3-contributor differs from the repository in supported_reasoning_levels;/);
+  assert.equal(build('show').status, 0);
+  edit(models => { models.get(deepseek.slug)[suffixField] = 'ultra-spark.md'; });
+  result = verify(catalogFile);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, new RegExp(`^${deepseek.slug.replaceAll('.', '\\.')} differs from the repository in ${suffixField};`));
+  assert.equal(build('show').status, 0);
   edit((models, catalog) => { catalog.models = catalog.models.filter(model => model.slug !== ultraSpark.slug); });
   assert.match(verify(catalogFile).stderr, /^The model catalog lacks ultra-spark\/deepseek-v4\.1-flash-1017;/);
   writeFileSync(catalogFile, 'not json');

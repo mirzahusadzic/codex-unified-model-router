@@ -173,7 +173,7 @@ function upstreamModelFor(model, provider) {
 // prompt prefix intact. Other models receive the schema unchanged.
 function adaptStructuredOutputForDeepSeek(request, model) {
   const format = request.text?.format;
-  if (!model.startsWith('deepseek/') || format?.type !== 'json_schema') return false;
+  if (!model.startsWith('deepseek/') || format?.type !== 'json_schema') return null;
   request.text = { ...request.text, format: { type: 'json_object' } };
   const name = typeof format.name === 'string' && format.name ? ` named ${format.name}` : '';
   const instruction = {
@@ -187,7 +187,7 @@ function adaptStructuredOutputForDeepSeek(request, model) {
   if (Array.isArray(request.input)) request.input = [...request.input, instruction];
   else if (typeof request.input === 'string') request.input = [{ role: 'user', content: request.input }, instruction];
   else request.input = [instruction];
-  return true;
+  return instruction;
 }
 
 // DeepSeek accepts only low, high, max, and none. Other OpenRouter models take
@@ -461,6 +461,11 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
       settled = true;
       reject(error);
     };
+    const succeed = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     stream.on('data', chunk => {
       const buffer = Buffer.from(chunk);
       if (bytes + buffer.length > limit) {
@@ -468,6 +473,8 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
         if (remaining > 0) chunks.push(buffer.subarray(0, remaining));
         bytes = limit;
         truncated = true;
+        succeed({ body: Buffer.concat(chunks), bytes, truncated });
+        stream.destroy();
         return;
       }
       chunks.push(buffer);
@@ -476,16 +483,43 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
     stream.once('error', fail);
     stream.once('aborted', () => fail(new Error('Upstream response was aborted')));
     stream.once('close', () => fail(new Error('Upstream response closed before it ended')));
-    stream.once('end', () => {
-      if (settled) return;
-      settled = true;
-      resolve({ body: Buffer.concat(chunks), bytes, truncated });
-    });
+    stream.once('end', () => succeed({ body: Buffer.concat(chunks), bytes, truncated }));
   });
 }
 
 function isMessageForRole(item, role) {
   return item?.role === role && (item.type == null || item.type === 'message');
+}
+
+function completeToolPairs(input, retainedIndexes) {
+  const calls = new Map();
+  const outputs = new Map();
+  for (const [index, item] of input.entries()) {
+    const target = item?.type === 'function_call' ? calls
+      : item?.type === 'function_call_output' ? outputs : null;
+    if (!target || typeof item.call_id !== 'string' || item.call_id.length === 0) continue;
+    if (!target.has(item.call_id)) target.set(item.call_id, []);
+    target.get(item.call_id).push(index);
+  }
+  const partners = new Map();
+  for (const [callId, callIndexes] of calls) {
+    const outputIndexes = outputs.get(callId);
+    if (!outputIndexes) continue;
+    for (const index of [...callIndexes, ...outputIndexes]) {
+      if (!partners.has(index)) partners.set(index, []);
+      partners.get(index).push(...callIndexes, ...outputIndexes);
+    }
+  }
+  const completed = new Set(retainedIndexes);
+  const pending = [...completed];
+  while (pending.length > 0) {
+    for (const index of partners.get(pending.pop()) || []) {
+      if (completed.has(index)) continue;
+      completed.add(index);
+      pending.push(index);
+    }
+  }
+  return completed;
 }
 
 function compactOpenRouterHistory(input, requestBytes) {
@@ -513,8 +547,11 @@ function compactOpenRouterHistory(input, requestBytes) {
     start -= 1;
   }
 
-  const retainedIndexes = new Set(pinned);
-  for (let index = start; index < input.length; index += 1) retainedIndexes.add(index);
+  const selectedIndexes = new Set(pinned);
+  for (let index = start; index < input.length; index += 1) selectedIndexes.add(index);
+  // Selecting a tail can begin between a tool call and its output. Restore both
+  // sides before normalization, which would otherwise discard the orphan.
+  const retainedIndexes = completeToolPairs(input, selectedIndexes);
   const compacted = input.filter((_item, index) => retainedIndexes.has(index));
   return {
     input: compacted,
@@ -524,25 +561,33 @@ function compactOpenRouterHistory(input, requestBytes) {
   };
 }
 
-function prepareOpenRouterRecovery(parsed, primaryBody) {
+function prepareOpenRouterRecovery(parsed, primaryBody, structuredOutputInstruction) {
   // `parsed` already carries the OpenRouter state, reasoning, and tool-history
   // normalization, so the retry only changes which history items are sent.
   // Encrypted reasoning is bound to the provider that produced it; drop it
   // instead of resending the same opaque payload.
-  const input = Array.isArray(parsed.input)
-    ? parsed.input.filter(item => !(item?.type === 'reasoning' && item.encrypted_content))
-    : parsed.input;
-  const droppedReasoningItems = Array.isArray(input) ? parsed.input.length - input.length : 0;
+  let input = parsed.input;
+  let schemaInstruction = null;
+  if (Array.isArray(input) && structuredOutputInstruction && input.at(-1) === structuredOutputInstruction) {
+    schemaInstruction = input.at(-1);
+    input = input.slice(0, -1);
+  }
+  input = Array.isArray(input)
+    ? input.filter(item => !(item?.type === 'reasoning' && item.encrypted_content))
+    : input;
+  const droppedReasoningItems = Array.isArray(input) ? parsed.input.length - input.length - (schemaInstruction ? 1 : 0) : 0;
   const compacted = compactOpenRouterHistory(input, primaryBody.length);
   const repaired = normalizeToolHistoryForOpenRouter(compacted.input);
-  const body = Buffer.from(JSON.stringify({ ...parsed, input: repaired.input }));
+  const recoveryInput = Array.isArray(repaired.input) && schemaInstruction
+    ? [...repaired.input, schemaInstruction] : repaired.input;
+  const body = Buffer.from(JSON.stringify({ ...parsed, input: recoveryInput }));
   return {
     body,
     changed: !body.equals(primaryBody),
     compactionStrategy: compacted.changed ? compacted.strategy : null,
     droppedItems: compacted.droppedItems,
     droppedReasoningItems,
-    inputItems: Array.isArray(repaired.input) ? repaired.input.length : null,
+    inputItems: Array.isArray(recoveryInput) ? recoveryInput.length : null,
     historyRepairs: repaired.repairs,
   };
 }
@@ -758,6 +803,7 @@ const server = http.createServer((request, response) => {
     const target = routeFor(model);
     let stateReset = false;
     let structuredOutputAdapted = false;
+    let structuredOutputInstruction = null;
 
     const upstreamModel = upstreamModelFor(model, target.provider);
     const side = sessionSide(requestedModel, target.provider, upstreamModel);
@@ -793,7 +839,8 @@ const server = http.createServer((request, response) => {
       const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
       parsed.input = normalizedHistory.input;
       toolHistoryRepairs = normalizedHistory.repairs;
-      structuredOutputAdapted = adaptStructuredOutputForDeepSeek(parsed, upstreamModel);
+      structuredOutputInstruction = adaptStructuredOutputForDeepSeek(parsed, upstreamModel);
+      structuredOutputAdapted = Boolean(structuredOutputInstruction);
     } else {
       parsed.input = normalizeInputForOpenAI(parsed.input);
     }
@@ -962,7 +1009,7 @@ const server = http.createServer((request, response) => {
                 return;
               }
               if (!recoveryAttempted) {
-                const recovery = prepareOpenRouterRecovery(parsed, body);
+                const recovery = prepareOpenRouterRecovery(parsed, body, structuredOutputInstruction);
                 if (recovery.changed) {
                   recoveryAttempted = true;
                   logEvent('info', 'openrouter.recovery_attempt', {

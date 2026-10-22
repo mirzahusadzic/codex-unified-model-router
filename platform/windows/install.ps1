@@ -222,14 +222,22 @@ try {
     if (-not $NoService) {
         $NodeExe = (Get-Command node).Source
         $CatalogPath = Join-Path $CodexHome 'models.json'
+        # Percent signs expand when the batch file runs. File names cannot
+        # contain a quote, so percent is the only path character needing escape.
+        $CmdRouterEnv = $RouterEnv.Replace('%', '%%')
+        $CmdCatalogPath = $CatalogPath.Replace('%', '%%')
+        $CmdNodeExe = $NodeExe.Replace('%', '%%')
+        $CmdRouterFile = $RouterFile.Replace('%', '%%')
+        $CmdRouterLog = $RouterLog.Replace('%', '%%')
+        $CmdRouterErrorLog = $RouterErrorLog.Replace('%', '%%')
         $CmdContent = @"
 @echo off
 chcp 65001 >nul
-set "CODEX_ROUTER_ENV_FILE=$RouterEnv"
-set "CODEX_MODEL_CATALOG=$CatalogPath"
+set "CODEX_ROUTER_ENV_FILE=$CmdRouterEnv"
+set "CODEX_MODEL_CATALOG=$CmdCatalogPath"
 set "CODEX_ROUTER_PORT=18766"
 :run
-"$NodeExe" "$RouterFile" >> "$RouterLog" 2>> "$RouterErrorLog"
+"$CmdNodeExe" "$CmdRouterFile" >> "$CmdRouterLog" 2>> "$CmdRouterErrorLog"
 if not errorlevel 1 goto :eof
 ping -n 3 127.0.0.1 >nul
 goto run
@@ -245,14 +253,17 @@ goto run
             'shell.Run Chr(34) & "' + $EscapedStartCmd + '" & Chr(34), 0, False' + "`r`n"
         [System.IO.File]::WriteAllText($StartupScript, $VbsContent, $Utf8NoBom)
 
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.CommandLine -and (
-                    $_.CommandLine.Contains($RouterFile) -or
-                    $_.CommandLine.Contains($StartCmd) -or
-                    $_.CommandLine.Contains($StartupScript)
-                )
-            } |
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            if ($_.ProcessId -eq $PID -or -not $_.CommandLine) { return $false }
+            $CommandLine = $_.CommandLine
+            $Router = $CommandLine.IndexOf($RouterFile, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $CommandLine -match '(?i)(^|[\\/"])node(\.exe)?([" ]|$)'
+            $Supervisor = $CommandLine.IndexOf($StartCmd, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $CommandLine -match '(?i)(cmd\.exe|wscript\.exe|start-router\.cmd)'
+            $Startup = $CommandLine.IndexOf($StartupScript, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $CommandLine -match '(?i)wscript\.exe'
+            $Router -or $Supervisor -or $Startup
+        } |
             ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
         Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\wscript.exe') -ArgumentList "`"$StartupScript`""
@@ -333,6 +344,6 @@ so use them for share-safe code only.
 if ($NativeModels -eq 'hide') {
     Write-Host "Native OpenAI models are hidden from /model ($NativeReason)."
 } else {
-    Write-Host 'One session never mixes native OpenAI models with Muse or Ultra Spark.'
+    Write-Host 'Tracked Codex sessions never mix native OpenAI models with Muse or Ultra Spark.'
 }
 Write-Host 'Restart Codex windows opened before this install to pick up the changes.'
