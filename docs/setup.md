@@ -143,7 +143,7 @@ enabled = false
 max_concurrent_threads_per_session = 10
 ```
 
-The installer edits existing `[features]`, `[analytics]`, and `[agents]` tables in place and keeps their other keys. Move any top-level dotted keys, such as `features.apps`, into the table first. The OpenRouter-only profile inherits these settings.
+The installer edits existing `[features]`, `[analytics]`, and `[agents]` tables in place and keeps their other keys. Codex can write its own settings, such as project trust or MCP servers, between the markers; reruns keep everything the router does not own and move foreign tables out of its blocks. Move any top-level dotted keys, such as `features.apps`, into the table first. The OpenRouter-only profile inherits these settings.
 
 ### ChatGPT apps
 

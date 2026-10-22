@@ -29,7 +29,12 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
       || !keys.includes(`model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`)) {
     throw new Error('Managed provider or catalog path differs; rerun the installer');
   }
-  const provider = managedBlock(config, 'provider');
+  // Codex can insert its own tables inside the block; check only the provider table.
+  const providerBlock = managedBlock(config, 'provider');
+  const providerStart = providerBlock.indexOf('[model_providers.unified]');
+  const providerEnd = providerBlock.findIndex((line, index) => index > providerStart && line.startsWith('['));
+  const provider = providerStart < 0 ? [] : providerBlock.slice(providerStart, providerEnd < 0 ? undefined : providerEnd)
+    .filter(line => !line.startsWith('#'));
   const expected = [
     '[model_providers.unified]', 'name = "Codex Unified Model Router"',
     'base_url = "http://127.0.0.1:18766/v1"', 'wire_api = "responses"',

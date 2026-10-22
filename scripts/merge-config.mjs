@@ -65,34 +65,80 @@ if (openrouterProfileFile && existsSync(profilePath) && force !== '--force'
   throw new Error('Existing unmanaged unified-openrouter profile; rerun the installer with --force (Windows: -Force) to merge it');
 }
 
+// Codex's TOML editor inserts new keys and tables before trailing comments,
+// so they can land inside a managed block. Lines a block does not own are
+// therefore kept: foreign keys stay in their table, and foreign tables keep
+// their content after the block.
 function merge(existing, ownedKeys, keys, provider, tables = []) {
   const preserved = [];
   let insideManagedKeys = false;
   let insideManagedProvider = false;
+  let insideProviderTable = false;
   let insideUnmanagedUnifiedProvider = false;
+  // A table that appeared inside a managed block; its lines are kept as they are.
+  let foreign = false;
   let currentTable = null;
   let topLevel = true;
-  const state = new Map(tables.map(table => [table, { inside: false, header: false, placed: false }]));
+  const state = new Map(tables.map(table => [table, { inside: false, header: false, placed: false, emitted: false }]));
   // Keys written below the last router-created table header belong to it.
   let orphanedTable = null;
   const block = (table, ...header) => [tableMarker(table, 'BEGIN'), ...header, ...table.lines, tableMarker(table, 'END')];
+  const tableNameOf = trimmed => trimmed.match(/^\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/)?.[1]?.trim();
+  const keyOf = line => line.match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1];
+  const keepForeign = (line, tableName) => {
+    if (tableName) {
+      foreign = true;
+      currentTable = tableName;
+      topLevel = false;
+    }
+    preserved.push(line);
+  };
   for (const line of logicalLines(existing)) {
     const trimmed = line.trim();
+    const tableName = tableNameOf(trimmed);
     const beginning = tables.find(table => trimmed === tableMarker(table, 'BEGIN'));
     if (beginning) {
-      Object.assign(state.get(beginning), { inside: true, header: false });
+      Object.assign(state.get(beginning), { inside: true, header: false, emitted: false });
       orphanedTable = null;
+      foreign = false;
       continue;
     }
     const ending = tables.find(table => trimmed === tableMarker(table, 'END'));
     if (ending) {
       state.get(ending).inside = false;
-      orphanedTable = state.get(ending).header ? ending : null;
+      orphanedTable = state.get(ending).header && !foreign && !state.get(ending).emitted ? ending : null;
+      foreign = false;
       continue;
     }
     const within = tables.find(table => state.get(table).inside);
     if (within) {
-      if (trimmed === `[${within.name}]`) state.get(within).header = true;
+      const managed = state.get(within);
+      if (foreign) {
+        keepForeign(line, tableName);
+        continue;
+      }
+      if (trimmed === `[${within.name}]`) {
+        managed.header = true;
+        currentTable = within.name;
+        topLevel = false;
+        continue;
+      }
+      if (tableName) {
+        keepForeign(line, tableName);
+        continue;
+      }
+      const key = keyOf(line);
+      if (!key || within.ownedKeys.includes(key)) continue;
+      // A foreign key in a router-created table needs the table header first,
+      // in the same layout as keys written below the block.
+      if (managed.header && !managed.emitted) {
+        preserved.push(`[${within.name}]`, ...(within.lines && !managed.placed ? block(within) : []));
+        managed.placed ||= Boolean(within.lines);
+        managed.emitted = true;
+        currentTable = within.name;
+        topLevel = false;
+      }
+      preserved.push(line);
       continue;
     }
     if (orphanedTable && trimmed !== '' && !trimmed.startsWith('#')) {
@@ -109,23 +155,47 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
     }
     if (trimmed === managedKeysMarker) {
       insideManagedKeys = true;
+      foreign = false;
       continue;
     }
     if (trimmed === managedKeysEnd) {
       insideManagedKeys = false;
+      foreign = false;
       continue;
     }
     if (trimmed === managedProviderMarker) {
       insideManagedProvider = true;
+      insideProviderTable = false;
+      foreign = false;
       continue;
     }
     if (trimmed === managedProviderEnd) {
       insideManagedProvider = false;
+      foreign = false;
       continue;
     }
-    if (insideManagedKeys || insideManagedProvider) continue;
+    if (insideManagedKeys) {
+      if (foreign || tableName) {
+        keepForeign(line, tableName);
+        continue;
+      }
+      const key = keyOf(line);
+      if (key && !ownedKeys.includes(key)) preserved.push(line);
+      continue;
+    }
+    if (insideManagedProvider) {
+      if (tableName === 'model_providers.unified' || tableName?.startsWith('model_providers.unified.')) {
+        insideProviderTable = true;
+        foreign = false;
+        continue;
+      }
+      if (foreign || tableName) {
+        insideProviderTable = false;
+        keepForeign(line, tableName);
+      }
+      continue;
+    }
 
-    const tableName = trimmed.match(/^\[\[?([^\]]+)\]\]?\s*(?:#.*)?$/)?.[1]?.trim();
     if (tableName) topLevel = false;
     if (tableName === 'model_providers.unified' || tableName?.startsWith('model_providers.unified.')) {
       insideUnmanagedUnifiedProvider = true;
@@ -147,7 +217,7 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
       continue;
     }
 
-    const key = line.match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1];
+    const key = keyOf(line);
     if (topLevel && key && ownedKeys.includes(key)) continue;
     const owner = tables.find(table => table.lines && table.name === currentTable);
     if (owner && key && owner.ownedKeys.includes(key)) continue;
@@ -158,12 +228,21 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
   }
   while (preserved.length > 0 && preserved[0].trim() === '') preserved.shift();
   while (preserved.length > 0 && preserved.at(-1).trim() === '') preserved.pop();
-  return [
-    [managedKeysMarker, ...keys, managedKeysEnd].join('\n'),
-    preserved.join('\n'),
+  // Place the router's tables after the top-level keys but before the first
+  // other table, with its leading comments, so they are never last in the file.
+  let split = preserved.findIndex(line => tableNameOf(line.trim()));
+  if (split < 0) split = preserved.length;
+  while (split > 0 && (preserved[split - 1].trim() === '' || preserved[split - 1].trim().startsWith('#'))) split -= 1;
+  const routerTables = [
+    [managedProviderMarker, ...provider, managedProviderEnd].join('\n'),
     ...tables.filter(table => table.lines && !state.get(table).placed)
       .map(table => block(table, `[${table.name}]`).join('\n')),
-    [managedProviderMarker, ...provider, managedProviderEnd].join('\n'),
+  ];
+  return [
+    [managedKeysMarker, ...keys, managedKeysEnd].join('\n'),
+    preserved.slice(0, split).join('\n').trim(),
+    ...routerTables,
+    preserved.slice(split).join('\n').trim(),
   ].filter(Boolean).join('\n\n') + '\n';
 }
 

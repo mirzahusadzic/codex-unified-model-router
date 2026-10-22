@@ -5,11 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { logicalLines } from '../scripts/toml-lines.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const windows = process.platform === 'win32';
 // The installer or verifier for this platform under platform/unix or platform/windows.
 const platformScript = name => join(root, 'platform', windows ? 'windows' : 'unix', name + (windows ? '.ps1' : '.sh'));
+// Each setting with its table, so assertions survive layout changes.
+function settings(text) {
+  let table = '';
+  return logicalLines(text).map(line => line.trim()).filter(line => line !== '' && !line.startsWith('#'))
+    .flatMap(line => (line.startsWith('[') ? ((table = line), []) : [`${table} ${line}`]));
+}
 
 test('no-service installer guards collisions before mutation and preserves backed-up profile preferences', t => {
   const directory = mkdtempSync(join(tmpdir(), 'router-install-'));
@@ -42,7 +49,7 @@ test('no-service installer guards collisions before mutation and preserves backe
   const converted = invoke(false, true);
   assert.equal(converted.status, 0, converted.stderr);
   const first = readFileSync(profile, 'utf8');
-  assert.ok(first.includes(original));
+  for (const setting of settings(original)) assert.ok(settings(first).includes(setting), setting);
   const backups = readdirSync(join(home, 'backups'));
   assert.equal(backups.length, 1);
   assert.equal(readFileSync(join(home, 'backups', backups[0], 'unified-openrouter.config.toml'), 'utf8'), original);

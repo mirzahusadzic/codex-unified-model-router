@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { logicalLines } from '../scripts/toml-lines.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 function fixture(t) {
@@ -20,6 +21,18 @@ function run(script, args, key = '', extraEnv = {}) {
   });
 }
 const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
+// Each setting with the table it belongs to, so a test can check that a merge
+// kept a setting in the same TOML context regardless of layout.
+function settings(text) {
+  let table = '';
+  const result = [];
+  for (const line of logicalLines(text).map(value => value.trim())) {
+    if (line === '' || line.startsWith('#')) continue;
+    if (line.startsWith('[')) table = line;
+    else result.push(`${table} ${line}`);
+  }
+  return result;
+}
 function succeeds(result) {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, '', 'credentials must not be printed');
@@ -295,7 +308,7 @@ test('unmanaged profile collisions refuse both writes; explicit conversion prese
   assert.equal(readFileSync(config, 'utf8'), main);
   succeeds(run('scripts/merge-config.mjs', [...args, '--force']));
   const first = readFileSync(profile, 'utf8');
-  assert.ok(first.includes(unrelated));
+  for (const setting of settings(unrelated)) assert.ok(settings(first).includes(setting), setting);
   assert.doesNotMatch(first, /"old"/);
   succeeds(run('scripts/merge-config.mjs', args));
   assert.equal(readFileSync(profile, 'utf8'), first);
@@ -331,4 +344,40 @@ test('verifier rejects missing, drifted or non-private OpenRouter profiles', t =
   succeeds(run('scripts/verify-credentials.mjs', [home]));
   rmSync(profile);
   assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
+});
+
+test('config merges keep keys and tables that Codex inserted inside managed blocks', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const profile = join(home, 'unified-openrouter.config.toml');
+  const args = [config, home, config, envFile, profile];
+  succeeds(run('scripts/merge-config.mjs', args));
+  const managed = readFileSync(config, 'utf8');
+  // Codex's TOML editor appends new keys and tables before a trailing comment,
+  // which is how these landed between the router's markers in a real config.
+  const inserted = managed
+    .replace('# END codex-unified-router managed keys', 'personality = "pragmatic"\n# END codex-unified-router managed keys')
+    .replace('apps = false\n', 'apps = false\nmulti_agent = true\n')
+    .replace('enabled = false\n', 'enabled = false\nlog_user_prompts = false\n')
+    .replace('# END codex-unified-router provider', '\n[tui]\nstatus_line = ["model"]\n\n[tui.model_availability_nux]\n'
+      + '"gpt-6-astra" = 1\n\n[projects."/work/after the poem"]\ntrust_level = "trusted"\n\n[mcp_servers.after-the-poem]\n'
+      + 'command = "node"\nargs = ["server.mjs", "--stdio"]\n# END codex-unified-router provider');
+  writeFileSync(config, inserted, { mode: 0o600 });
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+
+  succeeds(run('scripts/merge-config.mjs', args));
+  const merged = readFileSync(config, 'utf8');
+  for (const setting of settings(inserted)) assert.ok(settings(merged).includes(setting), setting);
+  assert.equal(settings(merged).length, settings(inserted).length);
+  // The provider block no longer ends the file, where Codex inserts new tables.
+  assert.doesNotMatch(merged.trimEnd(), /# END codex-unified-router provider$/);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.equal(readFileSync(config, 'utf8'), merged);
+
+  // Opting out of a router-created table keeps the foreign keys in that table.
+  succeeds(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_DISABLE_ANALYTICS: '0' }));
+  const optedOut = readFileSync(config, 'utf8');
+  assert.ok(settings(optedOut).includes('[analytics] log_user_prompts = false'));
+  assert.ok(!settings(optedOut).includes('[analytics] enabled = false'));
 });
