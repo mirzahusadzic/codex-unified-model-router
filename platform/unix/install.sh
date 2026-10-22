@@ -64,7 +64,7 @@ case "$native_models" in
     ;;
 esac
 # merge-config.mjs applies these; checking them here fails before any prompt.
-for setting in CODEX_ROUTER_DISABLE_APPS CODEX_ROUTER_DISABLE_ANALYTICS; do
+for setting in CODEX_ROUTER_DISABLE_APPS CODEX_ROUTER_DISABLE_GUARDIAN CODEX_ROUTER_DISABLE_ANALYTICS; do
   if [[ -n "${!setting+set}" && "${!setting}" != 0 && "${!setting}" != 1 ]]; then
     printf '%s must be 0 or 1\n' "$setting" >&2
     exit 2

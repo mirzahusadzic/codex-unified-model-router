@@ -41,6 +41,9 @@ Environment:
                                   hidden without a ChatGPT plan), show, or hide
   CODEX_ROUTER_DISABLE_APPS       1 (default) turns off ChatGPT apps;
                                   0 leaves Codex's setting alone
+  CODEX_ROUTER_DISABLE_GUARDIAN   1 (default) turns off Codex's guardian, which
+                                  sends transcripts to OpenAI for review;
+                                  0 leaves Codex's setting alone
   CODEX_ROUTER_DISABLE_ANALYTICS  1 (default) turns off Codex analytics;
                                   0 leaves Codex's setting alone
   CODEX_ROUTER_AGENT_THREADS      Spawned-agent limit: 10 (default), 1-999,

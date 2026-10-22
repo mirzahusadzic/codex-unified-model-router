@@ -40,7 +40,7 @@ node install.mjs
 
 `install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, `-ChangeApiKey`, and `-ApiKeyFile` when run directly.
 
-Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
+Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -53,6 +53,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | `CODEX_HOME` | path; default `~/.codex` | Codex home directory to configure. |
 | `CODEX_ROUTER_NATIVE_MODELS` | `auto` (default), `show`, `hide` | Whether native OpenAI models appear in `/model`. See [Native OpenAI models](#native-openai-models). |
 | `CODEX_ROUTER_DISABLE_APPS` | `1` (default), `0` | `1` turns off Codex's ChatGPT connector tools; `0` leaves them to you. See [ChatGPT apps](#chatgpt-apps). |
+| `CODEX_ROUTER_DISABLE_GUARDIAN` | `1` (default), `0` | `1` turns off Codex's guardian, which sends the agent transcript to OpenAI to review some actions; `0` leaves it to you. See [Codex guardian](#codex-guardian). |
 | `CODEX_ROUTER_DISABLE_ANALYTICS` | `1` (default), `0` | `1` turns off Codex analytics; `0` leaves them to you. See [Codex analytics](#codex-analytics). |
 | `CODEX_ROUTER_AGENT_THREADS` | `10` (default), `1`–`999`, `0` | Spawned-agent limit per session; `0` leaves it to Codex. See [Spawned-agent limit](#spawned-agent-limit). |
 | `CODEX_ROUTER_RESTART_DAEMON` | `1` (default), `0` | `0` skips restarting a running Codex app-server daemon. See [Activate the provider](#activate-the-provider). |
@@ -135,6 +136,7 @@ http_headers = { "X-Codex-Router-Token" = "<generated-by-installer>" }
 
 [features]
 apps = false
+guardian_approval = false
 
 [analytics]
 enabled = false
@@ -150,6 +152,12 @@ The installer edits existing `[features]`, `[analytics]`, and `[agents]` tables 
 Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites, and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them, the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
 
 The installer therefore manages `apps = false`. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0`. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
+
+### Codex guardian
+
+Codex 0.163.0 assesses some agent actions, such as writes outside the workspace, with a hidden guardian thread on `codex-auto-review`, a native OpenAI model. It does so even when `approvals_reviewer` is `user`, and sends that model the agent transcript, including tool calls and their results. In a session that used Muse or Ultra Spark, [provider isolation](#provider-isolation) refuses those requests, so the action stalls; in other sessions, the transcript goes to OpenAI and needs a ChatGPT plan.
+
+The installer therefore manages `guardian_approval = false` in `[features]`, so approval requests go to you as configured. Install with `CODEX_ROUTER_DISABLE_GUARDIAN=0` to keep the guardian, for example if you use `approvals_reviewer = "auto_review"`, which runs on the same guardian. For a single session, `codex --enable guardian_approval` overrides the configuration.
 
 ### Codex analytics
 

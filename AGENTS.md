@@ -37,7 +37,7 @@ After editing the maintained prompts or adding an OpenRouter entry, run `node sc
 - Never substitute a model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
 - Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, keep Ultra Spark spawning workers with `fork_context: false`, and never let native OpenAI and training-tier models share a session.
-- Keep Codex analytics off by default and never send router data to third parties.
+- Keep Codex analytics and the OpenAI-hosted guardian reviewer off by default, and never send router data to third parties.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
 
 ## Validate and document

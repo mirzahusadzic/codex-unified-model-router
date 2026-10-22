@@ -16,13 +16,24 @@ const managedProviderEnd = '# END codex-unified-router provider';
 const tableMarker = (table, edge) => `# ${edge} codex-unified-router ${table.name}`;
 
 // Entries the router manages inside user tables. `lines: null` removes an
-// earlier managed block and leaves the setting to the user.
+// earlier managed block and leaves the setting to the user. `ownedKeys` are
+// the keys the router currently sets, and replace the user's values; inside
+// its block, a table also drops any key in `blockKeys` it may have set before.
 //
 // ChatGPT apps add tens of thousands of connector-tool tokens to every
 // request, including OpenRouter requests. Set CODEX_ROUTER_DISABLE_APPS=0 to
 // leave Codex's own apps setting untouched.
 const disableAppsSetting = process.env.CODEX_ROUTER_DISABLE_APPS ?? '1';
 if (!['0', '1'].includes(disableAppsSetting)) throw new Error('CODEX_ROUTER_DISABLE_APPS must be 0 or 1');
+// Codex's guardian sends the agent transcript to OpenAI's codex-auto-review
+// model to assess some actions, even when approvals go to the user. Set
+// CODEX_ROUTER_DISABLE_GUARDIAN=0 to leave Codex's guardian setting alone.
+const disableGuardianSetting = process.env.CODEX_ROUTER_DISABLE_GUARDIAN ?? '1';
+if (!['0', '1'].includes(disableGuardianSetting)) throw new Error('CODEX_ROUTER_DISABLE_GUARDIAN must be 0 or 1');
+const featureSettings = [
+  disableAppsSetting === '1' && ['apps', 'CODEX_ROUTER_DISABLE_APPS=0'],
+  disableGuardianSetting === '1' && ['guardian_approval', 'CODEX_ROUTER_DISABLE_GUARDIAN=0'],
+].filter(Boolean);
 // Ultra Spark fans work out to parallel workers; raise Codex's spawned-agent
 // limit. Set CODEX_ROUTER_AGENT_THREADS=0 to leave the limit to Codex.
 // Codex sends usage analytics and metrics to OpenAI by default. Set
@@ -36,9 +47,10 @@ if (!/^(0|[1-9][0-9]{0,2})$/.test(agentThreadsSetting)) {
 const managedTables = [
   {
     name: 'features',
-    lines: disableAppsSetting === '1' ? ['apps = false'] : null,
-    ownedKeys: ['apps'],
-    optOut: 'CODEX_ROUTER_DISABLE_APPS=0',
+    lines: featureSettings.length > 0 ? featureSettings.map(([key]) => `${key} = false`) : null,
+    ownedKeys: featureSettings.map(([key]) => key),
+    blockKeys: ['apps', 'guardian_approval'],
+    optOut: featureSettings.map(([, optOut]) => optOut).join(' and '),
   },
   {
     name: 'analytics',
@@ -128,7 +140,7 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
         continue;
       }
       const key = keyOf(line);
-      if (!key || within.ownedKeys.includes(key)) continue;
+      if (!key || (within.blockKeys ?? within.ownedKeys).includes(key)) continue;
       // A foreign key in a router-created table needs the table header first,
       // in the same layout as keys written below the block.
       if (managed.header && !managed.emitted) {

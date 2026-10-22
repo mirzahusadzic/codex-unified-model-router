@@ -64,7 +64,7 @@ if ($NativeModels -notin @('auto', 'show', 'hide')) {
     Fail-Install 'CODEX_ROUTER_NATIVE_MODELS must be auto, show, or hide' 2
 }
 # merge-config.mjs applies these; checking them here fails before any prompt.
-foreach ($Setting in @('CODEX_ROUTER_DISABLE_APPS', 'CODEX_ROUTER_DISABLE_ANALYTICS')) {
+foreach ($Setting in @('CODEX_ROUTER_DISABLE_APPS', 'CODEX_ROUTER_DISABLE_GUARDIAN', 'CODEX_ROUTER_DISABLE_ANALYTICS')) {
     $Value = [Environment]::GetEnvironmentVariable($Setting)
     if ($null -ne $Value -and $Value -notin @('0', '1')) { Fail-Install "$Setting must be 0 or 1" 2 }
 }

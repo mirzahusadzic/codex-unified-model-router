@@ -51,6 +51,11 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
         || logicalLines(config).filter(line => line.trim() === '[features]').length !== 1)) {
     throw new Error('Codex apps are not disabled by the managed configuration; rerun the installer');
   }
+  if (!openrouterOnly && (process.env.CODEX_ROUTER_DISABLE_GUARDIAN ?? '1') === '1'
+      && (!managedBlock(config, 'features').includes('guardian_approval = false')
+        || logicalLines(config).filter(line => line.trim() === '[features]').length !== 1)) {
+    throw new Error('The Codex guardian is not disabled by the managed configuration; rerun the installer');
+  }
   if (!openrouterOnly && (process.env.CODEX_ROUTER_DISABLE_ANALYTICS ?? '1') === '1'
       && (!managedBlock(config, 'analytics').includes('enabled = false')
         || logicalLines(config).filter(line => line.trim() === '[analytics]').length !== 1)) {

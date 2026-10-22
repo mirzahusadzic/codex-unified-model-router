@@ -12,7 +12,7 @@ Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between th
 - **Ultra Spark mode.** DeepSeek leads and up to 10 Muse workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
 - **Switch in place.** `/model` moves a thread between DeepSeek, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
 - **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
-- **Private by default.** Codex analytics are off, and native OpenAI models never share a tracked Codex session with a provider that trains on its inputs.
+- **Private by default.** Codex analytics and its OpenAI-hosted guardian reviewer are off, and native OpenAI models never share a tracked Codex session with a provider that trains on its inputs.
 - **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
 
 ## How it works
@@ -121,7 +121,7 @@ CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models
 CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
 ```
 
-On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. `node install.mjs --help` summarizes the options; [Installer settings](docs/setup.md#installer-settings) explains each one with its default.
+On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics, ChatGPT connector tools, and the guardian that sends transcripts to OpenAI for review, and allows 10 parallel agents. `node install.mjs --help` summarizes the options; [Installer settings](docs/setup.md#installer-settings) explains each one with its default.
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you; restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 

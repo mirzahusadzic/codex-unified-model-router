@@ -17,7 +17,8 @@ function fixture(t) {
 function run(script, args, key = '', extraEnv = {}) {
   return spawnSync(process.execPath, [join(root, script), ...args], {
     encoding: 'utf8',
-    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_DISABLE_ANALYTICS: '1', CODEX_ROUTER_AGENT_THREADS: '10', ...extraEnv },
+    env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_DISABLE_ANALYTICS: '1', CODEX_ROUTER_AGENT_THREADS: '10',
+      CODEX_ROUTER_DISABLE_GUARDIAN: '0', ...extraEnv },
   });
 }
 const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
@@ -380,4 +381,36 @@ test('config merges keep keys and tables that Codex inserted inside managed bloc
   const optedOut = readFileSync(config, 'utf8');
   assert.ok(settings(optedOut).includes('[analytics] log_user_prompts = false'));
   assert.ok(!settings(optedOut).includes('[analytics] enabled = false'));
+});
+
+test('config merges turn off the Codex guardian unless told to leave it alone', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  const guard = { CODEX_ROUTER_DISABLE_GUARDIAN: '1' };
+  writeFileSync(config, '[features]\nguardian_approval = true\nshell_tool = false\n', { mode: 0o600 });
+
+  succeeds(run('scripts/merge-config.mjs', args, '', guard));
+  const managed = readFileSync(config, 'utf8');
+  assert.match(managed, /# BEGIN codex-unified-router features\napps = false\nguardian_approval = false\n# END codex-unified-router features/);
+  assert.doesNotMatch(managed, /guardian_approval = true/);
+  assert.ok(settings(managed).includes('[features] shell_tool = false'));
+  succeeds(run('scripts/verify-credentials.mjs', [home], '', guard));
+  succeeds(run('scripts/merge-config.mjs', args, '', guard));
+  assert.equal(readFileSync(config, 'utf8'), managed);
+
+  // Opting out removes only the router's guardian line and keeps a user value.
+  writeFileSync(config, managed.replace('shell_tool = false', 'shell_tool = false\nguardian_approval = true'));
+  succeeds(run('scripts/merge-config.mjs', args));
+  const optedOut = readFileSync(config, 'utf8');
+  assert.match(optedOut, /# BEGIN codex-unified-router features\napps = false\n# END codex-unified-router features/);
+  assert.ok(settings(optedOut).includes('[features] guardian_approval = true'));
+  assert.ok(!settings(optedOut).includes('[features] guardian_approval = false'));
+  assert.notEqual(run('scripts/verify-credentials.mjs', [home], '', guard).status, 0);
+
+  writeFileSync(config, 'features.guardian_approval = true\n', { mode: 0o600 });
+  const dotted = run('scripts/merge-config.mjs', args, '', guard);
+  assert.notEqual(dotted.status, 0);
+  assert.match(dotted.stderr, /set CODEX_ROUTER_DISABLE_APPS=0 and CODEX_ROUTER_DISABLE_GUARDIAN=0/);
+  assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_DISABLE_GUARDIAN: 'no' }).status, 0);
 });
