@@ -1,0 +1,63 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { applyOpenRouterPrompts, readPrompts, usesOpenRouterPrompts } from './openrouter-prompts.mjs';
+
+// Check a generated or installed Codex catalog against this checkout: every
+// router entry must be present with the repository's context limits and
+// prompts. With --report, print what /model lists instead.
+const args = process.argv.slice(2);
+const report = args[0] === '--report';
+const catalogFile = report ? args[1] : args[0];
+if (!catalogFile || args.length !== (report ? 2 : 1)) {
+  console.error('Usage: verify-catalog.mjs [--report] <models.json>');
+  process.exit(2);
+}
+function fail(message) {
+  console.error(`${message}; rerun the installer.`);
+  process.exit(1);
+}
+
+let installed;
+try {
+  installed = JSON.parse(readFileSync(catalogFile, 'utf8')).models;
+} catch (error) {
+  fail(`Cannot read the model catalog ${catalogFile}: ${error.message}`);
+}
+if (!Array.isArray(installed)) fail(`The model catalog ${catalogFile} has no models list`);
+
+if (report) {
+  const native = installed.filter(model => !usesOpenRouterPrompts(model.slug) && model.visibility !== 'hide').length;
+  console.log(`Router models: ${installed.filter(model => usesOpenRouterPrompts(model.slug)).map(model => model.slug).join(', ')}`);
+  console.log(native ? `Native OpenAI models: ${native} in /model (require a ChatGPT plan)` : 'Native OpenAI models: hidden from /model');
+  process.exit(0);
+}
+
+const root = fileURLToPath(new URL('../', import.meta.url));
+const prompts = readPrompts(join(root, 'prompts', 'openrouter-instructions.md'),
+  join(root, 'prompts', 'openrouter-persistent.md'));
+const bySlug = new Map(installed.map(model => [model.slug, model]));
+const limitFields = ['context_window', 'max_context_window', 'effective_context_window_percent', 'auto_compact_token_limit'];
+
+let checked = 0;
+for (const name of readdirSync(join(root, 'catalog')).filter(value => value.endsWith('.json'))) {
+  const value = JSON.parse(readFileSync(join(root, 'catalog', name), 'utf8'));
+  for (const entry of Array.isArray(value) ? value : [value]) {
+    if (!usesOpenRouterPrompts(entry.slug)) continue;
+    const model = bySlug.get(entry.slug);
+    if (!model) fail(`The model catalog lacks ${entry.slug}`);
+    for (const field of limitFields) {
+      if ((model[field] ?? null) !== (entry[field] ?? null)) {
+        fail(`${entry.slug} has ${field} ${model[field] ?? null}, but the repository sets ${entry[field] ?? null}`);
+      }
+    }
+    const expected = applyOpenRouterPrompts(entry, prompts);
+    if (model.base_instructions !== expected.base_instructions
+        || model.model_messages?.instructions_template !== expected.model_messages.instructions_template
+        || model.model_messages?.persistent_instructions !== expected.model_messages.persistent_instructions) {
+      fail(`The prompts for ${entry.slug} differ from the repository`);
+    }
+    checked += 1;
+  }
+}
+if (checked === 0) fail('No router catalog entries were checked');

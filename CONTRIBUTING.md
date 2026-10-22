@@ -45,10 +45,10 @@ Helpers the installers and verifiers call:
 | `scripts/build-catalog.mjs` | Build `models.json` from Codex's bundled models and `catalog/`, applying prompts, hiding native models on request, and rejecting duplicate or colliding slugs. |
 | `scripts/merge-config.mjs` | Merge the managed settings into `config.toml` and the OpenRouter-only profile, preserving everything else. |
 | `scripts/prepare-credentials.mjs` | Write `unified-router/openrouter.env`, keeping the local token and any extra router settings. |
-| `scripts/config-managed.mjs` | Report through its exit status whether a configuration already has the managed marker, which decides whether `--force` is required. |
+| `scripts/config-managed.mjs` | Report through its exit status whether a configuration already has the managed marker, which decides whether the installer asks before merging into it. |
 | `scripts/verify-credentials.mjs` | Check the managed blocks, local tokens, and private permissions. |
 | `scripts/verify-health.mjs` | Check the running router's health, capabilities, and source revision. |
-| `scripts/verify-prompts.mjs` | Check that the installed catalog carries the repository's prompts. |
+| `scripts/verify-catalog.mjs [--report] <models.json>` | Check that a generated or installed catalog carries every router entry with the repository's context limits and prompts, or with `--report`, print what `/model` lists. Both installers and verifiers use it. |
 | `platform/windows/private-path.ps1` | On Windows, restrict a file or directory to the current user. |
 
 Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for OpenRouter entries, and `scripts/toml-lines.mjs` reads TOML line by line without mistaking strings or comments for keys, tables, or markers.
@@ -61,7 +61,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | --- | --- | --- |
 | `tests/unified-router.test.mjs` | Routing, history repair, reasoning and structured-output adaptation, OpenRouter recovery, provider isolation, endpoint preferences, header allowlists, streaming, and logs. | All |
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
-| `tests/catalog.test.mjs` | Catalog entries, rendered prompts and the Codex tools they must not mention, prompt suffixes, and catalog-build validation. | All |
+| `tests/catalog.test.mjs` | Catalog entries, rendered prompts and the Codex tools they must not mention, prompt suffixes, catalog-build validation, and `verify-catalog.mjs`. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
 | `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary and verifier report, the help text and argument errors, and that the Unix scripts need no `jq`. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |

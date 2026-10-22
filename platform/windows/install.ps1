@@ -197,12 +197,8 @@ try {
     & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $RouterEnv $OpenRouterOut @MergeFlags
     if ($LASTEXITCODE -ne 0) { throw 'Codex config merge failed.' }
 
-    $CatalogText = [System.IO.File]::ReadAllText($ModelsFile, $Utf8NoBom)
-    $Catalog = $CatalogText | ConvertFrom-Json
-    $DeepSeek = $Catalog.models | Where-Object { $_.slug -eq 'deepseek/deepseek-v4.1-flash-1017' }
-    if (-not $DeepSeek -or [int64]$DeepSeek.context_window -ne 960000) {
-        throw 'The generated catalog is missing the expected DeepSeek entry.'
-    }
+    & node (Join-Path $RepoDir 'scripts\verify-catalog.mjs') $ModelsFile
+    if ($LASTEXITCODE -ne 0) { throw 'The generated model catalog does not match the repository.' }
 
     if (-not (Test-Path -LiteralPath $ExistingConfig)) {
         [System.IO.File]::WriteAllText($ExistingConfig, '', $Utf8NoBom)

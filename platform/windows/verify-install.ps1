@@ -54,15 +54,8 @@ foreach ($Expected in @(
     if (-not $Config.Contains($Expected)) { throw "Config is missing: $Expected" }
 }
 
-$CatalogText = [System.IO.File]::ReadAllText($ModelsPath, $Utf8NoBom)
-$Catalog = $CatalogText | ConvertFrom-Json
-$DeepSeek = $Catalog.models | Where-Object { $_.slug -eq 'deepseek/deepseek-v4.1-flash-1017' }
-if (-not $DeepSeek) { throw 'DeepSeek is missing from the model catalog.' }
-if ([int64]$DeepSeek.context_window -ne 960000 -or [int64]$DeepSeek.max_context_window -ne 960000) {
-    throw 'DeepSeek context limits are not 960000.'
-}
-& node (Join-Path $ScriptsDir 'verify-prompts.mjs') $CodexHome
-if ($LASTEXITCODE -ne 0) { throw 'Installed OpenRouter prompts differ from the repository; rerun the installer.' }
+& node (Join-Path $ScriptsDir 'verify-catalog.mjs') $ModelsPath
+if ($LASTEXITCODE -ne 0) { throw 'The installed model catalog does not match the repository.' }
 
 if (-not $NoService) {
     & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
@@ -74,12 +67,4 @@ if (-not $NoService) {
 Write-Host 'Install looks valid.'
 $DefaultModel = (Select-String -Path $ConfigPath -Pattern '^model = "(.*)"$' | Select-Object -First 1).Matches.Groups[1].Value
 Write-Host "Default main model: $DefaultModel"
-# Report what /model lists, from the installed catalog.
-$Routed = '^(deepseek|openrouter|ultra-spark)/'
-Write-Host "Router models: $(@($Catalog.models | Where-Object { $_.slug -match $Routed } | ForEach-Object { $_.slug }) -join ', ')"
-$NativeListed = @($Catalog.models | Where-Object { $_.slug -notmatch $Routed -and $_.visibility -ne 'hide' }).Count
-if ($NativeListed -gt 0) {
-    Write-Host "Native OpenAI models: $NativeListed in /model (require a ChatGPT plan)"
-} else {
-    Write-Host 'Native OpenAI models: hidden from /model'
-}
+& node (Join-Path $ScriptsDir 'verify-catalog.mjs') --report $ModelsPath

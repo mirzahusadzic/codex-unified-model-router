@@ -82,11 +82,6 @@ for command_name in codex node; do
   fi
 done
 
-# Tests a JavaScript expression against JSON on stdin, so no jq is needed.
-json_test() {
-  node -e 'const data = JSON.parse(require("fs").readFileSync(0, "utf8")); process.exit(eval(process.argv[1]) ? 0 : 1)' "$1"
-}
-
 existing_config="$codex_home/config.toml"
 existing_profile="$codex_home/unified-openrouter.config.toml"
 
@@ -200,11 +195,7 @@ merge_flags=()
 if [[ "$force" -eq 1 ]]; then merge_flags+=(--force); fi
 node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env" "$tmp_dir/unified-openrouter.config.toml" ${merge_flags[@]+"${merge_flags[@]}"}
 
-if ! json_test 'data.models.some(model => model.slug === "deepseek/deepseek-v4.1-flash-1017" && model.context_window === 960000)' \
-    <"$tmp_dir/models.json"; then
-  printf 'The generated catalog is missing the expected DeepSeek entry.\n' >&2
-  exit 1
-fi
+node "$repo_dir/scripts/verify-catalog.mjs" "$tmp_dir/models.json"
 
 step "Installing the loopback router at 127.0.0.1:18766"
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
@@ -358,7 +349,8 @@ run_by_codex_daemon() {
 # with. Restarting it interrupts its open sessions, so skip it when it is not
 # running, when Codex itself runs this installer, or when asked not to.
 if [[ "$service" -eq 1 && "$restart_daemon" -eq 1 ]] \
-    && codex app-server daemon version 2>/dev/null | json_test 'data.status === "running"' 2>/dev/null; then
+    && node -e 'process.exit(JSON.parse(process.argv[1]).status === "running" ? 0 : 1)' \
+      "$(codex app-server daemon version 2>/dev/null)" 2>/dev/null; then
   if run_by_codex_daemon; then
     printf 'Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart\n' >&2
   elif step "Restarting the Codex app-server daemon" && codex app-server daemon restart >/dev/null 2>&1; then

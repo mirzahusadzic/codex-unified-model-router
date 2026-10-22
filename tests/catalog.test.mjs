@@ -125,3 +125,50 @@ test('prompt suffixes must name a file in the prompts directory', () => {
       /must name a \.md file/);
   }
 });
+
+test('verify-catalog checks router entries against the repository and reports what /model lists', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-verify-catalog-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const catalogFile = join(directory, 'models.json');
+  writeFileSync(join(directory, 'bundled.json'), JSON.stringify({ models: [
+    { slug: 'gpt-6-astra', visibility: 'list' }, { slug: 'codex-auto-review', visibility: 'hide' }] }));
+  const build = nativeModels => spawnSync(process.execPath, [join(root, 'scripts', 'build-catalog.mjs'),
+    '--bundled', join(directory, 'bundled.json'), '--catalog-dir', join(root, 'catalog'),
+    '--instructions', join(root, 'prompts', 'openrouter-instructions.md'),
+    '--persistent', join(root, 'prompts', 'openrouter-persistent.md'),
+    '--native-models', nativeModels, '--output', catalogFile], { encoding: 'utf8' });
+  const verify = (...args) => spawnSync(process.execPath, [join(root, 'scripts', 'verify-catalog.mjs'), ...args],
+    { encoding: 'utf8' });
+  const edit = change => {
+    const catalog = JSON.parse(readFileSync(catalogFile, 'utf8'));
+    change(new Map(catalog.models.map(model => [model.slug, model])), catalog);
+    writeFileSync(catalogFile, JSON.stringify(catalog));
+  };
+
+  assert.equal(build('show').status, 0);
+  assert.equal(verify(catalogFile).status, 0, verify(catalogFile).stderr);
+  const shown = verify('--report', catalogFile);
+  assert.equal(shown.stdout, `Router models: ${deepseek.slug}, ${ultraSpark.slug}, ${muse.slug}\n`
+    + 'Native OpenAI models: 1 in /model (require a ChatGPT plan)\n');
+  assert.equal(build('hide').status, 0);
+  assert.match(verify('--report', catalogFile).stdout, /^Native OpenAI models: hidden from \/model$/m);
+
+  // Limits come from the repository's entries, so a changed window is caught without a hardcoded size.
+  edit(models => { models.get(deepseek.slug).context_window -= 1; });
+  let result = verify(catalogFile);
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, `${deepseek.slug} has context_window ${deepseek.context_window - 1}, `
+    + `but the repository sets ${deepseek.context_window}; rerun the installer.\n`);
+  assert.equal(build('hide').status, 0);
+  edit(models => { models.get(muse.slug).model_messages.persistent_instructions += 'x'; });
+  assert.match(verify(catalogFile).stderr, /^The prompts for openrouter\/meta\/muse-spark-1\.3-contributor differ/);
+  edit((models, catalog) => { catalog.models = catalog.models.filter(model => model.slug !== ultraSpark.slug); });
+  assert.match(verify(catalogFile).stderr, /^The model catalog lacks ultra-spark\/deepseek-v4\.1-flash-1017;/);
+  writeFileSync(catalogFile, 'not json');
+  result = verify(catalogFile);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^Cannot read the model catalog .*; rerun the installer\.\n$/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+  assert.equal(verify().status, 2);
+  assert.equal(verify('--report').status, 2);
+});
