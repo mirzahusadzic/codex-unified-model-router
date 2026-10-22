@@ -5,7 +5,6 @@
 ![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
 ![Codex CLI 0.163](https://img.shields.io/badge/Codex%20CLI-0.163-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
-![Dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen)
 
 Run Codex on DeepSeek, Meta Muse, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
 
