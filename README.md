@@ -130,7 +130,7 @@ On an existing Codex configuration, the installer asks before merging into it an
 
 ```sh
 codex                                                   # DeepSeek V4.1 Flash 1017
-codex -m ultra-spark/deepseek-v4.1-flash-1017   # Ultra Spark mode
+codex -m ultra-spark/deepseek-v4.1-flash-1017           # Ultra Spark mode
 codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contributor
 ```
 
