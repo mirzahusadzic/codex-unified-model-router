@@ -106,6 +106,8 @@ if [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]
     printf 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass --api-key-file <path>.\n' >&2
     exit 1
   fi
+  printf 'Enter your OpenRouter API key (create one at https://openrouter.ai/keys).\n' >&2
+  printf 'Typing is hidden: paste the key and press Enter.\n' >&2
   read -r -s -p 'OpenRouter API key: ' prompted_key
   printf '\n' >&2
   if [[ -z "$prompted_key" ]]; then

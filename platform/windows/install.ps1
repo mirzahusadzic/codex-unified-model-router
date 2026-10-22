@@ -78,6 +78,8 @@ if (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) 
     if ([Console]::IsInputRedirected) {
         Fail-Install 'No OpenRouter API key. Run the installer in a terminal to be prompted for it, or pass -ApiKeyFile <path>.'
     }
+    Write-Host 'Enter your OpenRouter API key (create one at https://openrouter.ai/keys).'
+    Write-Host 'Typing is hidden: paste the key and press Enter.'
     $SecureKey = Read-Host 'OpenRouter API key' -AsSecureString
     $KeyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureKey)
     try { $PromptedKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($KeyPointer) }
