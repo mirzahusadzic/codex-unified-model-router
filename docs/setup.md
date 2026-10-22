@@ -29,13 +29,13 @@ The helper scripts behind these steps are listed in [CONTRIBUTING.md](../CONTRIB
 Pass settings to `node install.mjs` as flags or environment variables on each run; the installer does not store them:
 
 ```sh
-node install.mjs --force
+node install.mjs --api-key-file ~/openrouter.key
 CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 node install.mjs
 ```
 
 ```powershell
 $env:CODEX_ROUTER_NATIVE_MODELS = 'hide'
-node install.mjs --force
+node install.mjs
 ```
 
 `install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, and `-ApiKeyFile` when run directly.
@@ -45,7 +45,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | Setting | Values | Effect |
 | --- | --- | --- |
 | `--verify` | flag | Verifies an existing installation instead of installing; accepts `--no-service`. |
-| `--force` | flag | Allows the first conversion of an existing, unmanaged `config.toml` or `unified-openrouter.config.toml`. |
+| `--force` | flag | Merges into an existing configuration without asking. Needed only where no terminal is available for the question, such as in scripts. |
 | `--no-service` | flag | Writes configuration and router files without starting a service or restarting the Codex daemon. |
 | `--api-key-file <path>` | file path | Reads the OpenRouter key from the file's first line and replaces any stored key. Without it, the first install asks for the key without echoing it, and later installs reuse the stored key. |
 | `OPENROUTER_API_KEY` | API key | Also supplies or replaces the key, for automation that cannot use a file. Prefer the prompt or `--api-key-file`: environment variables can leak to other processes and logs. |
@@ -58,7 +58,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 
 ### Existing configuration
 
-Converting an existing, unmanaged `config.toml` or `unified-openrouter.config.toml` requires `--force` the first time; without it, the installer stops before changing any file or credential. Both files are backed up before merging, and later runs update the managed blocks without the flag. In the profile, the managed blocks own only `model_provider`, `model_catalog_json`, and `[model_providers.unified]`; keep custom models, reasoning settings, instructions, and other tables outside them.
+When `config.toml` or `unified-openrouter.config.toml` exists but has no router settings yet, the installer lists the files and asks before merging into them; answering no, or running without a terminal and without `--force`, stops it before anything changes. Both files are backed up before merging, and later runs update the managed blocks without asking. In the profile, the managed blocks own only `model_provider`, `model_catalog_json`, and `[model_providers.unified]`; keep custom models, reasoning settings, instructions, and other tables outside them.
 
 ### Automatic startup
 

@@ -115,13 +115,12 @@ node install.mjs --verify
 `install.mjs` runs the installer for your platform from [`platform/`](platform/README.md). Common variations:
 
 ```sh
-node install.mjs --force                             # first install over an existing Codex configuration (backed up)
 node install.mjs --api-key-file ~/openrouter.key     # read the key from a file instead of asking
 CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models from /model
 CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
 ```
 
-By default, the installer hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. [Installer settings](docs/setup.md#installer-settings) lists every option with its default.
+On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics and ChatGPT connector tools, and allows 10 parallel agents. [Installer settings](docs/setup.md#installer-settings) lists every option with its default.
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you; restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 

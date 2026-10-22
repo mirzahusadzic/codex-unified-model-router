@@ -64,6 +64,35 @@ for command_name in codex jq node; do
   fi
 done
 
+existing_config="$codex_home/config.toml"
+existing_profile="$codex_home/unified-openrouter.config.toml"
+
+# Merging into a configuration the router does not manage yet needs consent:
+# a yes at the prompt, or --force where no terminal is available. Only a real
+# marker line counts as managed, never one inside a TOML string or comment.
+unmanaged=()
+for file in "$existing_config" "$existing_profile"; do
+  if [[ -f "$file" ]] && ! node "$repo_dir/scripts/config-managed.mjs" "$file"; then unmanaged+=("$file"); fi
+done
+if [[ "$force" -eq 0 && ${#unmanaged[@]} -gt 0 ]]; then
+  if [[ ! -t 0 ]]; then
+    printf 'Existing Codex configuration found: %s\n' "${unmanaged[*]}" >&2
+    printf 'Run the installer in a terminal to confirm merging into it, or pass --force. The files are backed up first.\n' >&2
+    exit 2
+  fi
+  printf 'Existing Codex configuration found:\n' >&2
+  printf '  %s\n' "${unmanaged[@]}" >&2
+  printf 'The installer backs these files up, then adds its settings and keeps everything else.\n' >&2
+  read -r -p 'Merge into them? [y/N] ' answer
+  case "$answer" in
+    [yY]|[yY][eE][sS]) force=1 ;;
+    *)
+      printf 'Nothing was changed.\n' >&2
+      exit 2
+      ;;
+  esac
+fi
+
 # The OpenRouter key comes from --api-key-file, OPENROUTER_API_KEY, or the
 # stored key; otherwise ask for it without echoing. It never appears in a
 # command line, where other processes could read it.
@@ -83,25 +112,6 @@ if [[ -z "$api_key_file" && -z "${OPENROUTER_API_KEY:-}" && ! -f "$router_env" ]
     printf 'No OpenRouter API key entered.\n' >&2
     exit 1
   fi
-fi
-
-existing_config="$codex_home/config.toml"
-# Only a real marker line counts, never one inside a TOML string or comment.
-managed=0
-if [[ -f "$existing_config" ]] && node "$repo_dir/scripts/config-managed.mjs" "$existing_config"; then
-  managed=1
-fi
-
-if [[ "$force" -eq 0 ]] && [[ -f "$existing_config" ]] && [[ "$managed" -eq 0 ]]; then
-  printf 'An existing Codex configuration was found in %s.\n' "$codex_home" >&2
-  printf 'The installer can merge its managed settings while preserving other sections, but requires --force for the first conversion.\n' >&2
-  exit 2
-fi
-
-existing_profile="$codex_home/unified-openrouter.config.toml"
-if [[ "$force" -eq 0 ]] && [[ -f "$existing_profile" ]] && ! node "$repo_dir/scripts/config-managed.mjs" "$existing_profile"; then
-  printf 'An unmanaged unified-openrouter profile already exists. Rerun with --force to back it up and merge managed transport settings.\n' >&2
-  exit 2
 fi
 
 mkdir -p "$codex_home" "$backup_dir" "$router_dir"

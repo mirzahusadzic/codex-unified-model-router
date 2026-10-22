@@ -44,6 +44,29 @@ foreach ($CommandName in @('codex', 'node')) {
     }
 }
 
+# Merging into a configuration the router does not manage yet needs consent:
+# a yes at the prompt, or -Force where no terminal is available. Only a real
+# marker line counts as managed, never one inside a TOML string or comment.
+$ConfigManaged = Join-Path $RepoDir 'scripts\config-managed.mjs'
+$Unmanaged = @()
+foreach ($ConfigFile in @($ExistingConfig, $OpenRouterProfile)) {
+    if (Test-Path -LiteralPath $ConfigFile) {
+        & node $ConfigManaged $ConfigFile
+        if ($LASTEXITCODE -ne 0) { $Unmanaged += $ConfigFile }
+    }
+}
+if (-not $Force -and $Unmanaged.Count -gt 0) {
+    if ([Console]::IsInputRedirected) {
+        Fail-Install "Existing Codex configuration found: $($Unmanaged -join ', '). Run the installer in a terminal to confirm merging into it, or pass -Force. The files are backed up first." 2
+    }
+    Write-Host 'Existing Codex configuration found:'
+    $Unmanaged | ForEach-Object { Write-Host "  $_" }
+    Write-Host 'The installer backs these files up, then adds its settings and keeps everything else.'
+    $Answer = Read-Host 'Merge into them? [y/N]'
+    if ($Answer -notmatch '^(?i)(y|yes)$') { Fail-Install 'Nothing was changed.' 2 }
+    $Force = [switch]$true
+}
+
 # The OpenRouter key comes from -ApiKeyFile, OPENROUTER_API_KEY, or the stored
 # key; otherwise ask for it without echoing. It never appears in a command
 # line, where other processes could read it.
@@ -60,24 +83,6 @@ if (-not $ApiKeyFile -and [string]::IsNullOrWhiteSpace($env:OPENROUTER_API_KEY) 
     try { $PromptedKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($KeyPointer) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($KeyPointer) }
     if ([string]::IsNullOrWhiteSpace($PromptedKey)) { Fail-Install 'No OpenRouter API key entered.' }
-}
-
-$ConfigManaged = Join-Path $RepoDir 'scripts\config-managed.mjs'
-$Managed = $false
-if (Test-Path $ExistingConfig) {
-    # Only a real marker line counts, never one inside a TOML string or comment.
-    & node $ConfigManaged $ExistingConfig
-    $Managed = $LASTEXITCODE -eq 0
-}
-if (-not $Force -and (Test-Path $ExistingConfig) -and -not $Managed) {
-    Fail-Install "An existing Codex configuration was found in $CodexHome. Rerun with -Force for the first conversion." 2
-}
-
-if (-not $Force -and (Test-Path $OpenRouterProfile)) {
-    & node $ConfigManaged $OpenRouterProfile
-    if ($LASTEXITCODE -ne 0) {
-        Fail-Install 'An unmanaged unified-openrouter profile already exists. Rerun with -Force to back it up and merge managed transport settings.' 2
-    }
 }
 
 New-Item -ItemType Directory -Force -Path $CodexHome, $BackupDir, $RouterDir | Out-Null
