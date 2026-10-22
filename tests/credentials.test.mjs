@@ -414,3 +414,35 @@ test('config merges turn off the Codex guardian unless told to leave it alone', 
   assert.match(dotted.stderr, /set CODEX_ROUTER_DISABLE_APPS=0 and CODEX_ROUTER_DISABLE_GUARDIAN=0/);
   assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_DISABLE_GUARDIAN: 'no' }).status, 0);
 });
+
+test('reinstalls keep the model and effort Codex saved, and the first install sets the defaults', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  writeFileSync(config, 'model = "gpt-6-astra"\nmodel_reasoning_effort = "low"\n', { mode: 0o600 });
+  succeeds(run('scripts/merge-config.mjs', args));
+  const installed = readFileSync(config, 'utf8');
+  assert.match(installed, /^model = "deepseek\/deepseek-v4\.1-flash-1017"$/m);
+  assert.match(installed, /^model_reasoning_effort = "xhigh"$/m);
+  assert.doesNotMatch(installed, /gpt-6-astra|"low"/);
+
+  // Codex rewrites these lines in place when the user picks a model with /model.
+  writeFileSync(config, installed
+    .replace('model = "deepseek/deepseek-v4.1-flash-1017"', 'model = "ultra-spark/deepseek-v4.1-flash-1017"')
+    .replace('model_reasoning_effort = "xhigh"', 'model_reasoning_effort = "max"'));
+  succeeds(run('scripts/merge-config.mjs', args));
+  const reinstalled = readFileSync(config, 'utf8');
+  assert.match(reinstalled, /^model = "ultra-spark\/deepseek-v4\.1-flash-1017"$/m);
+  assert.match(reinstalled, /^model_reasoning_effort = "max"$/m);
+  assert.equal(reinstalled.match(/^model = /gm).length, 1);
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+
+  // A removed default comes back, while the provider and catalog are always enforced.
+  writeFileSync(config, reinstalled.replace('model_reasoning_effort = "max"\n', '')
+    .replace('model_provider = "unified"', 'model_provider = "openai"'));
+  succeeds(run('scripts/merge-config.mjs', args));
+  const repaired = readFileSync(config, 'utf8');
+  assert.match(repaired, /^model_reasoning_effort = "xhigh"$/m);
+  assert.match(repaired, /^model_provider = "unified"$/m);
+  assert.match(repaired, /^model = "ultra-spark\/deepseek-v4\.1-flash-1017"$/m);
+});

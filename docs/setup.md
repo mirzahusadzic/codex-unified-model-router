@@ -118,7 +118,7 @@ The service environment also sets `CODEX_ROUTER_ENV_FILE`, `CODEX_MODEL_CATALOG`
 
 ## Managed Codex configuration
 
-The installer manages these settings in `config.toml`, between `# BEGIN/END codex-unified-router` markers, and supplies the real catalog path and a random local token. Rerunning it reapplies them and keeps the token.
+The installer manages these settings in `config.toml`, between `# BEGIN/END codex-unified-router` markers, and supplies the real catalog path and a random local token. Rerunning it reapplies them and keeps the token. `model` and `model_reasoning_effort` are defaults for the first installation: later runs keep the values Codex saves when you pick a model with `/model`, and restore a default only if its line is missing.
 
 ```toml
 model = "deepseek/deepseek-v4.1-flash-1017"

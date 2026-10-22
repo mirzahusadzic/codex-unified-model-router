@@ -81,8 +81,12 @@ if (openrouterProfileFile && existsSync(profilePath) && force !== '--force'
 // so they can land inside a managed block. Lines a block does not own are
 // therefore kept: foreign keys stay in their table, and foreign tables keep
 // their content after the block.
-function merge(existing, ownedKeys, keys, provider, tables = []) {
+// `defaultKeys` are written on the first merge only. Later merges keep the
+// values in the managed block, which Codex updates when the user picks a model.
+function merge(existing, ownedKeys, keys, provider, tables = [], defaultKeys = []) {
   const preserved = [];
+  const kept = new Map();
+  const managedBefore = hasManagedKeysMarker(existing);
   let insideManagedKeys = false;
   let insideManagedProvider = false;
   let insideProviderTable = false;
@@ -192,7 +196,8 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
         continue;
       }
       const key = keyOf(line);
-      if (key && !ownedKeys.includes(key)) preserved.push(line);
+      if (key && managedBefore && defaultKeys.includes(key)) kept.set(key, line.trim());
+      else if (key && !ownedKeys.includes(key)) preserved.push(line);
       continue;
     }
     if (insideManagedProvider) {
@@ -251,7 +256,7 @@ function merge(existing, ownedKeys, keys, provider, tables = []) {
       .map(table => block(table, `[${table.name}]`).join('\n')),
   ];
   return [
-    [managedKeysMarker, ...keys, managedKeysEnd].join('\n'),
+    [managedKeysMarker, ...keys.map(line => kept.get(keyOf(line)) ?? line), managedKeysEnd].join('\n'),
     preserved.slice(0, split).join('\n').trim(),
     ...routerTables,
     preserved.slice(split).join('\n').trim(),
@@ -275,7 +280,8 @@ const provider = [
   `http_headers = { "X-Codex-Router-Token" = "${routerToken}" }`,
 ];
 
-const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider, managedTables);
+const main = merge(readExisting(existingFile), ['model', 'model_provider', 'model_reasoning_effort', 'model_catalog_json'], keys, provider, managedTables,
+  ['model', 'model_reasoning_effort']);
 const profile = openrouterProfileFile ? merge(existingProfile, ['model_provider', 'model_catalog_json'], [
   'model_provider = "unified"',
   `model_catalog_json = ${JSON.stringify(`${codexHome}/models.json`)}`,
