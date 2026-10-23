@@ -100,7 +100,7 @@ flowchart LR
     class TT trainingTier
 ```
 
-*Read it left to right. Codex sends every request to the router, and the label on each arrow says which requests take that route. The dotted line marks a separation: the training tier never shares a Codex session with the native OpenAI backend.*
+<p align="center"><em>Read it left to right. Codex sends every request to the router, and the label on each arrow says which requests take that route. The dotted line marks a separation: the training tier never shares a Codex session with the native OpenAI backend.</em></p>
 
 ## Install
 
