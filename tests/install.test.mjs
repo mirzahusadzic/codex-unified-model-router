@@ -93,7 +93,7 @@ test('installer settings are validated before anything is written', t => {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const home = join(directory, 'codex-home');
   mkdirSync(home);
-  for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe'],
+  for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_PIN_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe'],
     ['CODEX_ROUTER_DISABLE_APPS', 'yes'], ['CODEX_ROUTER_DISABLE_GUARDIAN', 'on'], ['CODEX_ROUTER_DISABLE_ANALYTICS', 'no'], ['CODEX_ROUTER_AGENT_THREADS', '1000']]) {
     const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
       ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
@@ -254,4 +254,81 @@ test('Unix scripts need no jq, since CI runner images ship it and would hide a n
       .split('\n').filter(line => !line.trimStart().startsWith('#')).join('\n');
     assert.doesNotMatch(code, /\bjq\b/, name);
   }
+});
+
+// A Codex stand-in for the daemon commands: it records each call and answers
+// `daemon version` only while FAKE_DAEMON is `running`.
+function fakeDaemonCodex(directory) {
+  const bin = join(directory, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'fake-codex.mjs'), `import { appendFileSync } from 'node:fs';
+const args = process.argv.slice(2).join(' ');
+appendFileSync(process.env.FAKE_CODEX_LOG, args + '\\n');
+if (args === 'app-server daemon version') {
+  if (process.env.FAKE_DAEMON !== 'running') process.exit(1);
+  console.log(JSON.stringify({ status: 'running', managedCodexVersion: process.env.FAKE_MANAGED_VERSION || '0.164.0', cliVersion: '0.164.0' }));
+} else if (args === 'app-server daemon update --from-cli --yes') {
+  process.exit(Number(process.env.FAKE_PIN_STATUS || 0));
+}
+`);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@node "%~dp0fake-codex.mjs" %*\r\n'
+    : '#!/bin/sh\nexec node "$(dirname "$0")/fake-codex.mjs" "$@"\n', { mode: 0o700 });
+  return bin;
+}
+
+test('the daemon step pins the daemon to the CLI, restarts it only when allowed, and skips a missing one', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-daemon-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bin = fakeDaemonCodex(directory);
+  const log = join(directory, 'calls.log');
+  const pin = 'update --from-cli --yes';
+  for (const scenario of [
+    { name: 'running daemon', daemon: 'running', calls: ['version', pin], stdout: /^Pinned the Codex app-server daemon to the CLI's Codex and restarted it\.$/m },
+    { name: 'pinning turned off', daemon: 'running', env: { CODEX_ROUTER_PIN_DAEMON: '0' }, calls: ['version', 'restart'], stdout: /^Restarted the Codex app-server daemon\.$/m },
+    { name: 'restarts turned off', daemon: 'running', env: { CODEX_ROUTER_RESTART_DAEMON: '0' }, calls: ['version'], stderr: /was not pinned, because CODEX_ROUTER_RESTART_DAEMON=0/ },
+    { name: 'stopped daemon', installed: true, calls: ['version', pin], stdout: /^Pinned the Codex app-server daemon to the CLI's Codex\.$/m },
+    { name: 'no daemon', calls: ['version'] },
+    { name: 'Codex runs the installer', daemon: 'running', flags: ['--codex-runs-installer'], calls: ['version'], stderr: /not restarted or pinned\. Afterwards run: codex app-server daemon update --from-cli --yes/ },
+    { name: 'pinning fails', daemon: 'running', env: { FAKE_PIN_STATUS: '1' }, calls: ['version', pin, 'restart'], stderr: /Could not pin/ },
+  ]) {
+    const home = join(directory, scenario.name.replaceAll(' ', '-'));
+    mkdirSync(scenario.installed ? join(home, 'packages', 'app-server-daemon', 'current') : home, { recursive: true });
+    rmSync(log, { force: true });
+    const result = spawnSync(process.execPath, [join(root, 'scripts', 'codex-daemon.mjs'), home, ...(scenario.flags ?? [])], {
+      encoding: 'utf8', timeout: 30000,
+      env: { ...process.env, PATH: bin + (windows ? ';' : ':') + process.env.PATH, FAKE_CODEX_LOG: log,
+        FAKE_DAEMON: scenario.daemon ?? '', CODEX_ROUTER_PIN_DAEMON: '', CODEX_ROUTER_RESTART_DAEMON: '', ...scenario.env },
+    });
+    assert.equal(result.status, 0, `${scenario.name}: ${result.stderr}`);
+    const calls = readFileSync(log, 'utf8').trim().split(/\r?\n/).map(call => call.replace(/^app-server daemon /, ''));
+    assert.deepEqual(calls, scenario.calls, scenario.name);
+    if (scenario.stdout) assert.match(result.stdout, scenario.stdout, scenario.name);
+    if (scenario.stderr) assert.match(result.stderr, scenario.stderr, scenario.name);
+  }
+});
+
+test('the daemon check fails while the daemon updates itself or runs another Codex than the CLI', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-daemon-verify-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const bin = fakeDaemonCodex(directory);
+  const home = join(directory, 'codex-home');
+  const packageRoot = join(home, 'packages', 'app-server-daemon');
+  mkdirSync(join(packageRoot, 'current'), { recursive: true });
+  const check = (env = {}) => spawnSync(process.execPath, [join(root, 'scripts', 'codex-daemon.mjs'), '--verify', home], {
+    encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, PATH: bin + (windows ? ';' : ':') + process.env.PATH, FAKE_CODEX_LOG: join(directory, 'calls.log'),
+      FAKE_DAEMON: 'running', CODEX_ROUTER_PIN_DAEMON: '', ...env },
+  });
+  assert.equal(check().status, 0, check().stderr);
+  const drifted = check({ FAKE_MANAGED_VERSION: '0.165.0' });
+  assert.equal(drifted.status, 1);
+  assert.match(drifted.stderr, /runs Codex 0\.165\.0, but the CLI is 0\.164\.0/);
+  writeFileSync(join(packageRoot, 'auto-update-version'), '0.164.0-aarch64-apple-darwin');
+  const unpinned = check();
+  assert.equal(unpinned.status, 1);
+  assert.match(unpinned.stderr, /updates itself instead of following the CLI/);
+  assert.equal(check({ CODEX_ROUTER_PIN_DAEMON: '0' }).status, 0);
+  rmSync(packageRoot, { recursive: true });
+  assert.equal(check({ FAKE_DAEMON: '' }).status, 0);
 });

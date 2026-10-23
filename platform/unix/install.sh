@@ -49,11 +49,12 @@ if [[ -n "$api_key_file" && "$change_api_key" -eq 1 ]]; then
   usage_error 'Use either --api-key-file or --change-api-key, not both.'
 fi
 
-restart_daemon="${CODEX_ROUTER_RESTART_DAEMON:-1}"
-if [[ "$restart_daemon" != 0 && "$restart_daemon" != 1 ]]; then
-  printf 'CODEX_ROUTER_RESTART_DAEMON must be 0 or 1\n' >&2
-  exit 2
-fi
+for setting in CODEX_ROUTER_RESTART_DAEMON CODEX_ROUTER_PIN_DAEMON; do
+  if [[ "${!setting:-1}" != 0 && "${!setting:-1}" != 1 ]]; then
+    printf '%s must be 0 or 1\n' "$setting" >&2
+    exit 2
+  fi
+done
 
 native_models="${CODEX_ROUTER_NATIVE_MODELS:-auto}"
 case "$native_models" in
@@ -346,19 +347,12 @@ run_by_codex_daemon() {
   return 1
 }
 
-# The shared app-server daemon keeps the configuration and catalog it started
-# with. Restarting it interrupts its open sessions, so skip it when it is not
-# running, when Codex itself runs this installer, or when asked not to.
-if [[ "$service" -eq 1 && "$restart_daemon" -eq 1 ]] \
-    && node -e 'process.exit(JSON.parse(process.argv[1]).status === "running" ? 0 : 1)' \
-      "$(codex app-server daemon version 2>/dev/null)" 2>/dev/null; then
-  if run_by_codex_daemon; then
-    printf 'Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart\n' >&2
-  elif step "Restarting the Codex app-server daemon" && codex app-server daemon restart >/dev/null 2>&1; then
-    printf 'Restarted the Codex app-server daemon.\n'
-  else
-    printf 'Could not restart the Codex app-server daemon. Run: codex app-server daemon restart\n' >&2
-  fi
+# Restart the shared app-server daemon so it loads the new configuration, and
+# pin it to the CLI's Codex; codex-daemon.mjs explains when it skips either.
+if [[ "$service" -eq 1 ]]; then
+  daemon_flag=""
+  if run_by_codex_daemon; then daemon_flag=--codex-runs-installer; fi
+  node "$repo_dir/scripts/codex-daemon.mjs" "$codex_home" ${daemon_flag:+"$daemon_flag"}
 fi
 
 printf 'Installed the Codex Unified Model Router in %s\n' "$codex_home"

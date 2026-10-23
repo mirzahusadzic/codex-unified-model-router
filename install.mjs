@@ -50,6 +50,9 @@ Environment:
                                   or 0 to leave it to Codex
   CODEX_ROUTER_RESTART_DAEMON     1 (default) restarts a running Codex daemon
                                   so it loads the new settings; 0 skips it
+  CODEX_ROUTER_PIN_DAEMON         1 (default) pins the Codex daemon to the
+                                  CLI's Codex so it stops updating itself;
+                                  0 leaves its updates to Codex
   OPENROUTER_API_KEY              OpenRouter key for automation; prefer
                                   --api-key-file, which stays out of the
                                   environment

@@ -55,9 +55,11 @@ if ($ApiKeyFile -and $ChangeApiKey) {
     Fail-Install "Use either -ApiKeyFile or -ChangeApiKey, not both.`nRun 'node install.mjs --help' for usage." 2
 }
 
-$RestartDaemon = if ($env:CODEX_ROUTER_RESTART_DAEMON) { $env:CODEX_ROUTER_RESTART_DAEMON } else { '1' }
-if ($RestartDaemon -notin @('0', '1')) {
-    Fail-Install 'CODEX_ROUTER_RESTART_DAEMON must be 0 or 1' 2
+foreach ($Setting in @('CODEX_ROUTER_RESTART_DAEMON', 'CODEX_ROUTER_PIN_DAEMON')) {
+    $Value = [Environment]::GetEnvironmentVariable($Setting)
+    if ($Value -and $Value -notin @('0', '1')) {
+        Fail-Install "$Setting must be 0 or 1" 2
+    }
 }
 $NativeModels = if ($env:CODEX_ROUTER_NATIVE_MODELS) { $env:CODEX_ROUTER_NATIVE_MODELS } else { 'auto' }
 if ($NativeModels -notin @('auto', 'show', 'hide')) {
@@ -285,36 +287,21 @@ goto run
             throw "The Codex Unified Model Router was installed but did not become healthy. Check $RouterErrorLog."
         }
 
-        # The shared app-server daemon keeps the configuration and catalog it
-        # started with. Restarting it interrupts its open sessions, so skip it
-        # when it is not running, when Codex itself runs this installer, or
-        # when asked not to.
-        $DaemonState = $null
-        if ($RestartDaemon -eq '1') {
-            try { $DaemonState = ((& codex app-server daemon version 2>$null) -join "`n" | ConvertFrom-Json).status } catch { }
+        # Restart the shared app-server daemon so it loads the new
+        # configuration, and pin it to the CLI's Codex; codex-daemon.mjs
+        # explains when it skips either.
+        $RunByDaemon = $false
+        $Ancestor = $PID
+        for ($Depth = 0; $Depth -lt 64 -and $Ancestor; $Depth += 1) {
+            $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$Ancestor" -ErrorAction SilentlyContinue
+            if (-not $Process) { break }
+            if ($Process.CommandLine -and $Process.CommandLine -match '(?i)(^|[\\/"])codex(\.exe)?"?\s+app-server(\s|$)') { $RunByDaemon = $true; break }
+            if ($Process.ParentProcessId -eq $Ancestor) { break }
+            $Ancestor = $Process.ParentProcessId
         }
-        if ($DaemonState -eq 'running') {
-            $RunByDaemon = $false
-            $Ancestor = $PID
-            for ($Depth = 0; $Depth -lt 64 -and $Ancestor; $Depth += 1) {
-                $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$Ancestor" -ErrorAction SilentlyContinue
-                if (-not $Process) { break }
-                if ($Process.CommandLine -and $Process.CommandLine -match '(?i)(^|[\\/"])codex(\.exe)?"?\s+app-server(\s|$)') { $RunByDaemon = $true; break }
-                if ($Process.ParentProcessId -eq $Ancestor) { break }
-                $Ancestor = $Process.ParentProcessId
-            }
-            if ($RunByDaemon) {
-                [Console]::Error.WriteLine('Codex is running this installer, so its daemon was not restarted. Afterwards run: codex app-server daemon restart')
-            } else {
-                Write-Step 'Restarting the Codex app-server daemon'
-                & codex app-server daemon restart *> $null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host 'Restarted the Codex app-server daemon.'
-                } else {
-                    [Console]::Error.WriteLine('Could not restart the Codex app-server daemon. Run: codex app-server daemon restart')
-                }
-            }
-        }
+        $DaemonArgs = @((Join-Path $RepoDir 'scripts\codex-daemon.mjs'), $CodexHome)
+        if ($RunByDaemon) { $DaemonArgs += '--codex-runs-installer' }
+        & node @DaemonArgs
     }
 }
 finally {

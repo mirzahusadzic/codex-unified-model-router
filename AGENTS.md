@@ -21,6 +21,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 | Catalog generation and prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
 | Managed Codex settings and TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
 | Installation or service startup | `install.mjs` (entry point), `platform/unix/install.sh`, `platform/windows/install.ps1` |
+| Codex daemon restart and pinning | `scripts/codex-daemon.mjs` |
 | Tested Codex version | `testedCodexVersion` in `install.mjs` and the references in docs; see [Upgrade Codex](#upgrade-codex) |
 
 For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
@@ -40,12 +41,13 @@ After editing the maintained prompts or adding an OpenRouter entry, run `node sc
 - Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, keep Ultra Spark spawning workers with `fork_context: false` (as a backstop, the router refuses Muse and other non-Ultra Spark training-tier requests from spawned agents that carry tool call IDs from an Ultra Spark main thread), and never let native OpenAI and training-tier models share a session.
 - Keep Codex analytics and the OpenAI-hosted guardian reviewer off by default, and never send router data to third parties.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
+- Pin the Codex app-server daemon to the CLI's Codex by default, and never restart it when Codex runs the installer or when restarts are turned off.
 
 ## Upgrade Codex
 
-The tested version is `testedCodexVersion` in `install.mjs`. The app-server daemon updates its own copy of Codex, so compare `codex --version` with `codex app-server daemon version`; the daemon can run a new release before the CLI does.
+The tested version is `testedCodexVersion` in `install.mjs`. The installer pins the app-server daemon to the CLI's Codex; unpinned, the daemon updates itself and can run a new release before the CLI does, so compare `codex --version` with `codex app-server daemon version`.
 
-1. Diff `rust-v<old>..rust-v<new>` in `openai/codex` for what the router relies on: the `session-id` and `thread-id` headers (a main thread's ID equals its session ID), the native header allowlist in `upstreamHeaders`, request fields and input item types, `spawn_agent`'s `fork_context`, the keys `scripts/merge-config.mjs` writes, guardian gating, and the `codex app-server daemon` `version` and `restart` commands.
+1. Diff `rust-v<old>..rust-v<new>` in `openai/codex` for what the router relies on: the `session-id` and `thread-id` headers (a main thread's ID equals its session ID), the native header allowlist in `upstreamHeaders`, request fields and input item types, `spawn_agent`'s `fork_context`, the keys `scripts/merge-config.mjs` writes, guardian gating, and the `codex app-server daemon` `version`, `restart`, and `update --from-cli` commands with the `auto-update-version` marker that `scripts/codex-daemon.mjs` checks.
 2. Compare `codex debug models --bundled` from both versions with `CODEX_HOME` set to a scratch directory. If templates changed, update the catalog entries, their `.license` files, and `NOTICE`.
 3. In a scratch `CODEX_HOME`, point a provider at a local capture server and compare what both versions send for a fresh OpenRouter thread and for a thread that switches from a native model to an OpenRouter model. Then send the same turns through the installed router with `codex exec -c model_provider=...`. Resume by session ID, because `resume --last` does not find a session recorded under another provider. Pass `-m` explicitly and keep test traffic off Muse and Ultra Spark.
 4. Fix incompatibilities in the router with a regression test. Update every tested-version reference, including escaped ones in test regexes such as `0\.163\.0` (`git grep -n 163` finds both forms), but keep statements about the version that introduced a behavior. Run `node --test`, the installer, and `node install.mjs --verify`.

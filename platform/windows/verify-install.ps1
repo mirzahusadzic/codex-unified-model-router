@@ -62,6 +62,8 @@ if (-not $NoService) {
     if ($LASTEXITCODE -ne 0) {
         throw 'The Codex Unified Model Router health check failed.'
     }
+    & node (Join-Path $ScriptsDir 'codex-daemon.mjs') --verify $CodexHome
+    if ($LASTEXITCODE -ne 0) { throw 'The Codex app-server daemon is not pinned to the CLI.' }
 }
 
 Write-Host 'Install looks valid.'

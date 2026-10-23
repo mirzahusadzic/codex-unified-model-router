@@ -40,7 +40,7 @@ node install.mjs
 
 `install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, `-ChangeApiKey`, and `-ApiKeyFile` when run directly.
 
-Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, and `CODEX_ROUTER_AGENT_THREADS` values.
+Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, `CODEX_ROUTER_AGENT_THREADS`, and `CODEX_ROUTER_PIN_DAEMON` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -57,6 +57,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | `CODEX_ROUTER_DISABLE_ANALYTICS` | `1` (default), `0` | `1` turns off Codex analytics; `0` leaves them to you. See [Codex analytics](#codex-analytics). |
 | `CODEX_ROUTER_AGENT_THREADS` | `10` (default), `1`–`999`, `0` | Spawned-agent limit per session; `0` leaves it to Codex. See [Spawned-agent limit](#spawned-agent-limit). |
 | `CODEX_ROUTER_RESTART_DAEMON` | `1` (default), `0` | `0` skips restarting a running Codex app-server daemon. See [Activate the provider](#activate-the-provider). |
+| `CODEX_ROUTER_PIN_DAEMON` | `1` (default), `0` | `1` pins the Codex app-server daemon to the CLI's Codex, so it stops updating itself; `0` leaves its updates to Codex. See [Daemon updates](#daemon-updates). |
 
 ### Codex version
 
@@ -66,7 +67,19 @@ The router is tested with Codex **0.164.0**. Newer versions can change what it r
 npm install -g @openai/codex@0.164.0
 ```
 
-`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version. The daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home directory and can update it separately from the CLI; `codex app-server daemon version` shows both versions. After any Codex update, rerun `node install.mjs` to rebuild the catalog from the new bundled models, then run `node install.mjs --verify`.
+`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version; `codex app-server daemon version` shows both. To change Codex versions, install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, and then run `node install.mjs --verify`.
+
+#### Daemon updates
+
+The shared app-server daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home directory. Unless it is pinned, the daemon checks chatgpt.com hourly and replaces that copy with each new release, ahead of the CLI and of the version this router is tested with. A release can change what the router relies on, as 0.164.0 did for threads that switch from a native model to DeepSeek. The installer therefore pins the daemon to the CLI's Codex by default:
+
+```sh
+codex app-server daemon update --from-cli --yes
+```
+
+This is the safe option: the daemon runs the same version as the CLI, never updates itself, and changes only when you update the CLI and rerun the installer. Pinning restarts a running daemon, so the installer skips it with `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0` while the daemon runs, and when Codex itself runs the installer, and prints the command to run instead. A stopped daemon is pinned without starting it. One that Codex has not installed yet is not pinned; rerun the installer after Codex first starts it. Pinning needs a packaged CLI, such as the npm package; if it fails, the installer warns and restarts the daemon instead. The verifier fails while the daemon updates itself or runs a different version from the CLI.
+
+To let the daemon update itself again, install with `CODEX_ROUTER_PIN_DAEMON=0` and run `codex app-server daemon update`, which returns it to production updates. Run the verifier with the same setting.
 
 ### Existing configuration
 
@@ -80,7 +93,7 @@ The router runs under launchd on macOS, `systemd --user` on Linux, and a hidden 
 
 Restart Codex windows that were open before installation and start a new thread; existing threads keep the provider they were created with.
 
-The shared Codex app-server daemon keeps the configuration and catalog it started with, so the installer restarts it when it is running, which interrupts work in its open sessions. The installer skips the restart with `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0`, and when Codex itself runs the installer, which the restart would interrupt. In those cases, restart it yourself once:
+The shared Codex app-server daemon keeps the configuration and catalog it started with, so the installer restarts it when it is running, which interrupts work in its open sessions. It does so by pinning the daemon to the CLI's Codex; see [Daemon updates](#daemon-updates). The installer skips the restart with `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0`, and when Codex itself runs the installer, which the restart would interrupt. In those cases, restart it yourself once, or run `codex app-server daemon update --from-cli --yes` to pin and restart it:
 
 ```sh
 codex app-server daemon restart

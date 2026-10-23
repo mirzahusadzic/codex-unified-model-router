@@ -42,6 +42,7 @@ node "$script_dir/verify-catalog.mjs" "$codex_home/models.json"
 
 if [[ "$check_service" -eq 1 ]]; then
   node "$script_dir/verify-health.mjs" "$codex_home/unified-router/router.mjs" http://127.0.0.1:18766/health
+  node "$script_dir/codex-daemon.mjs" --verify "$codex_home"
   case "$platform" in
     Darwin)
       if ! launchctl print "gui/$(id -u)/$service_label" >/dev/null; then

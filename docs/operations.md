@@ -1,6 +1,6 @@
 # Services and troubleshooting
 
-The router and Codex's app-server daemon are separate processes. Restart the router after updating its installed code or service environment. The installer restarts a running Codex daemon so it reloads provider configuration and the catalog; restart it yourself after `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0`, or a manual configuration change.
+The router and Codex's app-server daemon are separate processes. Restart the router after updating its installed code or service environment. The installer restarts a running Codex daemon so it reloads provider configuration and the catalog, and pins it to the CLI's Codex so it stops updating itself (see [Daemon updates](setup.md#daemon-updates)); restart it yourself after `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0`, or a manual configuration change.
 
 ## Verify an installation
 
@@ -8,7 +8,7 @@ The router and Codex's app-server daemon are separate processes. Restart the rou
 node install.mjs --verify
 ```
 
-The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, local health, and platform startup setup. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
+The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, local health, platform startup setup, and that the Codex daemon is pinned to the CLI's Codex. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
 
 ## Service management
 
@@ -121,7 +121,7 @@ Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-rout
 
 | Symptom | Check |
 | --- | --- |
-| Something broke after a Codex update | Check `codex --version` and `codex app-server daemon version` against the tested version in [Codex version](setup.md#codex-version). Install it with `npm install -g @openai/codex@0.164.0`, then rerun `node install.mjs`. |
+| Something broke after a Codex update | Check `codex --version` and `codex app-server daemon version` against the tested version in [Codex version](setup.md#codex-version). Install it with `npm install -g @openai/codex@0.164.0`, then rerun `node install.mjs`, which also pins the daemon to that version. |
 | A new model is missing from `/model` | Rerun the installer to rebuild the catalog, then restart Codex. |
 | OpenAI models are missing from `/model` | They are hidden without an active ChatGPT plan. Install with `CODEX_ROUTER_NATIVE_MODELS=show` to list them anyway. |
 | Ultra Spark does not spawn workers | Select `ultra-spark/deepseek-v4.1-flash-1017` (shown as "· Ultra Spark") in a new thread, and rerun the installer so the catalog carries the current policy. Small single-step tasks run without workers by design. |
@@ -203,4 +203,4 @@ Restore `unified-openrouter.config.toml` as well if it is present in the chosen 
 
 If the backup contains `deepseek.config.toml.retired`, restore it as `deepseek.config.toml` only if you still use the old `--profile deepseek` setup.
 
-Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. When returning fully to the pre-router state, move `unified-router/` aside after confirming the restored configuration no longer references it, so the stored key, local token, isolation records, and generated service files are not left behind. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.
+Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. When returning fully to the pre-router state, move `unified-router/` aside after confirming the restored configuration no longer references it, so the stored key, local token, isolation records, and generated service files are not left behind. The installer pinned Codex's daemon to the CLI's Codex; run `codex app-server daemon update` to return it to production updates. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.
