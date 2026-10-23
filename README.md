@@ -3,7 +3,7 @@
 [![CI](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
-![Codex CLI 0.163](https://img.shields.io/badge/Codex%20CLI-0.163-111111)
+![Codex CLI 0.164](https://img.shields.io/badge/Codex%20CLI-0.164-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
 Run Codex on DeepSeek, Meta's Muse Spark 1.3 Contributor, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
@@ -104,10 +104,10 @@ flowchart LR
 
 ## Install
 
-Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
+Requires Codex CLI (tested with **0.164.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
 
 ```sh
-npm install -g @openai/codex@0.163.0    # skip if you already have Codex 0.163.0
+npm install -g @openai/codex@0.164.0    # skip if you already have Codex 0.164.0
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
 node install.mjs                        # asks for your OpenRouter API key on the first install

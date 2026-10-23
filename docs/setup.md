@@ -60,10 +60,10 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 
 ### Codex version
 
-The router is tested with Codex **0.163.0**. Newer versions can change what it relies on, such as request headers and catalog templates; Codex 0.163.0 itself renamed the `session_id` header to `session-id`. To install the tested version:
+The router is tested with Codex **0.164.0**. Newer versions can change what it relies on, such as request headers, history items, and catalog templates: Codex 0.163.0 renamed the `session_id` header to `session-id`, and Codex 0.164.0 began recording native models' tool declarations in thread history. To install the tested version:
 
 ```sh
-npm install -g @openai/codex@0.163.0
+npm install -g @openai/codex@0.164.0
 ```
 
 `node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version. The daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home directory and can update it separately from the CLI; `codex app-server daemon version` shows both versions. After any Codex update, rerun `node install.mjs` to rebuild the catalog from the new bundled models, then run `node install.mjs --verify`.
@@ -211,7 +211,7 @@ As a backstop, the router detects workers forked with the lead's history by thei
 
 - a fork made before the lead's first tool call;
 - an Ultra Spark lead that is itself a spawned agent rather than a main thread;
-- requests without both a session ID and a thread ID, which Codex 0.163 sends as `session-id` and `thread-id`;
+- requests without both a session ID and a thread ID, which Codex 0.163 and later send as `session-id` and `thread-id`;
 - the lead's IDs that aged out of the most recent 4,096 kept per session, or were forgotten when the router restarted, until the lead's next request records them again.
 
 ### Add a model
@@ -293,7 +293,7 @@ codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017
 codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
 ```
 
-Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.163.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
+Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.164.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
 
 ### Router capabilities
 
@@ -339,7 +339,7 @@ Tests use synthetic upstream responses and need no API credentials. Live provide
 
 This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.163.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse and Ultra Spark entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.164.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse and Ultra Spark entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in the installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 

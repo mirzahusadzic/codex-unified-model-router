@@ -198,8 +198,8 @@ test('install.mjs warns, without stopping, when Codex differs from the tested ve
       OPENROUTER_API_KEY: 'synthetic-install-key', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /tested with Codex 0\.163\.0, but the Codex CLI is 9\.9\.9/);
-  assert.match(result.stderr, /npm install -g @openai\/codex@0\.163\.0/);
+  assert.match(result.stderr, /tested with Codex 0\.164\.0, but the Codex CLI is 9\.9\.9/);
+  assert.match(result.stderr, /npm install -g @openai\/codex@0\.164\.0/);
 });
 
 test('install.mjs --help lists every installer setting in docs/setup.md, and errors point to it', () => {

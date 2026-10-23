@@ -126,7 +126,7 @@ const windows = process.platform === 'win32';
 // Codex can change request headers and catalog templates between versions.
 // Warn, without stopping, when the CLI or the shared app-server daemon, which
 // keeps and may update its own copy of Codex, differs from the tested version.
-const testedCodexVersion = '0.163.0';
+const testedCodexVersion = '0.164.0';
 function codex(commandArgs) {
   const run = spawnSync('codex', commandArgs, { encoding: 'utf8', shell: windows, timeout: 15000 });
   return run.status === 0 ? run.stdout : '';
