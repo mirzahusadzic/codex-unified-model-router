@@ -129,6 +129,8 @@ const windows = process.platform === 'win32';
 // Codex can change request headers and catalog templates between versions.
 // Warn, without stopping, when the CLI or the shared app-server daemon, which
 // keeps and may update its own copy of Codex, differs from the tested version.
+// An installation with a service pins the daemon to the CLI's Codex unless
+// asked not to, so only the CLI's version matters then.
 const testedCodexVersion = '0.164.0';
 function codex(commandArgs) {
   const run = spawnSync('codex', commandArgs, { encoding: 'utf8', shell: windows, timeout: 15000 });
@@ -139,14 +141,15 @@ let daemon = null;
 try {
   daemon = JSON.parse(codex(['app-server', 'daemon', 'version']));
 } catch {}
-const versionNotes = [
-  cliVersion && cliVersion !== testedCodexVersion && `the Codex CLI is ${cliVersion}`,
-  daemon?.status === 'running' && typeof daemon.appServerVersion === 'string'
-    && daemon.appServerVersion !== testedCodexVersion && `the Codex app-server daemon runs ${daemon.appServerVersion}`,
-].filter(Boolean);
-if (versionNotes.length > 0) {
-  console.error(`Warning: this router is tested with Codex ${testedCodexVersion}, but ${versionNotes.join(' and ')}.`
-    + ` To match it: npm install -g @openai/codex@${testedCodexVersion}`);
+const pinsDaemon = !options.verify && !options.noService && (process.env.CODEX_ROUTER_PIN_DAEMON || '1') === '1';
+const cliNote = cliVersion && cliVersion !== testedCodexVersion && `the Codex CLI is ${cliVersion}`;
+const daemonNote = !pinsDaemon && daemon?.status === 'running' && typeof daemon.appServerVersion === 'string'
+  && daemon.appServerVersion !== testedCodexVersion && `the Codex app-server daemon runs ${daemon.appServerVersion}`;
+if (cliNote || daemonNote) {
+  const fixes = [cliNote && `npm install -g @openai/codex@${testedCodexVersion}`,
+    daemonNote && 'codex app-server daemon update --from-cli --yes'].filter(Boolean);
+  console.error(`Warning: this router is tested with Codex ${testedCodexVersion}, but ${[cliNote, daemonNote].filter(Boolean).join(' and ')}.`
+    + ` To match it: ${fixes.join(', then ')}`);
 }
 
 const script = join(fileURLToPath(new URL('.', import.meta.url)), 'platform', windows ? 'windows' : 'unix',

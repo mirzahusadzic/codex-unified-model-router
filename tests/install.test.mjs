@@ -264,9 +264,12 @@ function fakeDaemonCodex(directory) {
   writeFileSync(join(bin, 'fake-codex.mjs'), `import { appendFileSync } from 'node:fs';
 const args = process.argv.slice(2).join(' ');
 appendFileSync(process.env.FAKE_CODEX_LOG, args + '\\n');
-if (args === 'app-server daemon version') {
+if (args === '--version') {
+  console.log('codex-cli 0.164.0');
+} else if (args === 'app-server daemon version') {
   if (process.env.FAKE_DAEMON !== 'running') process.exit(1);
-  console.log(JSON.stringify({ status: 'running', managedCodexVersion: process.env.FAKE_MANAGED_VERSION || '0.164.0', cliVersion: '0.164.0' }));
+  const managed = process.env.FAKE_MANAGED_VERSION || '0.164.0';
+  console.log(JSON.stringify({ status: 'running', managedCodexVersion: managed, appServerVersion: managed, cliVersion: '0.164.0' }));
 } else if (args === 'app-server daemon update --from-cli --yes') {
   process.exit(Number(process.env.FAKE_PIN_STATUS || 0));
 }
@@ -306,6 +309,22 @@ test('the daemon step pins the daemon to the CLI, restarts it only when allowed,
     if (scenario.stdout) assert.match(result.stdout, scenario.stdout, scenario.name);
     if (scenario.stderr) assert.match(result.stderr, scenario.stderr, scenario.name);
   }
+});
+
+test('install.mjs suggests pinning a daemon on another Codex when it does not pin the daemon itself', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-daemon-version-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  mkdirSync(home);
+  const bin = fakeDaemonCodex(directory);
+  // Verification never pins, so the daemon's version is reported with the command that pins it.
+  const result = spawnSync(process.execPath, [join(root, 'install.mjs'), '--verify', '--no-service'], {
+    encoding: 'utf8', timeout: 60000,
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      FAKE_CODEX_LOG: join(directory, 'calls.log'), FAKE_DAEMON: 'running', FAKE_MANAGED_VERSION: '0.163.0' },
+  });
+  assert.match(result.stderr, /^Warning: this router is tested with Codex 0\.164\.0, but the Codex app-server daemon runs 0\.163\.0\. To match it: codex app-server daemon update --from-cli --yes$/m);
+  assert.doesNotMatch(result.stderr, /npm install/);
 });
 
 test('the daemon check fails while the daemon updates itself or runs another Codex than the CLI', t => {
