@@ -148,6 +148,20 @@ Use `node install.mjs --verify --no-service` to validate those files. The instal
 
 The installer prints the backup directory for each run. Stop the running router and its automatic startup before restoring files. The installer backs up Codex configuration and catalog files, but not `unified-router/router.mjs` or `unified-router/openrouter.env`; keep a copy of a router revision and its credentials before upgrading if you need to return to them.
 
+### Return to an earlier Codex version
+
+Each `codex-<version>` tag marks the last router commit verified with that Codex version, such as `codex-0.163.0`; `git tag -l 'codex-*'` lists them. To fall back, install that Codex CLI, check out the matching tag, reinstall, and pin the daemon to the CLI:
+
+```sh
+npm install -g @openai/codex@0.163.0
+git checkout codex-0.163.0
+node install.mjs
+codex app-server daemon update --from-cli --yes
+node install.mjs --verify
+```
+
+Installers before `codex-0.164.0` do not pin the daemon, and a daemon pinned by a later installer otherwise keeps the later Codex; the `update --from-cli` step pins it to the CLI you installed. The stored key, local token, and isolation records stay in place. To return, run `git checkout main`, install the Codex version it is tested with, and rerun `node install.mjs`.
+
 ### Stop automatic startup
 
 On macOS:

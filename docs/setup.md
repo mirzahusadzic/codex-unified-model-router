@@ -67,7 +67,7 @@ The router is tested with Codex **0.164.0**. Newer versions can change what it r
 npm install -g @openai/codex@0.164.0
 ```
 
-`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version; `codex app-server daemon version` shows both. To change Codex versions, install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, and then run `node install.mjs --verify`.
+`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version; `codex app-server daemon version` shows both. To change Codex versions, install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, and then run `node install.mjs --verify`. Tags named `codex-<version>` mark the last router commit verified with each Codex version; see [Return to an earlier Codex version](operations.md#return-to-an-earlier-codex-version).
 
 #### Daemon updates
 
