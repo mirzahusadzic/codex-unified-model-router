@@ -56,7 +56,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 
 ### Tests
 
-`node --test` runs every `.test.mjs` file on macOS, Linux, and Windows; [CI](.github/workflows/ci.yml) covers all three. The tests use synthetic upstreams and need no credentials or network.
+`node --test` runs every `.test.mjs` file on macOS, Linux, and Windows; [CI](.github/workflows/ci.yml) covers all three. The tests use synthetic upstreams and need no credentials or network. `tests/prompt-budget.test.mjs` also needs the tested Codex CLI and skips without it, as in CI.
 
 | Test file | Covers | Platforms |
 | --- | --- | --- |
@@ -67,6 +67,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary and verifier report, the help text and argument errors, the daemon restart and pin step, and that the Unix scripts need no `jq`. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
 | `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
+| `tests/prompt-budget.test.mjs` | What the installed Codex sends router models under the installer's configuration, through a local fake upstream: the tool list, request and tool-definition sizes, the features it turns on, and that apps and guardian stay off. Skips without the tested Codex CLI or reviewed expectations for the platform. | macOS (reviewed); others skip |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
 
 ## Making changes
