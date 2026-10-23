@@ -26,17 +26,27 @@ for arg in "$@"; do
   esac
 done
 
-test -f "$codex_home/config.toml"
-test -f "$codex_home/unified-openrouter.config.toml"
-test -f "$codex_home/models.json"
-test -f "$codex_home/unified-router/router.mjs"
+for file in "$codex_home/config.toml" "$codex_home/unified-openrouter.config.toml" \
+    "$codex_home/models.json" "$codex_home/unified-router/router.mjs"; do
+  if [[ ! -f "$file" ]]; then
+    printf 'Missing required file: %s\n' "$file" >&2
+    exit 1
+  fi
+done
 node "$script_dir/verify-credentials.mjs" "$codex_home"
 
-grep -q '# BEGIN codex-unified-router managed keys' "$codex_home/config.toml"
-grep -q '^model_provider = "unified"$' "$codex_home/config.toml"
-grep -q '^\[model_providers\.unified\]$' "$codex_home/config.toml"
-grep -q '^requires_openai_auth = true$' "$codex_home/config.toml"
-grep -q '^supports_websockets = false$' "$codex_home/config.toml"
+# The last argument is the expected text; the others are grep options.
+require_config() {
+  if ! grep -q "$@" "$codex_home/config.toml"; then
+    printf 'Config is missing: %s\n' "${@: -1}" >&2
+    exit 1
+  fi
+}
+require_config -F '# BEGIN codex-unified-router managed keys'
+require_config -xF 'model_provider = "unified"'
+require_config -xF '[model_providers.unified]'
+require_config -xF 'requires_openai_auth = true'
+require_config -xF 'supports_websockets = false'
 
 node "$script_dir/verify-catalog.mjs" "$codex_home/models.json"
 

@@ -332,3 +332,17 @@ test('the daemon check fails while the daemon updates itself or runs another Cod
   rmSync(packageRoot, { recursive: true });
   assert.equal(check({ FAKE_DAEMON: '' }).status, 0);
 });
+
+test('the verifier names what is missing from an incomplete installation', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-verify-missing-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  mkdirSync(home);
+  const verify = () => spawnSync(windows ? 'powershell.exe' : 'bash', windows
+    ? ['-NoProfile', '-File', platformScript('verify-install'), '-NoService']
+    : [platformScript('verify-install'), '--no-service'],
+  { encoding: 'utf8', timeout: 30000, env: { ...process.env, HOME: directory, CODEX_HOME: home } });
+  const missing = verify();
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Missing required file: .*config\.toml/);
+});
