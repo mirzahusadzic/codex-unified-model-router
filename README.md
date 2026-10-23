@@ -100,6 +100,8 @@ flowchart LR
     class TT trainingTier
 ```
 
+*Read it left to right. Codex sends every request to the router, and the label on each arrow says which requests take that route. The dotted line marks a separation: the training tier never shares a Codex session with the native OpenAI backend.*
+
 ## Install
 
 Requires Codex CLI (tested with **0.163.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
