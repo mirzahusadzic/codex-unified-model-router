@@ -57,7 +57,7 @@ The router emits newline-delimited JSON on every platform. Logging defaults to `
 
 - `router.ready` and `router.shutdown`: listener address, OpenRouter key availability, running source `revision`, and shutdown signal.
 - `request.forwarded`: model route, attempt, payload SHA-256, routing policy, `providerOrder` when an endpoint preference applies, `structuredOutputAdapted` when a DeepSeek schema request was sent as JSON mode, whether unsupported OpenRouter response state was reset, payload byte length, input item count, and any tool-history repair summary.
-- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records normalized before an OpenRouter request.
+- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records, and native tool declarations, normalized before an OpenRouter request.
 - `openrouter.request_rejected`: pre-stream OpenRouter HTTP 400 details, including payload hash, input count, generation and request identifiers, `contextOverflow`, and the response-body hash without the body itself.
 - `session.provider_isolation`: a request was refused because its session already used the other side; includes the recorded and requested sides. `session.isolation_persist_failed` reports that the side record could not be saved.
 - `openrouter.rejection_capture_failed` and `openrouter.rejection_capture_refused`: an opted-in body capture could not be written, or was refused because its Windows location is not the private router directory.

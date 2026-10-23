@@ -578,7 +578,32 @@ test('OpenRouter tool history drops invalid records and keeps one ordered output
     droppedUnansweredCalls: 1,
     droppedOrphanOutputs: 1,
     droppedDuplicateOutputs: 1,
+    droppedToolDeclarations: 0,
   });
+});
+
+test('OpenRouter drops native tool declarations after a switch from a Responses Lite model', async () => {
+  const declarations = {
+    type: 'additional_tools',
+    id: 'at_native',
+    role: 'developer',
+    tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object', properties: {} } }],
+  };
+  const developer = { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'Be brief.' }] };
+  const user = { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Continue.' }] };
+  const tools = [{ type: 'function', name: 'lookup', parameters: { type: 'object', properties: {} } }];
+
+  const upstream = await send({
+    model: 'deepseek/deepseek-v4.1-flash-1017', input: [declarations, developer, user], tools,
+  });
+  assert.deepEqual(upstream.body.input, [developer, user]);
+  assert.deepEqual(upstream.body.tools, tools);
+  const repaired = parsedLogEntries().filter(entry => entry.event === 'history.repaired').at(-1);
+  assert.equal(repaired.droppedToolDeclarations, 1);
+
+  // Native requests keep them: the Codex backend accepts its own declarations.
+  const native = await send({ model: 'gpt-6-sol', input: [declarations, developer, user] });
+  assert.deepEqual(native.body.input, [declarations, developer, user]);
 });
 
 test('OpenRouter keeps sequential tool rounds separate and orders parallel outputs by call', async () => {

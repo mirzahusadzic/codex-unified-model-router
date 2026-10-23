@@ -267,6 +267,7 @@ function normalizeToolHistoryForOpenRouter(input) {
     droppedUnansweredCalls: 0,
     droppedOrphanOutputs: 0,
     droppedDuplicateOutputs: 0,
+    droppedToolDeclarations: 0,
   };
   if (!Array.isArray(input)) return { input, repairs };
 
@@ -341,7 +342,11 @@ function normalizeToolHistoryForOpenRouter(input) {
       index = run.end + 1;
       continue;
     }
-    if (input[index]?.type !== 'function_call_output') normalized.push(input[index]);
+    // Codex 0.164 records Responses Lite tool declarations in the history of
+    // threads that used a native model. OpenRouter rejects these items, and the
+    // request's `tools` field already declares the selected model's tools.
+    if (input[index]?.type === 'additional_tools') repairs.droppedToolDeclarations += 1;
+    else if (input[index]?.type !== 'function_call_output') normalized.push(input[index]);
     index += 1;
   }
 
