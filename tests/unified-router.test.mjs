@@ -383,7 +383,8 @@ test('DeepSeek and other OpenRouter routes retain their reasoning history', asyn
 
 test('only DeepSeek reasoning efforts are remapped; other OpenRouter models keep standard efforts', async () => {
   for (const [requested, deepseek] of [
-    ['minimal', 'max'], ['low', 'low'], ['medium', 'high'], ['high', 'high'], ['xhigh', 'max'], ['max', 'max'],
+    ['minimal', 'low'], ['low', 'low'], ['medium', 'high'], ['high', 'high'], ['xhigh', 'max'], ['max', 'max'],
+    ['none', 'none'],
   ]) {
     for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017',
     'ultra-spark/deepseek-v4.1-flash-1017']) {

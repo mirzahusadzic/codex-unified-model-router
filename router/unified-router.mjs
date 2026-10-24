@@ -237,13 +237,15 @@ function adaptStructuredOutputForDeepSeek(request, model) {
   return instruction;
 }
 
-// DeepSeek accepts only low, high, max, and none. Other OpenRouter models take
-// OpenRouter's standard efforts, which it translates for each provider.
+// DeepSeek accepts only low, high, max, and none. Other efforts round up to the
+// next accepted level, so `minimal` keeps some reasoning instead of turning it
+// off. Other OpenRouter models take OpenRouter's standard efforts, which it
+// translates for each provider.
 function normalizeReasoningForOpenRouter(value, model) {
   if (!value || typeof value !== 'object' || value.effort == null || !model.startsWith('deepseek/')) return;
   const effort = String(value.effort);
   if (['low', 'high', 'max', 'none'].includes(effort)) return;
-  value.effort = effort === 'medium' ? 'high' : 'max';
+  value.effort = effort === 'minimal' ? 'low' : effort === 'medium' ? 'high' : 'max';
 }
 
 function normalizeStateForOpenRouter(request) {
