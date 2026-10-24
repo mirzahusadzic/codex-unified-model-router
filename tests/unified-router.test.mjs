@@ -655,12 +655,16 @@ test('OpenRouter retries one compacted history after a pre-stream 400', async t 
   const [primary, recovery] = forwarded.slice(before);
   assert.deepEqual(primary.body.input, recoveryHistory);
   assert.ok(recovery.body.input.length < primary.body.input.length);
+  const [notice] = recovery.body.input.splice(2, 1);
   assert.deepEqual(recovery.body.input, [
     recoveryHistory[0],
+    recoveryHistory[1],
     recoveryHistory[101],
     recoveryHistory[102],
     recoveryHistory[103],
   ]);
+  assert.equal(notice.role, 'developer');
+  assert.match(notice.content[0].text, /^\[router note\] .*omits earlier conversation items/);
 
   const entries = parsedLogEntries().slice(logsBefore);
   const rejected = entries.find(entry => entry.event === 'openrouter.request_rejected');
@@ -672,8 +676,9 @@ test('OpenRouter retries one compacted history after a pre-stream 400', async t 
   const retry = entries.find(entry => entry.event === 'openrouter.recovery_attempt');
   assert.equal(retry.attempt, 2);
   assert.equal(retry.compactionStrategy, 'latest-user-turn');
-  assert.equal(retry.inputItems, 4);
+  assert.equal(retry.inputItems, 6);
   assert.ok(retry.droppedItems > 0);
+  assert.equal(retry.omissionNotice, true);
   assert.match(retry.payloadSha256, /^[a-f0-9]{64}$/);
 });
 
@@ -706,13 +711,16 @@ test('DeepSeek structured-output recovery keeps the real developer instructions 
 test('OpenRouter recovery keeps a tool call paired with an output selected at the tail boundary', async t => {
   const call = { type: 'function_call', id: 'fc_boundary', call_id: 'call_boundary', name: 'exec_command', arguments: '{}' };
   const output = { type: 'function_call_output', id: 'fco_boundary', call_id: 'call_boundary', output: 'boundary result' };
+  // Four pinned items (the opening developer and user messages, the current
+  // user message, and room for the omission notice) leave a 76-item tail: the
+  // output and 75 newer items, so the tail begins between the call and its output.
   const history = [
     recoveryHistory[0],
     ...recoveryHistory.slice(1, 50),
     recoveryHistory.at(-3),
     call,
     output,
-    ...Array.from({ length: 77 }, (_, index) => ({
+    ...Array.from({ length: 75 }, (_, index) => ({
       type: 'message',
       id: `msg_after_output_${index}`,
       role: 'assistant',
@@ -817,11 +825,173 @@ test('OpenRouter recovery bounds a long latest turn that follows earlier turns',
   const input = recovery.body.input;
   assert.ok(recovery.byteLength < primary.byteLength / 2);
   assert.ok(Buffer.byteLength(JSON.stringify(input)) <= 1024 * 1024);
-  assert.deepEqual(input.slice(0, 2).map(item => item.id), ['msg_current_developer', 'msg_task']);
+  assert.deepEqual(input.slice(0, 2).map(item => item.id), ['msg_current_developer', 'msg_earlier_user']);
+  assert.match(input[2].content[0].text, /^\[router note\]/);
+  assert.equal(input[3].id, 'msg_task');
+  assert.equal(input.some(item => item.id === 'msg_earlier_reply'), false);
   assert.equal(input.at(-1).call_id, 'call_long_119');
   const callIds = new Set(input.filter(item => item.type === 'function_call').map(item => item.call_id));
   const outputIds = input.filter(item => item.type === 'function_call_output').map(item => item.call_id);
   assert.deepEqual(outputIds, [...callIds]);
+});
+
+test('OpenRouter recovery keeps the thread opening, including injected AGENTS.md, and says what it omitted', async t => {
+  const message = (id, role, text) => ({
+    type: 'message',
+    id,
+    role,
+    content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text }],
+  });
+  const opening = [
+    message('msg_permissions', 'developer', 'Sandbox and approval policy.'),
+    message('msg_agents', 'user', '# AGENTS.md instructions\n\nNever start a paid run without the operator\'s go-ahead.'),
+    message('msg_environment', 'user', '<environment_context><cwd>/work</cwd></environment_context>'),
+    message('msg_first_task', 'user', 'Review the study.'),
+  ];
+  const history = [
+    ...opening,
+    ...Array.from({ length: 60 }, (_, index) => message(`msg_early_${index}`, 'assistant', `Early ${index}`)),
+    message('msg_mid_developer', 'developer', 'Collaboration mode changed.'),
+    ...Array.from({ length: 60 }, (_, index) => message(`msg_late_${index}`, 'assistant', `Late ${index}`)),
+  ];
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_opening","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: history,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const input = forwarded.at(-1).body.input;
+  assert.deepEqual(input.slice(0, opening.length), opening);
+  assert.equal(input[opening.length].role, 'developer');
+  assert.match(input[opening.length].content[0].text, /^\[router note\]/);
+  assert.equal(input.filter(item => item.content?.[0]?.text?.startsWith('[router note]')).length, 1);
+  assert.ok(input.some(item => item.id === 'msg_mid_developer'));
+  assert.equal(input.at(-1).id, 'msg_late_59');
+  // A pinned item inside the tail is counted once, so the tail fills the item limit.
+  assert.equal(input.length, 80);
+  const retry = parsedLogEntries().slice(logsBefore)
+    .find(entry => entry.event === 'openrouter.recovery_attempt');
+  assert.equal(retry.omissionNotice, true);
+  assert.equal(retry.inputItems, 80);
+});
+
+test('OpenRouter recovery keeps the context and summary that follow a compacted thread\'s retained user messages', async t => {
+  const message = (id, role, text) => ({ type: 'message', id, role, content: [{ type: 'input_text', text }] });
+  // After a compaction, Codex lists the retained user messages first, then its
+  // context, then the summary; the next turn follows.
+  const context = [
+    message('msg_permissions', 'developer', 'Sandbox and approval policy.'),
+    message('msg_agents', 'user', '# AGENTS.md instructions\n\nNever start a paid run without the operator\'s go-ahead.'),
+    message('msg_summary', 'user', 'Summary of the conversation so far.'),
+    message('msg_task', 'user', 'Continue the refactor.'),
+  ];
+  const history = [
+    ...Array.from({ length: 30 }, (_, index) => message(`msg_retained_${index}`, 'user', `Earlier request ${index}`)),
+    ...context,
+    ...Array.from({ length: 60 }, (_, index) => [
+      { type: 'function_call', call_id: `call_compacted_${index}`, name: 'exec_command', arguments: '{}' },
+      { type: 'function_call_output', call_id: `call_compacted_${index}`, output: 'ok' },
+    ]).flat(),
+  ];
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_compacted","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: history,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const input = forwarded.at(-1).body.input;
+  assert.deepEqual(input.slice(0, context.length), context);
+  assert.match(input[context.length].content[0].text, /^\[router note\]/);
+  assert.equal(input.some(item => item.id?.startsWith('msg_retained_')), false);
+  assert.equal(input.at(-1).call_id, 'call_compacted_59');
+});
+
+test('the omission notice follows Codex\'s context even when an earlier item is kept', async t => {
+  const message = (id, role) => ({
+    type: 'message',
+    id,
+    role,
+    content: [{ type: role === 'assistant' ? 'output_text' : 'input_text', text: id }],
+  });
+  // The latest user message precedes the developer message, so it is kept
+  // ahead of Codex's context.
+  const history = [
+    message('msg_older_user', 'user'),
+    message('msg_latest_user', 'user'),
+    message('msg_developer', 'developer'),
+    ...Array.from({ length: 100 }, (_, index) => message(`msg_reply_${index}`, 'assistant')),
+  ];
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_notice_position","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: history,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const input = forwarded.at(-1).body.input;
+  assert.deepEqual(input.slice(0, 2).map(item => item.id), ['msg_latest_user', 'msg_developer']);
+  assert.match(input[2].content[0].text, /^\[router note\]/);
+  assert.equal(input.some(item => item.id === 'msg_older_user'), false);
+});
+
+test('OpenRouter recovery pins a bounded opening when a thread has no model output yet', async t => {
+  const history = Array.from({ length: 100 }, (_, index) => ({
+    type: 'message',
+    id: `msg_user_${index}`,
+    role: 'user',
+    content: [{ type: 'input_text', text: `User note ${index}` }],
+  }));
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ error: { message: 'invalid request', code: 400 } }) },
+    {
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"response.completed","response":{"id":"resp_user_only","end_turn":true}}\n\n',
+    },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(JSON.stringify({
+    model: 'deepseek/deepseek-v4.1-flash-1017',
+    input: history,
+  }));
+
+  assert.equal(result.status, 200);
+  assert.equal(forwarded.length, before + 2);
+  const input = forwarded.at(-1).body.input;
+  assert.ok(input.length <= 80);
+  assert.deepEqual(input.slice(0, 16).map(item => item.id), history.slice(0, 16).map(item => item.id));
+  assert.match(input[16].content[0].text, /^\[router note\]/);
+  assert.equal(input.at(-1).id, 'msg_user_99');
 });
 
 test('OpenRouter recovery drops encrypted reasoning from a short history', async t => {

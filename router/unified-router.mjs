@@ -163,6 +163,13 @@ const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected th
 const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
 const openrouterRecoveryCompactBytes = 1024 * 1024;
 const openrouterRecoveryCompactItems = 80;
+// Codex sends its context as a developer message followed by user messages
+// (injected AGENTS.md and environment context). A new thread opens with it; a
+// compacted thread lists its retained user messages first and places the
+// context just before the compaction summary. A compacted retry keeps that
+// block, from the first developer message, up to this many items.
+const openrouterRecoveryContextItems = 16;
+const openrouterRecoveryOmissionNotice = '[router note] The provider rejected this thread\'s full history, so this retry omits earlier conversation items. The thread\'s context and instructions, the latest user message, and the most recent items are kept. Treat anything else from earlier in the thread as unknown: re-read files and re-check state before relying on it, and ask the user if an earlier decision matters.';
 const maxCapturedUpstreamErrorBytes = 256 * 1024;
 
 function isAuthenticated(headers) {
@@ -576,28 +583,61 @@ function completeToolPairs(input, retainedIndexes) {
   return completed;
 }
 
+function codexContextIndexes(input) {
+  const indexes = [];
+  const first = Math.max(input.findIndex(item => isMessageForRole(item, 'developer')), 0);
+  for (let index = first; index < input.length; index += 1) {
+    if (indexes.length >= openrouterRecoveryContextItems) break;
+    if (!['developer', 'system', 'user'].some(role => isMessageForRole(input[index], role))) break;
+    indexes.push(index);
+  }
+  return indexes;
+}
+
+function omissionNotice() {
+  return {
+    type: 'message',
+    role: 'developer',
+    content: [{ type: 'input_text', text: openrouterRecoveryOmissionNotice }],
+  };
+}
+
 function compactOpenRouterHistory(input, requestBytes) {
   if (!Array.isArray(input)
       || (requestBytes <= openrouterRecoveryCompactBytes
         && input.length <= openrouterRecoveryCompactItems)) {
-    return { input, changed: false, droppedItems: 0, strategy: null };
+    return { input, changed: false, droppedItems: 0, strategy: null, omissionNotice: false };
   }
 
   const lastUserIndex = input.findLastIndex(item => isMessageForRole(item, 'user'));
   const lastDeveloperIndex = input.findLastIndex(item => isMessageForRole(item, 'developer'));
-  // The current developer context and task statement always survive, even
-  // when the rest of the latest turn has to be cut to a recent tail.
-  const pinned = [...new Set([lastDeveloperIndex, lastUserIndex])].filter(index => index >= 0);
+  const context = codexContextIndexes(input);
+  // Codex's context, the current developer context and the task statement
+  // always survive, even when the rest of the latest turn has to be cut to a
+  // recent tail. Dropping Codex's context would remove the rules the thread
+  // runs under (AGENTS.md among them) and any compaction summary for this step.
+  const pinned = new Set([...context, lastDeveloperIndex, lastUserIndex].filter(index => index >= 0));
   const itemBytes = index => Buffer.byteLength(JSON.stringify(input[index]) ?? '');
-  let itemBudget = openrouterRecoveryCompactItems - pinned.length;
-  let byteBudget = pinned.reduce((budget, index) => budget - itemBytes(index), openrouterRecoveryCompactBytes);
+  const notice = omissionNotice();
+  // Reserve room for the omission notice so the retry stays within both limits.
+  let itemBudget = openrouterRecoveryCompactItems - pinned.size - 1;
+  let byteBudget = [...pinned].reduce((budget, index) => budget - itemBytes(index),
+    openrouterRecoveryCompactBytes - Buffer.byteLength(JSON.stringify(notice)));
 
   let start = input.length;
+  let taken = 0;
   while (start > lastUserIndex + 1 && itemBudget > 0) {
-    const bytes = itemBytes(start - 1);
-    if (bytes > byteBudget && start < input.length) break;
+    const index = start - 1;
+    // A pinned item inside the tail is already counted against the budgets.
+    if (pinned.has(index)) {
+      start -= 1;
+      continue;
+    }
+    const bytes = itemBytes(index);
+    if (bytes > byteBudget && taken > 0) break;
     itemBudget -= 1;
     byteBudget -= bytes;
+    taken += 1;
     start -= 1;
   }
 
@@ -607,11 +647,18 @@ function compactOpenRouterHistory(input, requestBytes) {
   // sides before normalization, which would otherwise discard the orphan.
   const retainedIndexes = completeToolPairs(input, selectedIndexes);
   const compacted = input.filter((_item, index) => retainedIndexes.has(index));
+  const droppedItems = input.length - compacted.length;
+  // Tell the model its view is partial, right after Codex's context, so it
+  // does not mistake missing history for history that never happened.
+  if (droppedItems > 0) {
+    compacted.splice(context.length > 0 ? compacted.indexOf(input[context.at(-1)]) + 1 : 0, 0, notice);
+  }
   return {
     input: compacted,
-    changed: compacted.length !== input.length,
-    droppedItems: input.length - compacted.length,
+    changed: droppedItems > 0,
+    droppedItems,
     strategy: lastUserIndex >= 0 && start === lastUserIndex + 1 ? 'latest-user-turn' : 'recent-tail',
+    omissionNotice: droppedItems > 0,
   };
 }
 
@@ -640,6 +687,7 @@ function prepareOpenRouterRecovery(parsed, primaryBody, structuredOutputInstruct
     changed: !body.equals(primaryBody),
     compactionStrategy: compacted.changed ? compacted.strategy : null,
     droppedItems: compacted.droppedItems,
+    omissionNotice: compacted.omissionNotice,
     droppedReasoningItems,
     inputItems: Array.isArray(recoveryInput) ? recoveryInput.length : null,
     historyRepairs: repaired.repairs,
@@ -1100,6 +1148,7 @@ const server = http.createServer((request, response) => {
                     compactionStrategy: recovery.compactionStrategy,
                     droppedItems: recovery.droppedItems,
                     droppedReasoningItems: recovery.droppedReasoningItems,
+                    omissionNotice: recovery.omissionNotice,
                     historyRepairs: recovery.historyRepairs?.changed ? recovery.historyRepairs : null,
                   });
                   sendUpstream({ requestBody: recovery.body, attempt: 2, recovery });
