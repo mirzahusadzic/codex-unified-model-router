@@ -151,7 +151,7 @@ The installer prints the backup directory for each run. Stop the running router 
 
 ### Return to an earlier Codex version
 
-Each `codex-<version>` tag marks the last router commit verified with that Codex version, such as `codex-0.163.0`; `git tag -l 'codex-*'` lists them. To fall back, install that Codex CLI, check out the matching tag, reinstall, and pin the daemon to the CLI:
+Each `codex-<version>` tag marks the last router commit verified with that Codex version. The [tags page](https://github.com/mirzahusadzic/codex-unified-model-router/tags) lists them, as does `git tag -l 'codex-*'`. To fall back, install that Codex CLI, check out the matching tag, reinstall, and pin the daemon to the CLI:
 
 ```sh
 npm install -g @openai/codex@0.163.0
