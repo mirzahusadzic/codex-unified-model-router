@@ -1,7 +1,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { pipeline } from 'node:stream';
+import { pipeline, Transform } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -71,8 +72,11 @@ const providerOrders = parseProviderOrders(String(
 // Native OpenAI models and models that train on their inputs never share a
 // Codex session. Spawned agents reuse their parent's session ID, so the rule
 // covers whole agent trees: OpenAI output never reaches a training tier, and
-// training-tier output never reaches OpenAI. Ultra Spark counts as training
-// because its workers run on Muse. The list can be extended, not disabled.
+// training-tier output never reaches OpenAI. Claude models are kept apart from
+// the training tier the same way, since Anthropic's terms bar using Claude's
+// output to train competing models; Claude and OpenAI may share a session.
+// Ultra Spark counts as training because its workers run on Muse. The list can
+// be extended, not disabled.
 const trainingModels = new Set(['meta/muse-spark-1.3-contributor', ...String(
   process.env.CODEX_ROUTER_TRAINING_MODELS || fileEnvironment.CODEX_ROUTER_TRAINING_MODELS || '',
 ).split(',').map(model => model.trim()).filter(Boolean)]);
@@ -85,17 +89,24 @@ function loadSessionSides() {
   try {
     const stored = JSON.parse(readFileSync(sessionSidesFile, 'utf8'));
     const cutoff = Date.now() - sessionSideRetentionMs;
-    return new Map(Object.entries(stored).filter(([, entry]) => ['openai', 'training'].includes(entry?.side)
+    return new Map(Object.entries(stored).filter(([, entry]) => Object.hasOwn(sideNames, entry?.side)
       && entry.at > cutoff));
   } catch {
     return new Map();
   }
 }
+// Sides other than `training` are protected from it; they may share a session.
+const sideNames = {
+  openai: 'a native OpenAI model',
+  anthropic: 'a Claude model',
+  training: 'a model whose provider trains on its inputs',
+};
 const sessionSides = loadSessionSides();
 
 function sessionSide(requestedModel, provider, upstreamModel) {
   if (provider === 'openai') return 'openai';
   if (requestedModel.startsWith('ultra-spark/') || trainingModels.has(upstreamModel)) return 'training';
+  if (upstreamModel.startsWith('anthropic/')) return 'anthropic';
   return null;
 }
 
@@ -253,6 +264,16 @@ function normalizeReasoningForOpenRouter(value, model) {
   const effort = String(value.effort);
   if (['low', 'high', 'max', 'none'].includes(effort)) return;
   value.effort = effort === 'minimal' ? 'low' : effort === 'medium' ? 'high' : 'max';
+}
+
+// Claude caches a prompt only at a cache_control breakpoint, and OpenRouter's
+// Responses API exposes only the top-level form, which places the breakpoint
+// on the last cacheable block and moves it as the thread grows. Without it,
+// every step bills the whole history at the full input price.
+function addClaudePromptCaching(request, model) {
+  if (!model.startsWith('anthropic/') || request.cache_control !== undefined) return false;
+  request.cache_control = { type: 'ephemeral' };
+  return true;
 }
 
 function normalizeStateForOpenRouter(request) {
@@ -548,6 +569,88 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
   });
 }
 
+// A Responses stream ends with a response.completed, response.incomplete, or
+// response.failed event whose response carries the token usage. The tap reads
+// it as chunks pass through, without holding any back, and buffers only the
+// line of that final event, up to a bound. It runs only at `info` level.
+const usageLogging = logLevels[configuredLogLevel] >= logLevels.info;
+const finalEventPattern = /"type"\s*:\s*"response\.(?:completed|incomplete|failed)"/;
+const finalEventPrefixChars = 256;
+const maxFinalEventChars = 16 * 1024 * 1024;
+
+// Only numbers are kept, one level deep, so usage can never carry content.
+function tokenCounts(usage) {
+  if (!isObject(usage)) return null;
+  const counts = {};
+  for (const [name, value] of Object.entries(usage)) {
+    if (typeof value === 'number' && Number.isFinite(value)) counts[name] = value;
+    else if (isObject(value)) {
+      const nested = Object.fromEntries(Object.entries(value)
+        .filter(([, item]) => typeof item === 'number' && Number.isFinite(item)));
+      if (Object.keys(nested).length > 0) counts[name] = nested;
+    }
+  }
+  return Object.keys(counts).length > 0 ? counts : null;
+}
+
+function usageTap(onUsage) {
+  const decoder = new StringDecoder('utf8');
+  let line = '';
+  let decided = false;
+  let keep = false;
+  const endLine = () => {
+    if (keep && line.startsWith('data:')) {
+      try {
+        const event = JSON.parse(line.slice('data:'.length));
+        const usage = tokenCounts(event?.response?.usage);
+        if (usage) onUsage({ responseStatus: event.response.status ?? null, usage });
+      } catch {
+        // A malformed final event leaves nothing to log.
+      }
+    }
+    line = '';
+    decided = false;
+    keep = false;
+  };
+  const scan = text => {
+    for (let start = 0; start < text.length;) {
+      const end = text.indexOf('\n', start);
+      if (!decided || keep) line += end === -1 ? text.slice(start) : text.slice(start, end);
+      if (!decided && (end !== -1 || line.length >= finalEventPrefixChars)) {
+        decided = true;
+        keep = line.startsWith('data:') && finalEventPattern.test(line.slice(0, finalEventPrefixChars));
+        if (!keep) line = '';
+      }
+      if (keep && line.length > maxFinalEventChars) {
+        keep = false;
+        line = '';
+      }
+      if (end === -1) break;
+      endLine();
+      start = end + 1;
+    }
+  };
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      try {
+        scan(decoder.write(chunk));
+      } catch {
+        keep = false;
+      }
+      callback(null, chunk);
+    },
+    flush(callback) {
+      try {
+        scan(decoder.end());
+        endLine();
+      } catch {
+        // Logging never affects the response.
+      }
+      callback();
+    },
+  });
+}
+
 function isMessageForRole(item, role) {
   return item?.role === role && (item.type == null || item.type === 'message');
 }
@@ -825,7 +928,7 @@ const server = http.createServer((request, response) => {
       capabilities: {
         routingPolicies: ['preserve-model-v1'],
         openrouterRejectionRecovery: 'completed-diagnostic-v1',
-        providerIsolation: 'session-v1',
+        providerIsolation: 'session-v2',
         revisionPrecondition: true,
       },
     });
@@ -914,15 +1017,15 @@ const server = http.createServer((request, response) => {
     const side = sessionSide(requestedModel, target.provider, upstreamModel);
     const recorded = requestInfo.sessionId ? sessionSides.get(requestInfo.sessionId) : undefined;
     if (side && requestInfo.sessionId) {
-      if (recorded && recorded.side !== side) {
+      if (recorded && (recorded.side === 'training') !== (side === 'training')) {
         logEvent('error', 'session.provider_isolation', {
           requestId, sessionId: requestInfo.sessionId, model: requestedModel, recordedSide: recorded.side, side,
         });
         sendJson(response, 409, { error: {
           code: 'provider_isolation',
           message: side === 'training'
-            ? 'This session already used a native OpenAI model, and this model\'s provider trains on its inputs. Start a new thread to use it.'
-            : 'This session already used a model whose provider trains on its inputs. Start a new thread to use a native OpenAI model.',
+            ? `This session already used ${sideNames[recorded.side]}, and this model's provider trains on its inputs. Start a new thread to use it.`
+            : `This session already used ${sideNames.training}. Start a new thread to use ${sideNames[side]}.`,
         } });
         return;
       }
@@ -951,6 +1054,7 @@ const server = http.createServer((request, response) => {
     }
     let toolHistoryRepairs = null;
     let providerOrder = null;
+    let promptCachingAdded = false;
     if (target.provider === 'openrouter') {
       // Fallbacks stay enabled so an endpoint outage degrades to a cache miss.
       if (providerOrders.has(upstreamModel) && parsed.provider === undefined) {
@@ -964,6 +1068,7 @@ const server = http.createServer((request, response) => {
       toolHistoryRepairs = normalizedHistory.repairs;
       structuredOutputInstruction = adaptStructuredOutputForDeepSeek(parsed, upstreamModel);
       structuredOutputAdapted = Boolean(structuredOutputInstruction);
+      promptCachingAdded = addClaudePromptCaching(parsed, upstreamModel);
     } else {
       parsed.input = normalizeInputForOpenAI(parsed.input);
     }
@@ -1031,6 +1136,7 @@ const server = http.createServer((request, response) => {
         upstreamModel,
         requestedModel,
         structuredOutputAdapted,
+        promptCachingAdded,
         providerOrder,
         stateReset,
         routingPolicy: routingPolicy || 'default',
@@ -1172,7 +1278,22 @@ const server = http.createServer((request, response) => {
           }
 
           response.writeHead(status || 502, responseHeaders(upstreamResponse.headers));
-          pipeline(upstreamResponse, response, error => {
+          const streams = [upstreamResponse, response];
+          if (usageLogging && status >= 200 && status < 300
+              && /^text\/event-stream/i.test(upstreamResponse.headers?.['content-type'] || '')) {
+            streams.splice(1, 0, usageTap(({ responseStatus, usage }) => logEvent('info', 'upstream.usage', {
+              requestId,
+              sessionId: requestInfo.sessionId,
+              provider: target.provider,
+              model,
+              upstreamModel,
+              attempt,
+              responseStatus,
+              usage,
+              ...trace,
+            })));
+          }
+          pipeline(...streams, error => {
             if (error) {
               upstream.destroy();
               upstreamError(error);

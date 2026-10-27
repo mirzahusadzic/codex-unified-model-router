@@ -160,7 +160,7 @@ function mockUpstreamSequence(t, responses) {
           callback(new Error(`Unexpected upstream request ${index}`));
           return;
         }
-        const response = Readable.from([spec.body]);
+        const response = Readable.from(spec.chunks ?? [spec.body]);
         response.statusCode = spec.status;
         response.headers = {
           'content-type': spec.contentType || 'application/json',
@@ -310,7 +310,7 @@ test('routing capabilities and implementation revision are discoverable; unknown
   const health = await exchange('', {}, { method: 'GET', url: '/health' });
   assert.deepEqual(health.body.capabilities.routingPolicies, ['preserve-model-v1']);
   assert.equal(health.body.capabilities.openrouterRejectionRecovery, 'completed-diagnostic-v1');
-  assert.equal(health.body.capabilities.providerIsolation, 'session-v1');
+  assert.equal(health.body.capabilities.providerIsolation, 'session-v2');
   assert.match(health.body.revision, /^[a-f0-9]{64}$/);
   assert.equal(health.body.capabilities.revisionPrecondition, true);
   const count = forwarded.length;
@@ -397,6 +397,28 @@ test('only DeepSeek reasoning efforts are remapped; other OpenRouter models keep
   }
 });
 
+test('Claude requests through OpenRouter get automatic prompt caching; other models do not', async () => {
+  for (const model of ['openrouter/anthropic/claude-sonnet-5.5', 'openrouter/anthropic/claude-opus-5.5']) {
+    const logsBefore = parsedLogEntries().length;
+    const upstream = await send({ model, input: 'Hello', reasoning: { effort: 'xhigh', summary: 'auto' } });
+    assert.equal(upstream.hostname, 'openrouter.ai');
+    assert.equal(upstream.body.model, model.slice('openrouter/'.length));
+    assert.deepEqual(upstream.body.cache_control, { type: 'ephemeral' });
+    assert.deepEqual(upstream.body.reasoning, { effort: 'xhigh', summary: 'auto' });
+    const forwardedLog = parsedLogEntries().slice(logsBefore).find(entry => entry.event === 'request.forwarded');
+    assert.equal(forwardedLog.promptCachingAdded, true);
+  }
+  // A caller's own cache setting is kept as sent.
+  const explicit = await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello',
+    cache_control: { type: 'ephemeral', ttl: '1h' } });
+  assert.deepEqual(explicit.body.cache_control, { type: 'ephemeral', ttl: '1h' });
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/meta/muse-spark-1.3-contributor',
+    'anthropic/claude-sonnet-5.5']) {
+    const upstream = await send({ model, input: 'Hello' });
+    assert.equal(upstream.body.cache_control, undefined, model);
+  }
+});
+
 test('configured OpenRouter endpoint preferences apply only to their model', async () => {
   const logsBefore = parsedLogEntries().length;
   const pinned = await send({ model: 'openrouter/vendor/pinned', input: 'Hello' });
@@ -449,6 +471,39 @@ test('native OpenAI and training-tier models never share a session, including it
   assert.equal(sides['isolation-training'].side, 'training');
   assert.doesNotMatch(readFileSync(sidesFile, 'utf8'), /Hello/);
   if (process.platform !== 'win32') assert.equal(statSync(sidesFile).mode & 0o777, 0o600);
+});
+
+test('Claude and training-tier models never share a session; Claude may share one with OpenAI and DeepSeek', async () => {
+  const inSession = id => ({ 'session-id': id });
+  const claude = 'openrouter/anthropic/claude-sonnet-5.5';
+  const refused = async (model, id, message) => {
+    const count = forwarded.length;
+    const result = await exchange(JSON.stringify({ model, input: 'Hello' }), inSession(id));
+    assert.equal(result.status, 409, model);
+    assert.equal(result.body.error.code, 'provider_isolation');
+    assert.match(result.body.error.message, message);
+    assert.equal(forwarded.length, count);
+  };
+  await send({ model: claude, input: 'Hello' }, inSession('isolation-claude'));
+  for (const model of ['openrouter/meta/muse-spark-1.3-contributor', 'ultra-spark/deepseek-v4.1-flash-1017',
+    'openrouter/vendor/trains']) {
+    await refused(model, 'isolation-claude', /already used a Claude model/);
+  }
+  await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }, inSession('isolation-claude'));
+  await send({ model: 'gpt-6-astra', input: 'Hello' }, inSession('isolation-claude'));
+  await send({ model: 'openrouter/anthropic/claude-opus-5.5', input: 'Hello' }, inSession('isolation-claude'));
+
+  await send({ model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' }, inSession('isolation-muse'));
+  await refused(claude, 'isolation-muse', /Start a new thread to use a Claude model/);
+
+  // A session that began on OpenAI may add Claude and still refuses Muse.
+  await send({ model: 'gpt-6-astra', input: 'Hello' }, inSession('isolation-openai-claude'));
+  await send({ model: claude, input: 'Hello' }, inSession('isolation-openai-claude'));
+  await refused('openrouter/meta/muse-spark-1.3-contributor', 'isolation-openai-claude', /native OpenAI model/);
+
+  const sides = JSON.parse(readFileSync(join(routerHome, 'session-sides.json'), 'utf8'));
+  assert.equal(sides['isolation-claude'].side, 'anthropic');
+  assert.equal(sides['isolation-openai-claude'].side, 'openai');
 });
 
 test('a training-tier worker that carries the Ultra Spark lead history is refused before forwarding', async () => {
@@ -1262,6 +1317,65 @@ test('structured router logs correlate requests without recording bodies or cred
   const serialized = JSON.stringify(entries);
   assert.doesNotMatch(serialized, new RegExp(sensitiveBody));
   assert.doesNotMatch(serialized, /ROUTER_PRIVATE_HEADER_VALUE|test-openrouter-key|a{64}/);
+});
+
+test('token usage is logged from the final stream event while every byte passes through unchanged', async t => {
+  const events = [
+    { type: 'response.created', response: { id: 'resp_usage', status: 'in_progress', output: [] } },
+    { type: 'response.output_text.delta', delta: 'Grüße PRIVATE_STREAM_TEXT' },
+    { type: 'response.completed', response: {
+      id: 'resp_usage',
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: 'Grüße PRIVATE_STREAM_TEXT' }] }],
+      usage: {
+        input_tokens: 8208,
+        input_tokens_details: { cached_tokens: 8204, cache_write_tokens: 0 },
+        output_tokens: 4,
+        output_tokens_details: { reasoning_tokens: 0 },
+        total_tokens: 8212,
+        cost: 0.0008684,
+        is_byok: false,
+        note: 'PRIVATE_USAGE_TEXT',
+      },
+    } },
+  ];
+  const stream = Buffer.from(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''));
+  // Split inside the multibyte ü and at several other points.
+  const split = stream.indexOf(Buffer.from('ü')) + 1;
+  const chunks = [stream.subarray(0, split), stream.subarray(split, split + 7), stream.subarray(split + 7, -40),
+    stream.subarray(-40)];
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', chunks, generationId: 'gen_usage' }]);
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello' }),
+    { 'session-id': 'usage-session' });
+  assert.equal(result.status, 200);
+  assert.equal(result.rawBody, stream.toString('utf8'));
+
+  const logs = parsedLogEntries().slice(logsBefore);
+  const usage = logs.filter(entry => entry.event === 'upstream.usage');
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].sessionId, 'usage-session');
+  assert.equal(usage[0].upstreamModel, 'anthropic/claude-sonnet-5.5');
+  assert.equal(usage[0].responseStatus, 'completed');
+  assert.equal(usage[0].generationId, 'gen_usage');
+  assert.deepEqual(usage[0].usage, {
+    input_tokens: 8208,
+    input_tokens_details: { cached_tokens: 8204, cache_write_tokens: 0 },
+    output_tokens: 4,
+    output_tokens_details: { reasoning_tokens: 0 },
+    total_tokens: 8212,
+    cost: 0.0008684,
+  });
+  assert.doesNotMatch(JSON.stringify(logs), /PRIVATE_STREAM_TEXT|PRIVATE_USAGE_TEXT/);
+});
+
+test('streams without a final usage event log no usage', async t => {
+  const body = 'data: {"type":"response.created","response":{"id":"resp_none"}}\n\ndata: [DONE]\n\n';
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body }]);
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }));
+  assert.equal(result.rawBody, body);
+  assert.equal(parsedLogEntries().slice(logsBefore).some(entry => entry.event === 'upstream.usage'), false);
 });
 
 test('string, empty, and absent inputs still pass through', async () => {

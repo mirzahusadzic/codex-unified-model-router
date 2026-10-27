@@ -193,6 +193,8 @@ Approval prompts do not depend on a plan: `approvals_reviewer` defaults to `user
 | **DeepSeek V4.1 Flash 1017** (default) | `deepseek/deepseek-v4.1-flash-1017` | 960,000 tokens | [Context window](#deepseek-context-window) |
 | **DeepSeek V4.1 Flash 1017 · Ultra Spark** | `ultra-spark/deepseek-v4.1-flash-1017` | 960,000 tokens | Delegates to Muse workers; see [Ultra Spark mode](#ultra-spark-mode) |
 | **Muse Spark 1.3 Contributor** | `openrouter/meta/muse-spark-1.3-contributor` | 1,048,576 tokens | Meta trains on its inputs; see [Muse Spark 1.3 Contributor](#muse-spark-13-contributor) |
+| **Claude Sonnet 5.5** | `openrouter/anthropic/claude-sonnet-5.5` | 1,000,000 tokens | See [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55) |
+| **Claude Opus 5.5** | `openrouter/anthropic/claude-opus-5.5` | 1,000,000 tokens | See [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55) |
 | Native OpenAI models | for example `gpt-6-astra` | bundled limits | Require a ChatGPT plan; see [Native OpenAI models](#native-openai-models) |
 
 ### DeepSeek context window
@@ -213,6 +215,15 @@ The installer merges this entry into `models.json` and points `model_catalog_jso
 [`catalog/muse-model.json`](../catalog/muse-model.json) adds `openrouter/meta/muse-spark-1.3-contributor` with OpenRouter's published **1,048,576-token** context and a 95% effective budget. Reasoning is mandatory upstream, so the entry offers `low` through `max` (default `medium`) and no `none`; it declares no parallel tool calls.
 
 This is Meta's contributor tier: the price is lower because Meta uses prompts and completions to improve its products, and Codex sends file contents and command output with each step. Use it only for code you are willing to share, such as public repositories. OpenRouter routes to it only after you allow endpoints that may train on inputs in your OpenRouter privacy settings.
+
+### Claude Sonnet 5.5 and Claude Opus 5.5
+
+[`catalog/claude-sonnet-model.json`](../catalog/claude-sonnet-model.json) and [`catalog/claude-opus-model.json`](../catalog/claude-opus-model.json) add Anthropic's models through OpenRouter with OpenRouter's published **1,000,000-token** context and a 95% effective budget. Thinking cannot be turned off on these models, so the entries offer `low` through `max` (default `medium`) and no `none`; OpenRouter lists no `parallel_tool_calls` parameter for them, so they declare no parallel tool calls.
+
+- **Prompt caching.** Claude caches a prompt only at an explicit breakpoint, and OpenRouter's endpoints for these models report no implicit caching. The router therefore adds a top-level `cache_control: { type: "ephemeral" }` to Claude requests that do not set one, which places the breakpoint on the last cacheable block and moves it as the thread grows; `request.forwarded` logs `promptCachingAdded`. On OpenRouter's price list, cache writes cost 1.25 times the input price and cache reads 5% of it, and the cache expires after 5 minutes without a request. Codex sends the session ID as `prompt_cache_key`, which OpenRouter uses to keep a thread on one endpoint while the cache is warm.
+- **Reasoning effort.** `codex -m` keeps the effort in your configuration, and the installer's default is `xhigh`; pick a lower effort with `/model` or `-c model_reasoning_effort=medium` to spend less.
+- **Thinking between steps.** OpenRouter returns Claude's thinking signature in a field that Codex does not keep, so later requests carry Claude's earlier thinking as plain text without its signature. OpenRouter accepts that history, but without the signature the earlier thinking may not reach Claude; its messages and tool results do.
+- **Isolation.** Claude never shares a tracked session with Muse, Ultra Spark, or other training-tier models; see [Provider isolation](#provider-isolation).
 
 ### Ultra Spark mode
 
@@ -250,12 +261,14 @@ Every `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained i
 | `deepseek/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
 | `ultra-spark/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
 | `openrouter/meta/muse-spark-1.3-contributor` | OpenRouter | `meta/muse-spark-1.3-contributor` |
+| `openrouter/anthropic/claude-sonnet-5.5` | OpenRouter | `anthropic/claude-sonnet-5.5` |
 | `openrouter/vendor/model` | OpenRouter | `vendor/model` |
 
 The same catalog serves main threads, spawned agents, and any interface that exposes a model field.
 
 - **Reasoning effort:** DeepSeek accepts only `low`, `high`, `max`, and `none`, so DeepSeek requests round other efforts up: `minimal` to `low`, `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Other OpenRouter requests keep the requested effort, which OpenRouter translates for each provider. Native OpenAI requests keep the requested effort.
 - **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results. OpenRouter requests omit the tool declarations (`additional_tools` items) that Codex 0.164 records in history for native Responses Lite models, such as GPT-6; OpenRouter rejects them, and the request's `tools` field already lists the selected model's tools.
+- **Prompt caching:** Claude requests through OpenRouter get a top-level `cache_control` unless they set one; see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55). Other models keep their providers' implicit caching.
 - **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
 - **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with Codex's context (including `AGENTS.md` and any compaction summary), a bounded recent tail of the latest turn, and a `[router note]` telling the model that earlier items were omitted. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread.
 - **Structured output:** Requests keep the selected model; see [Routing policy](#routing-policy).
@@ -263,14 +276,14 @@ The same catalog serves main threads, spawned agents, and any interface that exp
 
 ### Provider isolation
 
-Native OpenAI models and models whose provider trains on their inputs never share a tracked Codex session. Once a tracked session uses one side, the router refuses the other with HTTP 409 (`provider_isolation`) and a message to start a new thread:
+Native OpenAI models and Claude models never share a tracked Codex session with models whose provider trains on their inputs; OpenAI and Claude may share one. Anthropic's terms bar using Claude's output to train competing models, so Claude is kept from the training tier the same way OpenAI is. Once a tracked session uses one side, the router refuses the other with HTTP 409 (`provider_isolation`) and a message to start a new thread:
 
 | A session that has used | Cannot use |
 | --- | --- |
-| A native OpenAI model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
-| Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model |
+| A native OpenAI model or a Claude model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
+| Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model or a Claude model |
 
-DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
+Claude counts by its upstream slug, `anthropic/…`. DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
 
 The router keeps each session's side, without any content, in `unified-router/session-sides.json`, so the rule survives restarts. A record expires 30 days after the session's last request. There is no opt-out; `CODEX_ROUTER_TRAINING_MODELS` can only add models to the training tier.
 
@@ -316,7 +329,7 @@ Use the main configuration for native OpenAI models. The profile supplies transp
 | --- | --- |
 | `capabilities.routingPolicies` | Supported routing policies (`preserve-model-v1`). |
 | `capabilities.openrouterRejectionRecovery` | The bounded OpenRouter 400 recovery contract. |
-| `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v1`). |
+| `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v2`, which adds Claude to the protected side). |
 | `capabilities.revisionPrecondition` | Support for the `X-Codex-Router-Revision` header below. |
 | `revision` | SHA-256 of the running router source. |
 
