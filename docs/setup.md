@@ -61,10 +61,10 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 
 ### Codex version
 
-The router is tested with Codex **0.164.0**. Newer versions can change what it relies on, such as request headers, history items, and catalog templates: Codex 0.163.0 renamed the `session_id` header to `session-id`, and Codex 0.164.0 began recording native models' tool declarations in thread history. To install the tested version:
+The router is tested with Codex **0.165.0**. Newer versions can change what it relies on, such as request headers, history items, and catalog templates: Codex 0.163.0 renamed the `session_id` header to `session-id`, and Codex 0.164.0 began recording native models' tool declarations in thread history. To install the tested version:
 
 ```sh
-npm install -g @openai/codex@0.164.0
+npm install -g @openai/codex@0.165.0
 ```
 
 `node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version; `codex app-server daemon version` shows both. To change Codex versions, install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, and then run `node install.mjs --verify`. Tags named `codex-<version>` mark the last router commit verified with each Codex version; see [Return to an earlier Codex version](operations.md#return-to-an-earlier-codex-version).
@@ -321,7 +321,7 @@ codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contri
 codex --profile unified-openrouter --model openrouter/anthropic/claude-sonnet-5.5
 ```
 
-Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.164.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
+Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.165.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
 
 ### Router capabilities
 
@@ -367,7 +367,7 @@ Tests use synthetic upstream responses and need no API credentials. Live provide
 
 This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.164.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse, Ultra Spark, and Claude entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license), [Claude Sonnet](../catalog/claude-sonnet-model.json.license), [Claude Opus](../catalog/claude-opus-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.165.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse, Ultra Spark, and Claude entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license), [Claude Sonnet](../catalog/claude-sonnet-model.json.license), [Claude Opus](../catalog/claude-opus-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in the installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 
