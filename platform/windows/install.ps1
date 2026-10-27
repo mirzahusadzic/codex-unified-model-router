@@ -319,6 +319,10 @@ Start Codex with a model, or switch with /model:
     codex -m ultra-spark/deepseek-v4.1-flash-1017
   Muse Spark 1.3 Contributor
     codex -m openrouter/meta/muse-spark-1.3-contributor
+  Claude Sonnet 5.5
+    codex -m openrouter/anthropic/claude-sonnet-5.5
+  Claude Opus 5.5
+    codex -m openrouter/anthropic/claude-opus-5.5
 '@
 if ($NativeModels -eq 'show') {
     Write-Host "  GPT-6 Astra (requires a ChatGPT plan)`n    codex -m gpt-6-astra"
@@ -330,7 +334,8 @@ so use them for share-safe code only.
 '@
 if ($NativeModels -eq 'hide') {
     Write-Host "Native OpenAI models are hidden from /model ($NativeReason)."
+    Write-Host 'Tracked Codex sessions never mix Claude models with Muse or Ultra Spark.'
 } else {
-    Write-Host 'Tracked Codex sessions never mix native OpenAI models with Muse or Ultra Spark.'
+    Write-Host 'Tracked Codex sessions never mix native OpenAI or Claude models with Muse or Ultra Spark.'
 }
 Write-Host 'Restart Codex windows opened before this install to pick up the changes.'

@@ -262,6 +262,7 @@ Every `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained i
 | `ultra-spark/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
 | `openrouter/meta/muse-spark-1.3-contributor` | OpenRouter | `meta/muse-spark-1.3-contributor` |
 | `openrouter/anthropic/claude-sonnet-5.5` | OpenRouter | `anthropic/claude-sonnet-5.5` |
+| `openrouter/anthropic/claude-opus-5.5` | OpenRouter | `anthropic/claude-opus-5.5` |
 | `openrouter/vendor/model` | OpenRouter | `vendor/model` |
 
 The same catalog serves main threads, spawned agents, and any interface that exposes a model field.
@@ -317,6 +318,7 @@ The installer writes `unified-openrouter.config.toml` beside `config.toml`, with
 codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
 codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017
 codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
+codex --profile unified-openrouter --model openrouter/anthropic/claude-sonnet-5.5
 ```
 
 Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.164.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
