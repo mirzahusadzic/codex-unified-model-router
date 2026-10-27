@@ -119,12 +119,12 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
     : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
   const keyFile = join(directory, 'openrouter.key');
   writeFileSync(keyFile, 'synthetic-file-key\n', { mode: 0o600 });
-  const install = extra => spawnSync(windows ? 'powershell.exe' : 'bash', windows
+  const install = (extra, env = {}, codexHome = home) => spawnSync(windows ? 'powershell.exe' : 'bash', windows
     ? ['-NoProfile', '-File', platformScript('install'), '-NoService', ...extra]
     : [platformScript('install'), '--no-service', ...extra], {
     encoding: 'utf8', timeout: 30000, input: '',
-    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
-      OPENROUTER_API_KEY: '', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+    env: { ...process.env, HOME: directory, CODEX_HOME: codexHome, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: '', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', ...env },
   });
 
   const missing = install([]);
@@ -136,11 +136,27 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
   assert.equal(installed.status, 0, installed.stderr);
   assert.doesNotMatch(installed.stdout + installed.stderr, /synthetic-file-key/);
   assert.match(readFileSync(join(home, 'unified-router', 'openrouter.env'), 'utf8'), /^OPENROUTER_API_KEY=synthetic-file-key$/m);
-  // The closing summary lists one model per entry, with its command on its own line.
-  const summary = installed.stdout.slice(installed.stdout.indexOf('Start Codex'));
-  assert.match(summary, /^ {4}codex -m ultra-spark\/deepseek-v4\.1-flash-1017\r?$/m);
-  assert.match(summary, /^ {4}codex -m openrouter\/meta\/muse-spark-1\.3-contributor\r?$/m);
-  for (const line of summary.split(/\r?\n/)) assert.ok(line.length <= 80, line);
+  // The closing summary lists one model per entry, with its command on its own
+  // line, and warns about isolation whether native models are shown or hidden:
+  // hidden ones stay usable by name.
+  const checkSummary = (stdout, nativeShown) => {
+    const summary = stdout.slice(stdout.indexOf('Start Codex'));
+    for (const slug of ['ultra-spark/deepseek-v4.1-flash-1017', 'openrouter/meta/muse-spark-1.3-contributor',
+      'openrouter/anthropic/claude-sonnet-5.5', 'openrouter/anthropic/claude-opus-5.5']) {
+      assert.match(summary, new RegExp(`^ {4}codex -m ${slug.replaceAll('.', '\\.')}\\r?$`, 'm'));
+    }
+    assert.equal(/^ {4}codex -m gpt-6-astra\r?$/m.test(summary), nativeShown);
+    assert.equal(/^Native OpenAI models are hidden from \/model/m.test(summary), !nativeShown);
+    assert.match(summary, /^Tracked Codex sessions never mix native OpenAI or Claude models with\r?\nMuse or Ultra Spark\.\r?$/m);
+    for (const line of summary.split(/\r?\n/)) assert.ok(line.length <= 80, line);
+  };
+  checkSummary(installed.stdout, false);
+  const shownHome = join(directory, 'codex-home-shown');
+  mkdirSync(shownHome);
+  const shown = install(windows ? ['-ApiKeyFile', keyFile] : ['--api-key-file', keyFile],
+    { CODEX_ROUTER_NATIVE_MODELS: 'show' }, shownHome);
+  assert.equal(shown.status, 0, shown.stderr);
+  checkSummary(shown.stdout, true);
 });
 
 test('install.mjs runs the platform installer and verifier with translated flags', t => {

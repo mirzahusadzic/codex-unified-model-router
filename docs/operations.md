@@ -126,7 +126,7 @@ Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-rout
 | A new model is missing from `/model` | Rerun the installer to rebuild the catalog, then restart Codex. |
 | OpenAI models are missing from `/model` | They are hidden without an active ChatGPT plan. Install with `CODEX_ROUTER_NATIVE_MODELS=show` to list them anyway. |
 | Ultra Spark does not spawn workers | Select `ultra-spark/deepseek-v4.1-flash-1017` (shown as "· Ultra Spark") in a new thread, and rerun the installer so the catalog carries the current policy. Small single-step tasks run without workers by design. |
-| HTTP 409 `provider_isolation` | The session already used native OpenAI models, or Muse or Ultra Spark, and the router keeps the two apart. Start a new thread for the other side; see [Provider isolation](setup.md#provider-isolation). |
+| HTTP 409 `provider_isolation` | The session already used native OpenAI or Claude models, or Muse or Ultra Spark, and the router keeps the two sides apart. Start a new thread for the other side; see [Provider isolation](setup.md#provider-isolation). |
 | Muse requests fail before reaching a model | Allow endpoints that may train on inputs in your OpenRouter privacy settings, and check that OpenRouter guardrails allow the Muse provider. |
 | A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
 | The local endpoint is unavailable | Check the service status and router error log. |

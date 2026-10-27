@@ -334,8 +334,10 @@ so use them for share-safe code only.
 '@
 if ($NativeModels -eq 'hide') {
     Write-Host "Native OpenAI models are hidden from /model ($NativeReason)."
-    Write-Host 'Tracked Codex sessions never mix Claude models with Muse or Ultra Spark.'
-} else {
-    Write-Host 'Tracked Codex sessions never mix native OpenAI or Claude models with Muse or Ultra Spark.'
 }
+# Hidden native models stay usable by name, so the warning covers them too.
+Write-Host @'
+Tracked Codex sessions never mix native OpenAI or Claude models with
+Muse or Ultra Spark.
+'@
 Write-Host 'Restart Codex windows opened before this install to pick up the changes.'

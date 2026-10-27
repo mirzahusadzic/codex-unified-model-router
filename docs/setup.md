@@ -229,7 +229,7 @@ This is Meta's contributor tier: the price is lower because Meta uses prompts an
 
 **DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) added, which makes delegation the default. It splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers, up to 10 at once, and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Design decisions, final edits, and verification stay in the DeepSeek thread, workers are spawned with `fork_context: false` so they see only their task, and the default reasoning effort is `max`.
 
-Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor), so use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI model; see [Provider isolation](#provider-isolation).
+Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor), so use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI or Claude model; see [Provider isolation](#provider-isolation).
 
 As a backstop, the router detects workers forked with the lead's history by their tool call IDs. Codex gives a session's main thread a thread ID equal to the session ID, and each spawned agent its own. The router remembers, in memory, the tool call IDs in Ultra Spark requests from a main thread. If a spawned agent in the same session sends one of them to Muse or another training-tier model other than Ultra Spark, the request gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed. The check matches tool call IDs only, so it misses:
 
@@ -290,7 +290,7 @@ The router keeps each session's side, without any content, in `unified-router/se
 
 The rule follows session IDs, not content, so these start a new record:
 
-- **Forked sessions.** `codex fork` copies a thread's history into a new session. Fork a thread that used native OpenAI models only onto DeepSeek or another neutral model.
+- **Forked sessions.** `codex fork` copies a thread's history into a new session. Fork a thread that used native OpenAI or Claude models only onto a model outside the training tier, such as DeepSeek.
 - **Sessions from before this router version.** Their first request after the upgrade decides their side.
 - **Requests without a session ID**, such as from clients other than Codex, are not tracked.
 
@@ -367,7 +367,7 @@ Tests use synthetic upstream responses and need no API credentials. Live provide
 
 This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.164.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse and Ultra Spark entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
+The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.164.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse, Ultra Spark, and Claude entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license), [Claude Sonnet](../catalog/claude-sonnet-model.json.license), [Claude Opus](../catalog/claude-opus-model.json.license)). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
 
 The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in the installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
 

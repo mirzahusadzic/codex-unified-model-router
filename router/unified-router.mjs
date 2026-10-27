@@ -571,12 +571,14 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
 
 // A Responses stream ends with a response.completed, response.incomplete, or
 // response.failed event whose response carries the token usage. The tap reads
-// it as chunks pass through, without holding any back, and buffers only the
-// line of that final event, up to a bound. It runs only at `info` level.
+// it as chunks pass through, without holding any back. It buffers one SSE line
+// at a time, up to a bound, and parses only a line that names a final event
+// type, wherever the type appears in it: JSON does not fix property order, and
+// OpenRouter sends no `event:` lines. It runs only at `info` level.
 const usageLogging = logLevels[configuredLogLevel] >= logLevels.info;
+const finalEventTypes = new Set(['response.completed', 'response.incomplete', 'response.failed']);
 const finalEventPattern = /"type"\s*:\s*"response\.(?:completed|incomplete|failed)"/;
-const finalEventPrefixChars = 256;
-const maxFinalEventChars = 16 * 1024 * 1024;
+const maxEventLineChars = 16 * 1024 * 1024;
 
 // Only numbers are kept, one level deep, so usage can never carry content.
 function tokenCounts(usage) {
@@ -596,34 +598,29 @@ function tokenCounts(usage) {
 function usageTap(onUsage) {
   const decoder = new StringDecoder('utf8');
   let line = '';
-  let decided = false;
-  let keep = false;
+  let overflow = false;
   const endLine = () => {
-    if (keep && line.startsWith('data:')) {
+    if (!overflow && line.startsWith('data:') && finalEventPattern.test(line)) {
       try {
         const event = JSON.parse(line.slice('data:'.length));
-        const usage = tokenCounts(event?.response?.usage);
+        const usage = finalEventTypes.has(event?.type) ? tokenCounts(event.response?.usage) : null;
         if (usage) onUsage({ responseStatus: event.response.status ?? null, usage });
       } catch {
         // A malformed final event leaves nothing to log.
       }
     }
     line = '';
-    decided = false;
-    keep = false;
+    overflow = false;
   };
   const scan = text => {
     for (let start = 0; start < text.length;) {
       const end = text.indexOf('\n', start);
-      if (!decided || keep) line += end === -1 ? text.slice(start) : text.slice(start, end);
-      if (!decided && (end !== -1 || line.length >= finalEventPrefixChars)) {
-        decided = true;
-        keep = line.startsWith('data:') && finalEventPattern.test(line.slice(0, finalEventPrefixChars));
-        if (!keep) line = '';
-      }
-      if (keep && line.length > maxFinalEventChars) {
-        keep = false;
-        line = '';
+      if (!overflow) {
+        line += end === -1 ? text.slice(start) : text.slice(start, end);
+        if (line.length > maxEventLineChars) {
+          overflow = true;
+          line = '';
+        }
       }
       if (end === -1) break;
       endLine();
@@ -635,7 +632,8 @@ function usageTap(onUsage) {
       try {
         scan(decoder.write(chunk));
       } catch {
-        keep = false;
+        overflow = true;
+        line = '';
       }
       callback(null, chunk);
     },

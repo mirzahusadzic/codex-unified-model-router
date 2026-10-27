@@ -1369,6 +1369,22 @@ test('token usage is logged from the final stream event while every byte passes 
   assert.doesNotMatch(JSON.stringify(logs), /PRIVATE_STREAM_TEXT|PRIVATE_USAGE_TEXT/);
 });
 
+test('usage is found whatever the property order of the final event', async t => {
+  // `type` follows a long response object, far past the start of the line.
+  const finalEvent = `{"response":{"id":"resp_order","status":"incomplete","output":[{"type":"message","content":[{"type":"output_text","text":"${'x'.repeat(4096)}"}]}],"usage":{"input_tokens":12,"output_tokens":3}},"type":"response.incomplete"}`;
+  // A delta that quotes a final event type in its text is not a final event.
+  const delta = JSON.stringify({ type: 'response.output_text.delta', delta: '"type":"response.completed"', response: { usage: { input_tokens: 99 } } });
+  const body = `data: ${delta}\n\ndata: ${finalEvent}\n\n`;
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body }]);
+  const logsBefore = parsedLogEntries().length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' }));
+  assert.equal(result.rawBody, body);
+  const usage = parsedLogEntries().slice(logsBefore).filter(entry => entry.event === 'upstream.usage');
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].responseStatus, 'incomplete');
+  assert.deepEqual(usage[0].usage, { input_tokens: 12, output_tokens: 3 });
+});
+
 test('streams without a final usage event log no usage', async t => {
   const body = 'data: {"type":"response.created","response":{"id":"resp_none"}}\n\ndata: [DONE]\n\n';
   mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body }]);

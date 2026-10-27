@@ -381,8 +381,10 @@ so use them for share-safe code only.
 EOF
 if [[ "$native_models" == hide ]]; then
   printf 'Native OpenAI models are hidden from /model (%s).\n' "$native_reason"
-  printf 'Tracked Codex sessions never mix Claude models with Muse or Ultra Spark.\n'
-else
-  printf 'Tracked Codex sessions never mix native OpenAI or Claude models with Muse or Ultra Spark.\n'
 fi
+# Hidden native models stay usable by name, so the warning covers them too.
+cat <<'EOF'
+Tracked Codex sessions never mix native OpenAI or Claude models with
+Muse or Ultra Spark.
+EOF
 printf 'Restart Codex windows opened before this install to pick up the changes.\n'
