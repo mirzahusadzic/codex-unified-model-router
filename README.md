@@ -6,14 +6,16 @@
 ![Codex CLI 0.165](https://img.shields.io/badge/Codex%20CLI-0.165-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
-Run Codex on DeepSeek, Anthropic's Claude, Meta's Muse Spark 1.3 Contributor, or any OpenRouter model, and switch between them in the middle of a thread, through a small local router.
+An open-source, loopback-only router that keeps one Codex thread intact while switching between native OpenAI, DeepSeek, Anthropic Claude, Meta Muse Spark, and configured OpenRouter models through Codex’s existing model picker. It normalizes mixed-provider messages, tool calls, reasoning state, and structured output; preserves the selected model; streams responses; performs bounded recovery for rejected or oversized OpenRouter requests; and runs web search through the router so later turns retain the results. Training-tier Muse and Ultra Spark sessions are isolated from OpenAI and Claude sessions, with additional fork-context safeguards for spawned workers. Includes cross-platform installers and verifiers, configuration backups, daemon pinning, Linux/macOS/Windows CI, and no npm runtime dependencies.
 
-- **DeepSeek by default.** DeepSeek V4.1 Flash 1017 with a 960,000-token context (912,000 effective at 95%). Prompts stay cache-friendly, so long agent sessions read most of each prompt from cache.
-- **Ultra Spark mode.** DeepSeek leads and up to 10 Muse Spark 1.3 Contributor workers handle reviews, searches, and test runs in parallel; DeepSeek checks their findings before it reports them.
-- **Switch in place.** `/model` moves a thread between DeepSeek, Claude, Muse, any `openrouter/<model>`, and native OpenAI models. Tool calls and reasoning history are repaired for each provider.
-- **Hard to break.** A rejected request gets one bounded retry, a context overflow triggers Codex's compaction instead of a dead thread, and requests never silently switch to another model.
-- **Private by default.** Codex analytics and its OpenAI-hosted guardian reviewer are off, and native OpenAI and Claude models never share a tracked Codex session with a provider that trains on its inputs.
-- **Lean.** The installer turns off Codex's ChatGPT connector tools, about 65,000 tokens per request, and allows 10 parallel agents. Loopback only, streaming, zero npm dependencies.
+- **Switch models in place:** OpenAI, DeepSeek, Claude, Muse, Ultra Spark, and cataloged OpenRouter models.
+- **Agent orchestration:** Ultra Spark lets DeepSeek coordinate up to 10 Muse Spark workers with `fork_context: false`.
+- **Privacy boundaries:** Training-tier sessions cannot mix with native OpenAI or Claude sessions.
+- **Provider compatibility:** Repairs reasoning and tool history, handles DeepSeek JSON-mode structured output, normalizes problematic tool arguments, and never silently substitutes models.
+- **Resilient streaming:** Bounded OpenRouter recovery, context-overflow signaling for Codex compaction, router diagnostics, and disconnect cancellation.
+- **Router-run web search:** Converts Codex’s hosted search tool into an OpenRouter function, retains results per session, and restores them in later turns.
+- **Local operations:** Loopback binding, token authentication, private credential storage, launchd/systemd/Windows startup, backups, verifiers, and daemon version pinning.
+- **Minimal footprint:** Node.js 20+, zero npm runtime dependencies.
 
 ## How it works
 
