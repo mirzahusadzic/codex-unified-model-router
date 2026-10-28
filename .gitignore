@@ -4,3 +4,4 @@
 backups/
 *.env
 openrouter.env
+.private/

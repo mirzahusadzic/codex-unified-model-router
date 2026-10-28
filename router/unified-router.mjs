@@ -85,6 +85,19 @@ const sessionSideRetentionMs = 30 * 24 * 60 * 60 * 1000;
 // Requests refresh a session's record at most daily, so active sessions never expire.
 const sessionSideRefreshMs = 24 * 60 * 60 * 1000;
 
+// Private state survives restarts through an atomic rename, so a crash never
+// leaves a half-written file. A failed write is logged and the router keeps
+// working from memory.
+function persistJson(file, value, failureEvent) {
+  try {
+    const temporary = `${file}.${process.pid}.tmp`;
+    writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
+    renameSync(temporary, file);
+  } catch (error) {
+    logEvent('error', failureEvent, { errorCode: error.code || null });
+  }
+}
+
 function loadSessionSides() {
   try {
     const stored = JSON.parse(readFileSync(sessionSidesFile, 'utf8'));
@@ -114,13 +127,7 @@ function recordSessionSide(sessionId, side) {
   const cutoff = Date.now() - sessionSideRetentionMs;
   for (const [id, entry] of sessionSides) if (entry.at <= cutoff) sessionSides.delete(id);
   sessionSides.set(sessionId, { side, at: Date.now() });
-  try {
-    const temporary = `${sessionSidesFile}.${process.pid}.tmp`;
-    writeFileSync(temporary, JSON.stringify(Object.fromEntries(sessionSides)), { mode: 0o600 });
-    renameSync(temporary, sessionSidesFile);
-  } catch (error) {
-    logEvent('error', 'session.isolation_persist_failed', { errorCode: error.code || null });
-  }
+  persistJson(sessionSidesFile, Object.fromEntries(sessionSides), 'session.isolation_persist_failed');
 }
 
 // Ultra Spark workers must start with fork_context: false, but only the prompt
@@ -385,6 +392,467 @@ function normalizeToolHistoryForOpenRouter(input) {
   return { input: normalized, repairs };
 }
 
+// Web search for OpenRouter models runs in the router. Codex's hosted
+// web_search tool would run on OpenRouter's side, which returns the results
+// only as citations: later turns never show the model what it found, and for
+// some models the step fails outright. The router offers the model a
+// web_search function instead, runs each search through OpenRouter's web
+// plugin on the selected model, and streams Codex a native web_search_call
+// item. It keeps the results, so later requests carry each search as a call
+// with its output.
+const webSearchFunction = {
+  type: 'function',
+  name: 'web_search',
+  description: 'Search the web. Returns the title, address, and an excerpt of each top result.',
+  parameters: {
+    type: 'object',
+    properties: { query: { type: 'string', description: 'What to search for.' } },
+    required: ['query'],
+    additionalProperties: false,
+  },
+  strict: false,
+};
+const webSearchResultsFile = join(dirname(envFile), 'web-search-results.json');
+const webSearchRetentionMs = 30 * 24 * 60 * 60 * 1000;
+const maxStoredWebSearches = 2000;
+const maxWebSearchesPerRequest = 8;
+const webSearchResultCount = 5;
+const webSearchResults = loadWebSearchResults();
+
+function loadWebSearchResults() {
+  try {
+    const stored = JSON.parse(readFileSync(webSearchResultsFile, 'utf8'));
+    const now = Date.now();
+    return new Map(Object.entries(isObject(stored) ? stored : {})
+      .filter(([, entry]) => isObject(entry) && typeof entry.text === 'string' && now - entry.at < webSearchRetentionMs));
+  } catch {
+    return new Map();
+  }
+}
+
+// Results belong to the session that searched: call IDs are unique only
+// within a thread, so another session's call with the same ID never sees them.
+const webSearchKey = (scope, callId) => JSON.stringify([scope ?? '', callId]);
+
+function storedWebSearchResults(scope, callId) {
+  const key = webSearchKey(scope, callId);
+  const entry = webSearchResults.get(key);
+  if (entry && Date.now() - entry.at < webSearchRetentionMs) return entry.text;
+  webSearchResults.delete(key);
+  return null;
+}
+
+function storeWebSearchResults(scope, callId, text) {
+  const now = Date.now();
+  for (const [key, entry] of webSearchResults) if (now - entry.at >= webSearchRetentionMs) webSearchResults.delete(key);
+  const key = webSearchKey(scope, callId);
+  webSearchResults.delete(key);
+  webSearchResults.set(key, { at: now, text });
+  while (webSearchResults.size > maxStoredWebSearches) webSearchResults.delete(webSearchResults.keys().next().value);
+  persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+}
+
+const callItemTypes = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'mcp_call', 'computer_call']);
+
+function overrideWebSearchForOpenRouter(request, scope) {
+  let offered = false;
+  if (Array.isArray(request.tools)) {
+    request.tools = request.tools.map(tool => {
+      if (!['web_search', 'web_search_preview'].includes(tool?.type)) return tool;
+      offered = true;
+      return webSearchFunction;
+    });
+  }
+  let restored = 0;
+  if (Array.isArray(request.input)) {
+    // A step's calls stay together, so the provider sees one assistant turn
+    // with its reasoning: each search becomes a call in place, and its output
+    // follows the step's last call, beside the outputs Codex returns.
+    const input = [];
+    let outputs = [];
+    const flush = () => {
+      input.push(...outputs);
+      outputs = [];
+    };
+    for (const item of request.input) {
+      if (item?.type === 'web_search_call') {
+        restored += 1;
+        const callId = typeof item.id === 'string' && item.id ? item.id : `ws_restored_${restored}`;
+        const query = typeof item.action?.query === 'string' ? item.action.query : '';
+        input.push({ type: 'function_call', call_id: callId, name: 'web_search', arguments: JSON.stringify({ query }) });
+        outputs.push({ type: 'function_call_output', call_id: callId, output: storedWebSearchResults(scope, callId)
+          ?? 'The results of this search are not available any more. Search again if they matter.' });
+        continue;
+      }
+      if (!callItemTypes.has(item?.type)) flush();
+      input.push(item);
+    }
+    flush();
+    request.input = input;
+  }
+  // A restored call needs its function declared, even when Codex offered no search this time.
+  if (restored > 0 && !offered) {
+    request.tools = [...(Array.isArray(request.tools) ? request.tools : []), webSearchFunction];
+    offered = true;
+  }
+  return { offered, restored };
+}
+
+// The search runs at the lowest effort the model's catalog entry offers.
+function webSearchEffort(requestedModel) {
+  try {
+    const catalog = JSON.parse(readFileSync(modelCatalogFile, 'utf8'));
+    const levels = (catalog.models ?? []).find(model => model.slug === requestedModel)?.supported_reasoning_levels
+      ?.map(level => level.effort) ?? [];
+    return levels.includes('none') ? 'none' : levels[0] ?? 'low';
+  } catch {
+    return 'low';
+  }
+}
+
+function formatWebSearchResults(query, results, failure) {
+  if (failure) return `The web search for "${query}" failed: ${failure}. Say so, and answer from what you already know or try another query.`;
+  if (results.length === 0) return `The web search for "${query}" returned no results.`;
+  return [`Web search results for "${query}":`, ...results.map((result, index) => [
+    `${index + 1}. ${result.title || result.url}`, `   ${result.url}`,
+    `   ${result.content.replace(/\s+/g, ' ').trim().slice(0, 1500)}`].join('\n'))].join('\n\n');
+}
+
+// One search through OpenRouter's web plugin: the reply is a token or two, and
+// the results arrive as its citations, each with an excerpt of the page.
+function runWebSearch({ query, upstreamModel, effort, log, register }) {
+  return new Promise(resolve => {
+    const startedAt = Date.now();
+    let settled = false;
+    const finish = (results, failure, cost = null) => {
+      if (settled) return;
+      settled = true;
+      log(failure ? 'error' : 'info', 'web_search.executed', {
+        results: results.length, failed: Boolean(failure), durationMs: Date.now() - startedAt, cost,
+      });
+      resolve(formatWebSearchResults(query, results, failure));
+    };
+    const body = Buffer.from(JSON.stringify({
+      model: upstreamModel,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: `Search the web for: ${query}\nReply with the word OK.` }] }],
+      // Exa returns every result as a citation for any model; a provider's native search returns only what the reply cites.
+      plugins: [{ id: 'web', engine: 'exa', max_results: webSearchResultCount }],
+      reasoning: { effort },
+      max_output_tokens: 4096,
+      store: false,
+    }));
+    try {
+      const searchRequest = openUpstream({
+        target: openrouterTarget,
+        headers: upstreamHeaders({}, 'openrouter', body.length),
+        body,
+        timeoutMs: 120000,
+        onError: () => finish([], 'the search request failed'),
+      }, searchResponse => {
+        readUpstreamBody(searchResponse, 8 * 1024 * 1024).then(({ body: raw }) => {
+          let parsed = null;
+          try {
+            parsed = JSON.parse(raw.toString('utf8'));
+          } catch {
+            // Reported below as an unreadable response.
+          }
+          if (searchResponse.statusCode !== 200 || !isObject(parsed)) {
+            finish([], `the search service answered with HTTP ${searchResponse.statusCode}`);
+            return;
+          }
+          const results = [];
+          const urls = new Set();
+          for (const item of Array.isArray(parsed.output) ? parsed.output : []) {
+            for (const part of Array.isArray(item?.content) ? item.content : []) {
+              for (const note of Array.isArray(part?.annotations) ? part.annotations : []) {
+                if (note?.type !== 'url_citation' || typeof note.url !== 'string' || urls.has(note.url)) continue;
+                urls.add(note.url);
+                results.push({ title: String(note.title ?? ''), url: note.url, content: String(note.content ?? '') });
+              }
+            }
+          }
+          finish(results, null, typeof parsed.usage?.cost === 'number' ? parsed.usage.cost : null);
+        }, () => finish([], 'the search response could not be read'));
+      });
+      register(searchRequest);
+    } catch {
+      finish([], 'the search request failed');
+    }
+  });
+}
+
+const isWebSearchCall = item => item?.type === 'function_call' && item.name === 'web_search';
+
+function addUsage(total, usage) {
+  if (!isObject(usage)) return total;
+  const sum = { ...(total ?? {}) };
+  for (const [name, value] of Object.entries(usage)) {
+    if (typeof value === 'number') sum[name] = (typeof sum[name] === 'number' ? sum[name] : 0) + value;
+    else if (isObject(value)) sum[name] = addUsage(isObject(sum[name]) ? sum[name] : {}, value);
+  }
+  return sum;
+}
+
+// Holds back the model's web_search calls while every other event streams
+// through as it arrives. At the end of a response it runs the searches,
+// streams native web_search_call items, and, when no other call is pending,
+// continues the same response upstream with the results, up to a bound.
+function webSearchStream({ requestBody, sendContinuation, search, log = () => {}, closed = () => false, scope = '' }) {
+  const decoder = new StringDecoder('utf8');
+  const firstBuffer = { pending: '', passThrough: false };
+  let searches = 0;
+  let finished = false;
+  let firstResponseId = null;
+  let earlierOutput = [];
+  let earlierUpstreamItems = [];
+  let usage = null;
+  let transform;
+  const emit = event => transform.push(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+
+  const newRound = continuation => ({ continuation, hidden: new Set(), calls: [], otherCalls: false, streamed: [] });
+  let round = newRound(false);
+
+  const handleEvent = async (block, event) => {
+    const type = event?.type;
+    const item = event?.item;
+    if (type === 'response.created' && !round.continuation) firstResponseId = event.response?.id ?? null;
+    if (round.continuation && (type === 'response.created' || type === 'response.in_progress')) return;
+    if ((type === 'response.output_item.added' || type === 'response.output_item.done') && isWebSearchCall(item)) {
+      round.hidden.add(item.id);
+      if (type === 'response.output_item.done') round.calls.push(item);
+      return;
+    }
+    if (typeof type === 'string' && type.startsWith('response.function_call_arguments.') && round.hidden.has(event.item_id)) return;
+    if (type === 'response.output_item.added' && callItemTypes.has(item?.type)) round.otherCalls = true;
+    if (!finalEventTypes.has(type)) {
+      // A continuation's finished items stay part of the response if it breaks off later.
+      if (round.continuation && type === 'response.output_item.done' && item) round.streamed.push(item);
+      transform.push(`${block}\n\n`);
+      return;
+    }
+
+    usage = addUsage(usage, event.response?.usage);
+    const upstreamOutput = Array.isArray(event.response?.output) ? event.response.output : [];
+    const calls = round.calls.length > 0 ? round.calls : upstreamOutput.filter(isWebSearchCall);
+    const finalize = output => {
+      finished = true;
+      emit({ ...event, response: { ...event.response, id: firstResponseId ?? event.response?.id,
+        output: [...earlierOutput, ...output], ...(usage ? { usage } : {}) } });
+    };
+    // A continuation that cannot finish still ends the response Codex is
+    // reading: the searches, whatever the continuation already finished, and
+    // the router's diagnostic.
+    const diagnose = text => {
+      const message = { type: 'message', id: `msg_router_${randomUUID().replaceAll('-', '')}`, role: 'assistant', status: 'completed',
+        content: [{ type: 'output_text', annotations: [], text }] };
+      emit({ type: 'response.output_item.added', item: message });
+      emit({ type: 'response.output_item.done', item: message });
+      finalize([...round.streamed, message]);
+    };
+    if (calls.length === 0) {
+      finalize(upstreamOutput);
+      return;
+    }
+    // A failed or incomplete response ends here; its search calls are dropped, never run.
+    if (type !== 'response.completed') {
+      finalize(upstreamOutput.filter(entry => !isWebSearchCall(entry)));
+      return;
+    }
+
+    const searchItems = [];
+    const results = [];
+    let dropped = 0;
+    for (const call of calls) {
+      // Nothing more runs once Codex has gone.
+      if (closed()) return;
+      // Calls beyond the bound are dropped from the response, and it ends.
+      if (searches >= maxWebSearchesPerRequest) {
+        dropped += 1;
+        continue;
+      }
+      let query = '';
+      try {
+        query = String(JSON.parse(call.arguments || '{}').query ?? '');
+      } catch {
+        // An unreadable call searches for nothing and says so.
+      }
+      const callId = call.call_id || call.id;
+      const searchItem = { type: 'web_search_call', id: callId, status: 'in_progress', action: { type: 'search', query } };
+      emit({ type: 'response.output_item.added', item: searchItem });
+      searches += 1;
+      const text = query ? await search(query) : 'The web search had no query.';
+      if (closed()) return;
+      storeWebSearchResults(scope, callId, text);
+      const done = { ...searchItem, status: 'completed' };
+      emit({ type: 'response.output_item.done', item: done });
+      searchItems.push(done);
+      results.push({ type: 'function_call_output', call_id: callId, output: text });
+    }
+    if (dropped > 0) log('error', 'web_search.limit_reached', { dropped, limit: maxWebSearchesPerRequest });
+    const output = upstreamOutput.flatMap(entry => (isWebSearchCall(entry)
+      ? searchItems.filter(searchItem => searchItem.id === (entry.call_id || entry.id)) : [entry]));
+    // Codex runs its own calls and comes back with the searches in its history.
+    if (round.otherCalls || dropped > 0) {
+      finalize(output);
+      return;
+    }
+    earlierOutput = [...earlierOutput, ...output];
+    earlierUpstreamItems = [...earlierUpstreamItems, ...upstreamOutput, ...results];
+    round = newRound(true);
+    const continued = await sendContinuation({ ...requestBody, input: [...(Array.isArray(requestBody.input) ? requestBody.input : []),
+      ...earlierUpstreamItems] });
+    if (closed()) {
+      continued?.stream?.destroy();
+      return;
+    }
+    if (continued?.contextOverflow) {
+      // As for any request, a context overflow fails the response so Codex compacts the thread.
+      finished = true;
+      emit({ type: 'response.failed', response: { ...event.response, id: firstResponseId ?? event.response?.id, status: 'failed',
+        output: earlierOutput, error: { code: 'context_length_exceeded', message: openrouterContextOverflowMessage }, ...(usage ? { usage } : {}) } });
+      return;
+    }
+    if (!continued?.stream) {
+      diagnose('[router diagnostic] The web search ran, but OpenRouter rejected the next step. The thread is intact; retry or start a new thread.');
+      return;
+    }
+    let failure = null;
+    try {
+      await consume(continued.stream);
+    } catch (error) {
+      failure = error?.code || 'STREAM_ERROR';
+    }
+    // A continuation that breaks off, or ends without a final event, still gets one.
+    if (!finished && !closed()) {
+      log('error', 'web_search.continuation_failed', { errorCode: failure ?? 'ENDED_WITHOUT_FINAL_EVENT' });
+      diagnose('[router diagnostic] The web search ran, but the next step was interrupted. The thread is intact; retry or start a new thread.');
+    }
+  };
+
+  // Each upstream stream keeps its own partial event between chunks. An event
+  // larger than the bound switches that stream to plain pass-through, so a
+  // malformed stream never holds unbounded memory.
+  const processText = async (buffer, text) => {
+    if (buffer.passThrough) {
+      if (text) transform.push(text);
+      return;
+    }
+    buffer.pending += text;
+    const blocks = buffer.pending.split(/\r?\n\r?\n/);
+    buffer.pending = blocks.pop();
+    if (buffer.pending.length > maxEventLineChars) {
+      log('error', 'web_search.stream_passthrough', { pendingChars: buffer.pending.length });
+      buffer.passThrough = true;
+    }
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const data = block.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+      let event = null;
+      try {
+        event = data ? JSON.parse(data) : null;
+      } catch {
+        // Not JSON: passed through unchanged below.
+      }
+      if (event === null) transform.push(`${block}\n\n`);
+      else await handleEvent(block, event);
+    }
+    if (buffer.passThrough) {
+      transform.push(buffer.pending);
+      buffer.pending = '';
+    }
+  };
+
+  // A continuation is read the same way as the first response, through this stream's state.
+  const consume = stream => new Promise((resolve, reject) => {
+    const continuationDecoder = new StringDecoder('utf8');
+    const buffer = { pending: '', passThrough: false };
+    let chain = Promise.resolve();
+    stream.on('data', chunk => {
+      chain = chain.then(() => processText(buffer, continuationDecoder.write(chunk)));
+    });
+    stream.once('error', reject);
+    stream.once('end', () => {
+      chain.then(() => processText(buffer, `${continuationDecoder.end()}\n\n`)).then(resolve, reject);
+    });
+  });
+
+  transform = new Transform({
+    transform(chunk, _encoding, callback) {
+      processText(firstBuffer, decoder.write(chunk)).then(() => callback(), callback);
+    },
+    flush(callback) {
+      processText(firstBuffer, `${decoder.end()}\n\n`).then(() => callback(), callback);
+    },
+  });
+  return transform;
+}
+
+// The session rules, checked before anything is forwarded: native OpenAI and
+// Claude models never share a session with the training tier, and a spawned
+// training-tier worker may not carry an Ultra Spark lead's forked history.
+// Returns the refusal to send, or null after recording what the request shows.
+function sessionRefusal({ requestId, sessionId, threadId, requestedModel, side, input }) {
+  const recorded = sessionId ? sessionSides.get(sessionId) : undefined;
+  if (side && sessionId) {
+    if (recorded && (recorded.side === 'training') !== (side === 'training')) {
+      logEvent('error', 'session.provider_isolation', {
+        requestId, sessionId, model: requestedModel, recordedSide: recorded.side, side,
+      });
+      return {
+        code: 'provider_isolation',
+        message: side === 'training'
+          ? `This session already used ${sideNames[recorded.side]}, and this model's provider trains on its inputs. Start a new thread to use it.`
+          : `This session already used ${sideNames.training}. Start a new thread to use ${sideNames[side]}.`,
+      };
+    }
+    if (!recorded) recordSessionSide(sessionId, side);
+  }
+  if (recorded && Date.now() - recorded.at > sessionSideRefreshMs) recordSessionSide(sessionId, recorded.side);
+  if (sessionId && threadId) {
+    const ultraSpark = requestedModel.startsWith('ultra-spark/');
+    if (threadId === sessionId) {
+      if (ultraSpark) recordLeadCallIds(sessionId, input);
+    } else if (side === 'training' && !ultraSpark) {
+      const forkedCallIds = forkedLeadCallIds(sessionId, input);
+      if (forkedCallIds > 0) {
+        logEvent('error', 'session.forked_lead_context', { requestId, sessionId, model: requestedModel, forkedCallIds });
+        return {
+          code: 'forked_lead_context',
+          message: 'This worker request carries the Ultra Spark lead thread\'s history, and its provider trains on its inputs. Spawn workers with fork_context: false.',
+        };
+      }
+    }
+  }
+  return null;
+}
+
+// Shapes a request for its upstream in place and reports what changed, for the
+// forwarding log. OpenAI requests only lose OpenRouter's plaintext reasoning.
+function adaptForUpstream(request, provider, upstreamModel, scope) {
+  const adaptation = {
+    stateReset: false, providerOrder: null, toolHistoryRepairs: null, structuredOutputInstruction: null,
+    promptCachingAdded: false, webSearch: { offered: false, restored: 0 },
+  };
+  if (provider !== 'openrouter') {
+    request.input = normalizeInputForOpenAI(request.input);
+    return adaptation;
+  }
+  // Fallbacks stay enabled so an endpoint outage degrades to a cache miss.
+  if (providerOrders.has(upstreamModel) && request.provider === undefined) {
+    adaptation.providerOrder = providerOrders.get(upstreamModel);
+    request.provider = { order: adaptation.providerOrder };
+  }
+  adaptation.stateReset = normalizeStateForOpenRouter(request);
+  normalizeReasoningForOpenRouter(request.reasoning, upstreamModel);
+  adaptation.webSearch = overrideWebSearchForOpenRouter(request, scope);
+  const normalizedHistory = normalizeToolHistoryForOpenRouter(request.input);
+  request.input = normalizedHistory.input;
+  adaptation.toolHistoryRepairs = normalizedHistory.repairs;
+  adaptation.structuredOutputInstruction = adaptStructuredOutputForDeepSeek(request, upstreamModel);
+  adaptation.promptCachingAdded = addClaudePromptCaching(request, upstreamModel);
+  return adaptation;
+}
+
 function normalizeInputForOpenAI(input) {
   if (!Array.isArray(input)) return input;
   return input.flatMap(item => {
@@ -455,6 +923,26 @@ function upstreamHeaders(requestHeaders, provider, bodyLength) {
     throw error;
   }
   return headers;
+}
+
+const upstreamTimeoutMs = 300000;
+const openrouterTarget = routeFor('openrouter/');
+
+// Every request the router sends upstream starts here: the same options,
+// timeout, and error handling, and the body is sent at once. Callers track the
+// returned request so a client disconnect can cancel it.
+function openUpstream({ target, headers, body, timeoutMs = upstreamTimeoutMs, onError }, onResponse) {
+  const upstream = target.protocol.request({
+    hostname: target.hostname,
+    path: target.path,
+    method: 'POST',
+    headers,
+    timeout: timeoutMs,
+  }, onResponse);
+  upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
+  upstream.on('error', onError);
+  upstream.end(body);
+  return upstream;
 }
 
 function responseHeaders(headers) {
@@ -1007,69 +1495,18 @@ const server = http.createServer((request, response) => {
     // output; preserve-model-v1 remains accepted for clients that send it.
     const model = requestedModel;
     const target = routeFor(model);
-    let stateReset = false;
-    let structuredOutputAdapted = false;
-    let structuredOutputInstruction = null;
 
     const upstreamModel = upstreamModelFor(model, target.provider);
-    const side = sessionSide(requestedModel, target.provider, upstreamModel);
-    const recorded = requestInfo.sessionId ? sessionSides.get(requestInfo.sessionId) : undefined;
-    if (side && requestInfo.sessionId) {
-      if (recorded && (recorded.side === 'training') !== (side === 'training')) {
-        logEvent('error', 'session.provider_isolation', {
-          requestId, sessionId: requestInfo.sessionId, model: requestedModel, recordedSide: recorded.side, side,
-        });
-        sendJson(response, 409, { error: {
-          code: 'provider_isolation',
-          message: side === 'training'
-            ? `This session already used ${sideNames[recorded.side]}, and this model's provider trains on its inputs. Start a new thread to use it.`
-            : `This session already used ${sideNames.training}. Start a new thread to use ${sideNames[side]}.`,
-        } });
-        return;
-      }
-      if (!recorded) recordSessionSide(requestInfo.sessionId, side);
+    const refusal = sessionRefusal({ requestId, sessionId: requestInfo.sessionId, threadId, requestedModel,
+      side: sessionSide(requestedModel, target.provider, upstreamModel), input: parsed.input });
+    if (refusal) {
+      sendJson(response, 409, { error: refusal });
+      return;
     }
-    if (recorded && Date.now() - recorded.at > sessionSideRefreshMs) {
-      recordSessionSide(requestInfo.sessionId, recorded.side);
-    }
-    if (requestInfo.sessionId && threadId) {
-      const ultraSpark = requestedModel.startsWith('ultra-spark/');
-      if (threadId === requestInfo.sessionId) {
-        if (ultraSpark) recordLeadCallIds(requestInfo.sessionId, parsed.input);
-      } else if (side === 'training' && !ultraSpark) {
-        const forkedCallIds = forkedLeadCallIds(requestInfo.sessionId, parsed.input);
-        if (forkedCallIds > 0) {
-          logEvent('error', 'session.forked_lead_context', {
-            requestId, sessionId: requestInfo.sessionId, model: requestedModel, forkedCallIds,
-          });
-          sendJson(response, 409, { error: {
-            code: 'forked_lead_context',
-            message: 'This worker request carries the Ultra Spark lead thread\'s history, and its provider trains on its inputs. Spawn workers with fork_context: false.',
-          } });
-          return;
-        }
-      }
-    }
-    let toolHistoryRepairs = null;
-    let providerOrder = null;
-    let promptCachingAdded = false;
-    if (target.provider === 'openrouter') {
-      // Fallbacks stay enabled so an endpoint outage degrades to a cache miss.
-      if (providerOrders.has(upstreamModel) && parsed.provider === undefined) {
-        providerOrder = providerOrders.get(upstreamModel);
-        parsed.provider = { order: providerOrder };
-      }
-      stateReset = normalizeStateForOpenRouter(parsed);
-      normalizeReasoningForOpenRouter(parsed.reasoning, upstreamModel);
-      const normalizedHistory = normalizeToolHistoryForOpenRouter(parsed.input);
-      parsed.input = normalizedHistory.input;
-      toolHistoryRepairs = normalizedHistory.repairs;
-      structuredOutputInstruction = adaptStructuredOutputForDeepSeek(parsed, upstreamModel);
-      structuredOutputAdapted = Boolean(structuredOutputInstruction);
-      promptCachingAdded = addClaudePromptCaching(parsed, upstreamModel);
-    } else {
-      parsed.input = normalizeInputForOpenAI(parsed.input);
-    }
+    const {
+      stateReset, providerOrder, toolHistoryRepairs, structuredOutputInstruction, promptCachingAdded, webSearch,
+    } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId);
+    const structuredOutputAdapted = Boolean(structuredOutputInstruction);
     parsed.model = upstreamModel;
     let body;
     try {
@@ -1105,10 +1542,59 @@ const server = http.createServer((request, response) => {
       else sendJson(response, 502, { error: { message: 'Codex Unified Model Router upstream request failed' } });
     };
 
+    // Searches and continuations the router starts for this response end with it.
+    const auxiliaryRequests = new Set();
+    const clientGone = () => clientClosed || (response.destroyed && !response.writableFinished);
+    const track = auxiliary => {
+      // Work started after Codex disconnected stops at once.
+      if (clientGone()) {
+        auxiliary.destroy();
+        return;
+      }
+      auxiliaryRequests.add(auxiliary);
+      auxiliary.once('close', () => auxiliaryRequests.delete(auxiliary));
+    };
     response.once('close', () => {
       if (!response.writableFinished && currentUpstream && !currentUpstream.destroyed) {
         currentUpstream.destroy();
       }
+      if (!response.writableFinished) for (const auxiliary of auxiliaryRequests) auxiliary.destroy();
+    });
+
+    // Continues a response after the router's own searches. Resolves with
+    // { stream } for the continuation's events, { contextOverflow } when
+    // OpenRouter refuses it, or null when it never answers.
+    const continueAfterSearch = continuationBody => new Promise(resolve => {
+      if (clientGone()) {
+        resolve(null);
+        return;
+      }
+      const continuationRequestBody = Buffer.from(JSON.stringify(continuationBody));
+      let headers;
+      try {
+        headers = upstreamHeaders(request.headers, target.provider, continuationRequestBody.length);
+      } catch {
+        resolve(null);
+        return;
+      }
+      const continuation = openUpstream({
+        target, headers, body: continuationRequestBody, onError: () => resolve(null),
+      }, continuationResponse => {
+        const status = continuationResponse.statusCode || null;
+        logEvent(status >= 200 && status < 300 ? 'info' : 'error', 'web_search.continuation', {
+          requestId, sessionId: requestInfo.sessionId, model, status, bytes: continuationRequestBody.length,
+          ...upstreamTrace(continuationResponse.headers),
+        });
+        if (status >= 200 && status < 300 && /^text\/event-stream/i.test(continuationResponse.headers?.['content-type'] || '')) {
+          resolve({ stream: continuationResponse });
+          return;
+        }
+        // The refusal is read up to a bound, then the connection ends.
+        readUpstreamBody(continuationResponse).then(({ body: refusal }) => {
+          resolve({ contextOverflow: parseUpstreamError(refusal).contextOverflow });
+        }, () => resolve({ contextOverflow: false })).finally(() => continuation.destroy());
+      });
+      track(continuation);
     });
 
     const sendUpstream = ({
@@ -1135,6 +1621,7 @@ const server = http.createServer((request, response) => {
         requestedModel,
         structuredOutputAdapted,
         promptCachingAdded,
+        webSearchOverride: webSearch.offered || webSearch.restored > 0 ? { offered: webSearch.offered, restored: webSearch.restored } : null,
         providerOrder,
         stateReset,
         routingPolicy: routingPolicy || 'default',
@@ -1152,13 +1639,7 @@ const server = http.createServer((request, response) => {
 
       let upstream;
       try {
-        upstream = target.protocol.request({
-          hostname: target.hostname,
-          path: target.path,
-          method: 'POST',
-          headers,
-          timeout: 300000,
-        }, upstreamResponse => {
+        upstream = openUpstream({ target, headers, body: requestBody, onError: upstreamError }, upstreamResponse => {
           if (response.destroyed) {
             upstreamResponse.destroy();
             return;
@@ -1277,9 +1758,24 @@ const server = http.createServer((request, response) => {
 
           response.writeHead(status || 502, responseHeaders(upstreamResponse.headers));
           const streams = [upstreamResponse, response];
-          if (usageLogging && status >= 200 && status < 300
-              && /^text\/event-stream/i.test(upstreamResponse.headers?.['content-type'] || '')) {
-            streams.splice(1, 0, usageTap(({ responseStatus, usage }) => logEvent('info', 'upstream.usage', {
+          const eventStream = status >= 200 && status < 300
+            && /^text\/event-stream/i.test(upstreamResponse.headers?.['content-type'] || '');
+          if (eventStream && target.provider === 'openrouter' && webSearch.offered) {
+            const effort = webSearchEffort(requestedModel);
+            streams.splice(1, 0, webSearchStream({
+              requestBody: JSON.parse(requestBody.toString('utf8')),
+              sendContinuation: continueAfterSearch,
+              log: (level, event, fields) => logEvent(level, event, { requestId, sessionId: requestInfo.sessionId, model, ...fields }),
+              closed: clientGone,
+              scope: requestInfo.sessionId,
+              search: query => runWebSearch({
+                query, upstreamModel, effort, register: track,
+                log: (level, event, fields) => logEvent(level, event, { requestId, sessionId: requestInfo.sessionId, model, ...fields }),
+              }),
+            }));
+          }
+          if (usageLogging && eventStream) {
+            streams.splice(streams.length - 1, 0, usageTap(({ responseStatus, usage }) => logEvent('info', 'upstream.usage', {
               requestId,
               sessionId: requestInfo.sessionId,
               provider: target.provider,
@@ -1314,9 +1810,6 @@ const server = http.createServer((request, response) => {
         });
 
         currentUpstream = upstream;
-        upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
-        upstream.on('error', upstreamError);
-        upstream.end(requestBody);
       } catch (error) {
         upstream?.destroy();
         upstreamError(error);

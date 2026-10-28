@@ -14,7 +14,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 
 | Task | Source to edit |
 | --- | --- |
-| Request routing, history normalization, streaming | `router/unified-router.mjs` |
+| Request routing, history normalization, streaming, router-run web search | `router/unified-router.mjs` |
 | Add or update an OpenRouter model | `catalog/*.json` |
 | Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
@@ -39,6 +39,7 @@ After editing the maintained prompts or adding an OpenRouter entry, run `node sc
 - Never substitute a model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
 - Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, keep Ultra Spark spawning workers with `fork_context: false` (as a backstop, the router refuses Muse and other non-Ultra Spark training-tier requests from spawned agents that carry tool call IDs from an Ultra Spark main thread), and never let native OpenAI or Claude models share a session with training-tier models.
+- OpenRouter models search through the router: Codex's hosted `web_search` becomes a function the router runs through OpenRouter's web plugin, Codex sees a native `web_search_call`, and later requests carry the stored results as the call's output. Keep a step's calls together ahead of their outputs, so providers that require reasoning with tool calls (DeepSeek) see one assistant turn. Never log the query.
 - Keep Codex analytics and the OpenAI-hosted guardian reviewer off by default, and never send router data to third parties.
 - Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
 - Pin the Codex app-server daemon to the CLI's Codex by default, and never restart it when Codex runs the installer or when restarts are turned off.

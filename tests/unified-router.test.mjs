@@ -1558,3 +1558,249 @@ for (const failure of ['error', 'premature close']) {
     assert.deepEqual(events, ['upstream.error']);
   });
 }
+
+// OpenRouter would run Codex's hosted web_search on its side and return the
+// results only as citations, which later turns do not show the model.
+const sse = events => events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('');
+const webSearchFirstResponse = (extraCall = null) => {
+  const call = { type: 'function_call', id: 'fc_search', call_id: 'call_search', name: 'web_search', arguments: '{"query":"openai codex contributors"}', status: 'completed' };
+  const output = [call, ...(extraCall ? [extraCall] : [])];
+  return sse([
+    { type: 'response.created', response: { id: 'resp_first', status: 'in_progress', output: [] } },
+    { type: 'response.output_item.added', output_index: 0, item: { ...call, arguments: '', status: 'in_progress' } },
+    { type: 'response.function_call_arguments.delta', item_id: 'fc_search', output_index: 0, delta: '{"query":"openai codex contributors"}' },
+    { type: 'response.function_call_arguments.done', item_id: 'fc_search', output_index: 0, arguments: call.arguments },
+    { type: 'response.output_item.done', output_index: 0, item: call },
+    ...(extraCall ? [{ type: 'response.output_item.added', output_index: 1, item: extraCall }, { type: 'response.output_item.done', output_index: 1, item: extraCall }] : []),
+    { type: 'response.completed', response: { id: 'resp_first', status: 'completed', output, usage: { input_tokens: 100, output_tokens: 10 } } },
+  ]);
+};
+const webSearchResult = status => ({ status, body: JSON.stringify(status === 200 ? { output: [{ type: 'message', role: 'assistant', content: [{
+  type: 'output_text', text: 'OK', annotations: [
+    { type: 'url_citation', url: 'https://github.com/openai/codex', title: 'openai/codex', content: 'Lightweight coding agent. 688 contributors.' },
+    { type: 'url_citation', url: 'https://github.com/openai/codex', title: 'duplicate', content: 'dropped' }] }] }], usage: { cost: 0.007 } } : { error: { message: 'down' } }) });
+const answer = { type: 'message', id: 'msg_answer', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'GitHub lists 688 contributors.', annotations: [] }] };
+const continuationResponse = sse([
+  { type: 'response.created', response: { id: 'resp_second', status: 'in_progress', output: [] } },
+  { type: 'response.output_item.added', output_index: 0, item: { ...answer, status: 'in_progress', content: [] } },
+  { type: 'response.output_item.done', output_index: 0, item: answer },
+  { type: 'response.completed', response: { id: 'resp_second', status: 'completed', output: [answer], usage: { input_tokens: 300, output_tokens: 20 } } },
+]);
+const searchRequest = (input = 'How many contributors does openai/codex have?') => JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input, stream: true,
+  tools: [{ type: 'web_search', external_web_access: false }, { type: 'function', name: 'exec_command', parameters: { type: 'object' } }] });
+
+test('web search for OpenRouter models runs in the router, reaches Codex as a web_search_call, and stays in later turns', async t => {
+  // One sequence for both requests: a second mock in the same test would outlive it.
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+  ]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(searchRequest(), { 'session-id': 'web-search-session' });
+  assert.equal(result.status, 200);
+  const [first, search, continuation] = forwarded.slice(before);
+  // The model is offered a function, never OpenRouter's hosted search.
+  assert.deepEqual(first.body.tools.map(tool => `${tool.type}:${tool.name ?? ''}`), ['function:web_search', 'function:exec_command']);
+  assert.deepEqual(search.body.plugins, [{ id: 'web', engine: 'exa', max_results: 5 }]);
+  assert.equal(search.body.model, 'deepseek/deepseek-v4.1-flash-1017');
+  assert.match(JSON.stringify(search.body.input), /openai codex contributors/);
+  assert.deepEqual(continuation.body.input.slice(-2).map(item => item.type), ['function_call', 'function_call_output']);
+  const output = continuation.body.input.at(-1).output;
+  assert.match(output, /^Web search results for "openai codex contributors":/);
+  assert.match(output, /https:\/\/github\.com\/openai\/codex\n {3}Lightweight coding agent\. 688 contributors\./);
+  assert.doesNotMatch(output, /dropped/);
+
+  // Codex sees one response: a native search item, the answer, and no function call it cannot run.
+  const events = parseSse(result.rawBody);
+  assert.equal(events.filter(event => event.type === 'response.created').length, 1);
+  assert.ok(!events.some(event => event.item?.type === 'function_call' || event.type?.startsWith('response.function_call_arguments')));
+  const final = events.at(-1);
+  assert.equal(final.type, 'response.completed');
+  assert.equal(final.response.id, 'resp_first');
+  assert.deepEqual(final.response.output.map(item => item.type), ['web_search_call', 'message']);
+  assert.deepEqual(final.response.output[0], { type: 'web_search_call', id: 'call_search', status: 'completed', action: { type: 'search', query: 'openai codex contributors' } });
+  assert.deepEqual(final.response.usage, { input_tokens: 400, output_tokens: 30 });
+  const searchLog = parsedLogEntries().find(entry => entry.event === 'web_search.executed');
+  assert.deepEqual([searchLog.results, searchLog.failed, searchLog.cost], [1, false, 0.007]);
+  assert.doesNotMatch(JSON.stringify(searchLog), /openai codex contributors/, 'logs never carry the query');
+
+  // The next request carries the search back as a call with its stored results.
+  const laterInput = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Earlier question' }] },
+    final.response.output[0], answer, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'reference?' }] }];
+  const later = await exchangeRaw(searchRequest(laterInput), { 'session-id': 'web-search-session' });
+  assert.equal(later.status, 200);
+  const restored = forwarded.at(-1).body.input;
+  assert.deepEqual(restored.slice(1, 3).map(item => [item.type, item.call_id]), [['function_call', 'call_search'], ['function_call_output', 'call_search']]);
+  assert.equal(restored[2].output, output);
+  assert.ok(!restored.some(item => item.type === 'web_search_call'));
+  const stored = JSON.parse(readFileSync(join(routerHome, 'web-search-results.json'), 'utf8'));
+  assert.equal(stored[JSON.stringify(['web-search-session', 'call_search'])].text, output);
+
+  // Another session with the same call ID never receives these results.
+  const other = await exchangeRaw(searchRequest(laterInput), { 'session-id': 'other-session' });
+  assert.equal(other.status, 200);
+  assert.match(forwarded.at(-1).body.input[2].output, /^The results of this search are not available any more\./);
+});
+
+test('a web search beside another call ends the response, and a failed search says so', async t => {
+  const exec = { type: 'function_call', id: 'fc_exec', call_id: 'call_exec', name: 'exec_command', arguments: '{"cmd":"ls"}', status: 'completed' };
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse(exec) }, webSearchResult(500)]);
+  const before = forwarded.length;
+  const result = await exchangeRaw(searchRequest());
+  // Codex runs its own call and comes back with the search in its history, so no continuation is sent.
+  assert.equal(forwarded.length - before, 2);
+  const final = parseSse(result.rawBody).at(-1);
+  assert.deepEqual(final.response.output.map(item => item.type === 'function_call' ? item.name : item.type), ['web_search_call', 'exec_command']);
+  const stored = JSON.parse(readFileSync(join(routerHome, 'web-search-results.json'), 'utf8'));
+  assert.match(stored[JSON.stringify(['', 'call_search'])].text, /^The web search for "openai codex contributors" failed: the search service answered with HTTP 500\./);
+});
+
+test('a refused continuation still ends the response with the searches and a router diagnostic', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 400, body: JSON.stringify({ error: { message: 'refused' } }) },
+  ]);
+  const refusedResult = await exchangeRaw(searchRequest());
+  assert.equal(refusedResult.status, 200);
+  const refused = parseSse(refusedResult.rawBody);
+  assert.equal(refused.at(-1).type, 'response.completed');
+  assert.deepEqual(refused.at(-1).response.output.map(item => item.type), ['web_search_call', 'message']);
+  assert.match(refused.at(-1).response.output[1].content[0].text, /^\[router diagnostic\] The web search ran, but OpenRouter rejected the next step\./);
+});
+
+test('a continuation that breaks mid-stream ends the response with a router diagnostic', async t => {
+  // The continuation starts streaming, then the connection fails.
+  const responses = [
+    () => Readable.from([webSearchFirstResponse()]),
+    () => Readable.from([webSearchResult(200).body]),
+    () => {
+      const broken = new PassThrough();
+      queueMicrotask(() => {
+        broken.write(sse([{ type: 'response.created', response: { id: 'resp_second', status: 'in_progress', output: [] } }]));
+        setImmediate(() => broken.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })));
+      });
+      return broken;
+    },
+  ];
+  let index = 0;
+  t.mock.method(https, 'request', (_options, onResponse) => new Writable({
+    write(_chunk, _encoding, callback) { callback(); },
+    final(callback) {
+      const response = responses[index]();
+      index += 1;
+      response.statusCode = 200;
+      response.headers = { 'content-type': index === 2 ? 'application/json' : 'text/event-stream' };
+      queueMicrotask(() => onResponse(response));
+      callback();
+    },
+  }));
+  const before = logEntries.length;
+  const broken = await exchangeRaw(searchRequest());
+  assert.equal(broken.status, 200);
+  const events = parseSse(broken.rawBody);
+  assert.equal(events.at(-1).type, 'response.completed');
+  assert.deepEqual(events.at(-1).response.output.map(item => item.type), ['web_search_call', 'message']);
+  assert.match(events.at(-1).response.output[1].content[0].text, /the next step was interrupted/);
+  assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'web_search.continuation_failed' && entry.errorCode === 'ECONNRESET'));
+});
+
+test('a continuation that ends without a final event still gets one', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: sse([
+      { type: 'response.created', response: { id: 'resp_second', status: 'in_progress', output: [] } },
+      { type: 'response.output_item.done', output_index: 0, item: answer }]) },
+  ]);
+  const before = logEntries.length;
+  const result = await exchangeRaw(searchRequest());
+  assert.equal(result.status, 200);
+  const final = parseSse(result.rawBody).at(-1);
+  assert.equal(final.type, 'response.completed');
+  // What the continuation finished stays in the response, ahead of the diagnostic.
+  assert.deepEqual(final.response.output.map(item => item.id ?? item.type), ['call_search', 'msg_answer', final.response.output[2].id]);
+  assert.match(final.response.output[2].content[0].text, /the next step was interrupted/);
+  assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'web_search.continuation_failed' && entry.errorCode === 'ENDED_WITHOUT_FINAL_EVENT'));
+});
+
+test('a continuation over the context window fails the response so Codex compacts', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 400, body: JSON.stringify({ error: { code: 'context_length_exceeded', message: 'too long' } }) },
+  ]);
+  const result = await exchangeRaw(searchRequest());
+  assert.equal(result.status, 200);
+  const final = parseSse(result.rawBody).at(-1);
+  assert.equal(final.type, 'response.failed');
+  assert.equal(final.response.error.code, 'context_length_exceeded');
+});
+
+test('a failed response runs no search, and its search call never reaches Codex', async t => {
+  const call = { type: 'function_call', id: 'fc_search', call_id: 'call_search', name: 'web_search', arguments: '{"query":"x"}' };
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: sse([
+    { type: 'response.created', response: { id: 'resp_failed', status: 'in_progress', output: [] } },
+    { type: 'response.output_item.done', output_index: 0, item: call },
+    { type: 'response.failed', response: { id: 'resp_failed', status: 'failed', output: [call], error: { code: 'server_error' } } }]) }]);
+  const before = forwarded.length;
+  const events = parseSse((await exchangeRaw(searchRequest())).rawBody);
+  assert.equal(forwarded.length - before, 1, 'no search request');
+  assert.deepEqual(events.at(-1).response.output, []);
+  assert.ok(!events.some(event => event.item?.type === 'web_search_call' || event.item?.name === 'web_search'));
+});
+
+test('a client that disconnects during a search stops the search and any continuation', async t => {
+  const requests = [];
+  t.mock.method(https, 'request', (_options, onResponse) => {
+    const index = requests.length;
+    const outgoing = new Writable({
+      write(_chunk, _encoding, callback) { callback(); },
+      final(callback) {
+        if (index === 0) {
+          const first = Readable.from([webSearchFirstResponse()]);
+          first.statusCode = 200;
+          first.headers = { 'content-type': 'text/event-stream' };
+          queueMicrotask(() => onResponse(first));
+        }
+        // The search never answers; the client leaves while it waits.
+        callback();
+      },
+    });
+    requests.push(outgoing);
+    return outgoing;
+  });
+  const request = new PassThrough();
+  Object.assign(request, { method: 'POST', url: '/v1/responses', headers: { ...clientHeaders } });
+  const response = new PassThrough();
+  response.writeHead = () => { response.headersSent = true; };
+  response.resume();
+  handleRequest(request, response);
+  request.end(searchRequest());
+  while (requests.length < 2) await new Promise(resolve => setImmediate(resolve));
+  response.destroy();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(requests.length, 2, 'no continuation after the client left');
+  assert.equal(requests[1].destroyed, true, 'the pending search is cancelled');
+});
+
+test('restored searches keep a step\'s calls together, ahead of their outputs', async () => {
+  const exec = { type: 'function_call', call_id: 'call_exec', name: 'exec_command', arguments: '{}' };
+  const reasoning = { type: 'reasoning', id: 'rs_step', summary: [], content: [{ type: 'reasoning_text', text: 'Check both.' }] };
+  const search = id => ({ type: 'web_search_call', id, status: 'completed', action: { type: 'search', query: id } });
+  const upstream = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', tools: [{ type: 'web_search' }], input: [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check.' }] }, reasoning, exec, search('ws_one'), search('ws_two'),
+    { type: 'function_call_output', call_id: 'call_exec', output: 'ok' },
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'And?' }] }] });
+  assert.deepEqual(upstream.body.input.map(item => item.call_id ? `${item.type}:${item.call_id}` : item.type), [
+    'message', 'reasoning', 'function_call:call_exec', 'function_call:ws_one', 'function_call:ws_two',
+    'function_call_output:call_exec', 'function_call_output:ws_one', 'function_call_output:ws_two', 'message']);
+});
+
+test('native OpenAI requests keep the hosted web_search tool', async () => {
+  const upstream = await send({ model: 'gpt-6-astra', input: 'Hello', tools: [{ type: 'web_search' }] });
+  assert.deepEqual(upstream.body.tools, [{ type: 'web_search' }]);
+});
