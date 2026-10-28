@@ -1649,13 +1649,15 @@ test('a web search beside another call ends the response, and a failed search sa
   const exec = { type: 'function_call', id: 'fc_exec', call_id: 'call_exec', name: 'exec_command', arguments: '{"cmd":"ls"}', status: 'completed' };
   mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse(exec) }, webSearchResult(500)]);
   const before = forwarded.length;
-  const result = await exchangeRaw(searchRequest());
+  const result = await exchangeRaw(searchRequest(), { 'session-id': 'mixed-session' });
   // Codex runs its own call and comes back with the search in its history, so no continuation is sent.
   assert.equal(forwarded.length - before, 2);
   const final = parseSse(result.rawBody).at(-1);
   assert.deepEqual(final.response.output.map(item => item.type === 'function_call' ? item.name : item.type), ['web_search_call', 'exec_command']);
   const stored = JSON.parse(readFileSync(join(routerHome, 'web-search-results.json'), 'utf8'));
-  assert.match(stored[JSON.stringify(['', 'call_search'])].text, /^The web search for "openai codex contributors" failed: the search service answered with HTTP 500\./);
+  assert.match(stored[JSON.stringify(['mixed-session', 'call_search'])].text, /^The web search for "openai codex contributors" failed: the search service answered with HTTP 500\./);
+  // Without a session there is nothing to scope results to, so nothing is kept.
+  assert.ok(!Object.keys(stored).some(key => JSON.parse(key)[0] === ''));
 });
 
 test('a refused continuation still ends the response with the searches and a router diagnostic', async t => {
@@ -1680,7 +1682,11 @@ test('a continuation that breaks mid-stream ends the response with a router diag
     () => {
       const broken = new PassThrough();
       queueMicrotask(() => {
-        broken.write(sse([{ type: 'response.created', response: { id: 'resp_second', status: 'in_progress', output: [] } }]));
+        broken.write(sse([{ type: 'response.created', response: { id: 'resp_second', status: 'in_progress', output: [] } },
+          { type: 'response.output_item.done', output_index: 0, item: answer },
+          { type: 'response.output_item.added', output_index: 1, item: { type: 'message', id: 'msg_partial', role: 'assistant', status: 'in_progress', content: [] } },
+          { type: 'response.output_text.delta', item_id: 'msg_partial', output_index: 1, delta: 'Half an ' },
+          { type: 'response.output_text.delta', item_id: 'msg_partial', output_index: 1, delta: 'answer' }]));
         setImmediate(() => broken.destroy(Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })));
       });
       return broken;
@@ -1703,8 +1709,13 @@ test('a continuation that breaks mid-stream ends the response with a router diag
   assert.equal(broken.status, 200);
   const events = parseSse(broken.rawBody);
   assert.equal(events.at(-1).type, 'response.completed');
-  assert.deepEqual(events.at(-1).response.output.map(item => item.type), ['web_search_call', 'message']);
-  assert.match(events.at(-1).response.output[1].content[0].text, /the next step was interrupted/);
+  const output = events.at(-1).response.output;
+  // The finished answer stays, the half-streamed message is closed as incomplete, and the diagnostic follows.
+  assert.deepEqual(output.map(item => item.id), ['call_search', 'msg_answer', 'msg_partial', output[3].id]);
+  assert.deepEqual([output[2].status, output[2].content[0].text], ['incomplete', 'Half an answer']);
+  assert.ok(events.some(event => event.type === 'response.output_item.done' && event.item.id === 'msg_partial'));
+  assert.match(output[3].id, /^msg_router_/);
+  assert.match(output[3].content[0].text, /the next step was interrupted/);
   assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'web_search.continuation_failed' && entry.errorCode === 'ECONNRESET'));
 });
 
@@ -1722,7 +1733,8 @@ test('a continuation that ends without a final event still gets one', async t =>
   const final = parseSse(result.rawBody).at(-1);
   assert.equal(final.type, 'response.completed');
   // What the continuation finished stays in the response, ahead of the diagnostic.
-  assert.deepEqual(final.response.output.map(item => item.id ?? item.type), ['call_search', 'msg_answer', final.response.output[2].id]);
+  assert.deepEqual(final.response.output.slice(0, 2).map(item => item.id), ['call_search', 'msg_answer']);
+  assert.match(final.response.output[2].id, /^msg_router_/);
   assert.match(final.response.output[2].content[0].text, /the next step was interrupted/);
   assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'web_search.continuation_failed' && entry.errorCode === 'ENDED_WITHOUT_FINAL_EVENT'));
 });
@@ -1749,6 +1761,7 @@ test('a failed response runs no search, and its search call never reaches Codex'
   const before = forwarded.length;
   const events = parseSse((await exchangeRaw(searchRequest())).rawBody);
   assert.equal(forwarded.length - before, 1, 'no search request');
+  assert.equal(events.at(-1).type, 'response.failed');
   assert.deepEqual(events.at(-1).response.output, []);
   assert.ok(!events.some(event => event.item?.type === 'web_search_call' || event.item?.name === 'web_search'));
 });
@@ -1757,7 +1770,9 @@ test('a client that disconnects during a search stops the search and any continu
   const requests = [];
   t.mock.method(https, 'request', (_options, onResponse) => {
     const index = requests.length;
+    // Like a pending ClientRequest, the mock closes only when it is destroyed.
     const outgoing = new Writable({
+      autoDestroy: false,
       write(_chunk, _encoding, callback) { callback(); },
       final(callback) {
         if (index === 0) {
@@ -1780,11 +1795,98 @@ test('a client that disconnects during a search stops the search and any continu
   response.resume();
   handleRequest(request, response);
   request.end(searchRequest());
+  const before = logEntries.length;
   while (requests.length < 2) await new Promise(resolve => setImmediate(resolve));
   response.destroy();
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(requests.length, 2, 'no continuation after the client left');
   assert.equal(requests[1].destroyed, true, 'the pending search is cancelled');
+  // Cancelling settles the search, so nothing waits on it.
+  assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'web_search.executed' && entry.failed === true));
+});
+
+test('a client that disconnects while the continuation is pending cancels it', async t => {
+  const requests = [];
+  t.mock.method(https, 'request', (_options, onResponse) => {
+    const index = requests.length;
+    // Like a pending ClientRequest, the mock closes only when it is destroyed.
+    const outgoing = new Writable({
+      autoDestroy: false,
+      write(_chunk, _encoding, callback) { callback(); },
+      final(callback) {
+        const body = [webSearchFirstResponse(), webSearchResult(200).body][index];
+        if (body) {
+          const answer = Readable.from([body]);
+          answer.statusCode = 200;
+          answer.headers = { 'content-type': index === 0 ? 'text/event-stream' : 'application/json' };
+          queueMicrotask(() => onResponse(answer));
+        }
+        // The continuation never answers.
+        callback();
+      },
+    });
+    requests.push(outgoing);
+    return outgoing;
+  });
+  const request = new PassThrough();
+  Object.assign(request, { method: 'POST', url: '/v1/responses', headers: { ...clientHeaders, 'session-id': 'pending-continuation' } });
+  const response = new PassThrough();
+  response.writeHead = () => { response.headersSent = true; };
+  response.resume();
+  handleRequest(request, response);
+  request.end(searchRequest());
+  while (requests.length < 3) await new Promise(resolve => setImmediate(resolve));
+  response.destroy();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].destroyed, true, 'the pending continuation is cancelled');
+});
+
+test('a step runs at most eight searches and ends without a continuation', async t => {
+  const calls = Array.from({ length: 9 }, (_, index) => ({ type: 'function_call', id: `fc_${index}`, call_id: `call_${index}`,
+    name: 'web_search', arguments: JSON.stringify({ query: `query ${index}` }), status: 'completed' }));
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: sse([
+    { type: 'response.created', response: { id: 'resp_many', status: 'in_progress', output: [] } },
+    ...calls.map((call, index) => ({ type: 'response.output_item.done', output_index: index, item: call })),
+    { type: 'response.completed', response: { id: 'resp_many', status: 'completed', output: calls } }]) },
+  ...Array.from({ length: 8 }, () => webSearchResult(200))]);
+  const before = forwarded.length;
+  const logsBefore = logEntries.length;
+  const final = parseSse((await exchangeRaw(searchRequest(), { 'session-id': 'many-searches' })).rawBody).at(-1);
+  assert.equal(forwarded.length - before, 9, 'the first response and eight searches, no continuation');
+  assert.equal(final.response.output.length, 8);
+  assert.ok(final.response.output.every(item => item.type === 'web_search_call'));
+  assert.ok(parsedLogEntries().slice(logsBefore).some(entry => entry.event === 'web_search.limit_reached' && entry.dropped === 1));
+});
+
+test('stored search results expire while the router runs', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+  ]);
+  await exchangeRaw(searchRequest(), { 'session-id': 'expiring-session' });
+  const searched = { type: 'web_search_call', id: 'call_search', status: 'completed', action: { type: 'search', query: 'openai codex contributors' } };
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 31 * 24 * 60 * 60 * 1000 });
+  await exchangeRaw(searchRequest([searched, answer]), { 'session-id': 'expiring-session' });
+  t.mock.timers.reset();
+  assert.match(forwarded.at(-1).body.input[1].output, /^The results of this search are not available any more\./);
+  const stored = JSON.parse(readFileSync(join(routerHome, 'web-search-results.json'), 'utf8'));
+  assert.equal(stored[JSON.stringify(['expiring-session', 'call_search'])], undefined, 'expired results leave the file too');
+});
+
+test('a refused continuation with an oversized body still ends the response', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 500, body: 'x'.repeat(512 * 1024) },
+  ]);
+  const result = await exchangeRaw(searchRequest());
+  assert.equal(result.status, 200);
+  const final = parseSse(result.rawBody).at(-1);
+  assert.equal(final.type, 'response.completed');
+  assert.match(final.response.output.at(-1).content[0].text, /OpenRouter rejected the next step/);
 });
 
 test('restored searches keep a step\'s calls together, ahead of their outputs', async () => {
@@ -1803,4 +1905,26 @@ test('restored searches keep a step\'s calls together, ahead of their outputs', 
 test('native OpenAI requests keep the hosted web_search tool', async () => {
   const upstream = await send({ model: 'gpt-6-astra', input: 'Hello', tools: [{ type: 'web_search' }] });
   assert.deepEqual(upstream.body.tools, [{ type: 'web_search' }]);
+});
+
+test('whole-number floats in OpenRouter tool arguments reach Codex as integers, and nothing else changes', async t => {
+  const sent = '{"cmd":"sleep 1","timeout_ms":60000.0,"offset":-3.0,"label":"v1.0 \\"60.0\\"","ratio":0.5,"scale":1.50,"big":2.0e3}';
+  const expected = '{"cmd":"sleep 1","timeout_ms":60000,"offset":-3,"label":"v1.0 \\"60.0\\"","ratio":0.5,"scale":1.50,"big":2.0e3}';
+  const call = { type: 'function_call', id: 'fc_wait', call_id: 'call_wait', name: 'exec_command', arguments: sent, status: 'completed' };
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: sse([
+    { type: 'response.created', response: { id: 'resp_float', status: 'in_progress', output: [] } },
+    { type: 'response.output_item.added', output_index: 0, item: { ...call, arguments: '', status: 'in_progress' } },
+    { type: 'response.function_call_arguments.delta', item_id: 'fc_wait', output_index: 0, delta: sent },
+    { type: 'response.function_call_arguments.done', item_id: 'fc_wait', output_index: 0, arguments: sent },
+    { type: 'response.output_item.done', output_index: 0, item: call },
+    { type: 'response.completed', response: { id: 'resp_float', status: 'completed', output: [call] } }]) }]);
+  const before = logEntries.length;
+  const result = await exchangeRaw(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Wait.', stream: true }));
+  const events = parseSse(result.rawBody);
+  // Codex parses the finished copy; the streamed delta stays as sent.
+  assert.equal(events.find(event => event.type === 'response.function_call_arguments.delta').delta, sent);
+  assert.equal(events.find(event => event.type === 'response.function_call_arguments.done').arguments, expected);
+  assert.equal(events.find(event => event.type === 'response.output_item.done').item.arguments, expected);
+  assert.equal(events.at(-1).response.output[0].arguments, expected);
+  assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'tool_arguments.normalized' && entry.name === 'exec_command'));
 });

@@ -414,7 +414,7 @@ const webSearchFunction = {
 };
 const webSearchResultsFile = join(dirname(envFile), 'web-search-results.json');
 const webSearchRetentionMs = 30 * 24 * 60 * 60 * 1000;
-const maxStoredWebSearches = 2000;
+const maxStoredWebSearches = 1000;
 const maxWebSearchesPerRequest = 8;
 const webSearchResultCount = 5;
 const webSearchResults = loadWebSearchResults();
@@ -423,28 +423,54 @@ function loadWebSearchResults() {
   try {
     const stored = JSON.parse(readFileSync(webSearchResultsFile, 'utf8'));
     const now = Date.now();
-    return new Map(Object.entries(isObject(stored) ? stored : {})
+    const entries = Object.entries(isObject(stored) ? stored : {});
+    const current = new Map(entries
       .filter(([, entry]) => isObject(entry) && typeof entry.text === 'string' && now - entry.at < webSearchRetentionMs));
+    // Expired results leave the file as well as memory.
+    if (current.size < entries.length) persistJson(webSearchResultsFile, Object.fromEntries(current), 'web_search.persist_failed');
+    return current;
   } catch {
     return new Map();
   }
 }
 
+function pruneWebSearchResults() {
+  const now = Date.now();
+  let pruned = false;
+  for (const [key, entry] of webSearchResults) {
+    if (now - entry.at >= webSearchRetentionMs) {
+      webSearchResults.delete(key);
+      pruned = true;
+    }
+  }
+  return pruned;
+}
+// A router that runs for weeks without a search still drops expired results.
+setInterval(() => {
+  if (pruneWebSearchResults()) persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+}, 24 * 60 * 60 * 1000).unref();
+
 // Results belong to the session that searched: call IDs are unique only
 // within a thread, so another session's call with the same ID never sees them.
 const webSearchKey = (scope, callId) => JSON.stringify([scope ?? '', callId]);
 
+// Without a session there is nothing to scope results to, so none are kept.
 function storedWebSearchResults(scope, callId) {
+  if (!scope) return null;
   const key = webSearchKey(scope, callId);
   const entry = webSearchResults.get(key);
   if (entry && Date.now() - entry.at < webSearchRetentionMs) return entry.text;
-  webSearchResults.delete(key);
+  if (entry) {
+    webSearchResults.delete(key);
+    persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+  }
   return null;
 }
 
 function storeWebSearchResults(scope, callId, text) {
+  if (!scope) return;
   const now = Date.now();
-  for (const [key, entry] of webSearchResults) if (now - entry.at >= webSearchRetentionMs) webSearchResults.delete(key);
+  pruneWebSearchResults();
   const key = webSearchKey(scope, callId);
   webSearchResults.delete(key);
   webSearchResults.set(key, { at: now, text });
@@ -510,12 +536,15 @@ function webSearchEffort(requestedModel) {
   }
 }
 
+// Every part is bounded, so one stored search stays under about 16 KiB.
+const shorten = (text, limit) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
 function formatWebSearchResults(query, results, failure) {
-  if (failure) return `The web search for "${query}" failed: ${failure}. Say so, and answer from what you already know or try another query.`;
-  if (results.length === 0) return `The web search for "${query}" returned no results.`;
-  return [`Web search results for "${query}":`, ...results.map((result, index) => [
-    `${index + 1}. ${result.title || result.url}`, `   ${result.url}`,
-    `   ${result.content.replace(/\s+/g, ' ').trim().slice(0, 1500)}`].join('\n'))].join('\n\n');
+  const asked = shorten(query.replace(/\s+/g, ' ').trim(), 500);
+  if (failure) return `The web search for "${asked}" failed: ${failure}. Say so, and answer from what you already know or try another query.`;
+  if (results.length === 0) return `The web search for "${asked}" returned no results.`;
+  return [`Web search results for "${asked}":`, ...results.slice(0, webSearchResultCount).map((result, index) => [
+    `${index + 1}. ${shorten(result.title.replace(/\s+/g, ' ').trim() || result.url, 300)}`, `   ${shorten(result.url, 1000)}`,
+    `   ${shorten(result.content.replace(/\s+/g, ' ').trim(), 1500)}`].join('\n'))].join('\n\n');
 }
 
 // One search through OpenRouter's web plugin: the reply is a token or two, and
@@ -574,7 +603,8 @@ function runWebSearch({ query, upstreamModel, effort, log, register }) {
           finish(results, null, typeof parsed.usage?.cost === 'number' ? parsed.usage.cost : null);
         }, () => finish([], 'the search response could not be read'));
       });
-      register(searchRequest);
+      // Cancelling the search when Codex leaves also settles it.
+      register(searchRequest, () => finish([], 'the search was cancelled'));
     } catch {
       finish([], 'the search request failed');
     }
@@ -582,6 +612,39 @@ function runWebSearch({ query, upstreamModel, effort, log, register }) {
 }
 
 const isWebSearchCall = item => item?.type === 'function_call' && item.name === 'web_search';
+
+// Some models write whole numbers in tool arguments as floats, such as
+// DeepSeek's `"timeout_ms": 60000.0`, and Codex rejects a float where it
+// expects an integer. Codex parses a call's finished arguments, not its
+// streamed deltas, so the finished copy is rewritten, token by token: only a
+// number like 60000.0 changes, and strings and everything else stay as sent.
+function wholeNumberArguments(text) {
+  if (typeof text !== 'string' || !/\d\.0/.test(text)) return text;
+  let result = '';
+  for (let index = 0; index < text.length;) {
+    const character = text[index];
+    if (character === '"') {
+      let end = index + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      result += text.slice(index, end + 1);
+      index = end + 1;
+      continue;
+    }
+    const number = character === '-' || (character >= '0' && character <= '9')
+      ? text.slice(index).match(/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/)?.[0] : null;
+    if (!number) {
+      result += character;
+      index += 1;
+      continue;
+    }
+    result += /^-?\d+\.0+$/.test(number) ? number.slice(0, number.indexOf('.')) : number;
+    index += number.length;
+  }
+  return result;
+}
+
+const wholeNumberCall = item => (item?.type === 'function_call' && typeof item.arguments === 'string'
+  ? { ...item, arguments: wholeNumberArguments(item.arguments) } : item);
 
 function addUsage(total, usage) {
   if (!isObject(usage)) return total;
@@ -593,11 +656,13 @@ function addUsage(total, usage) {
   return sum;
 }
 
-// Holds back the model's web_search calls while every other event streams
-// through as it arrives. At the end of a response it runs the searches,
-// streams native web_search_call items, and, when no other call is pending,
-// continues the same response upstream with the results, up to a bound.
-function webSearchStream({ requestBody, sendContinuation, search, log = () => {}, closed = () => false, scope = '' }) {
+// Every OpenRouter event stream passes through here as it arrives. Finished
+// tool calls get whole-number arguments. When the router offered its own
+// web_search, it holds back the model's search calls; at the end of a
+// response it runs the searches, streams native web_search_call items, and,
+// when no other call is pending, continues the same response upstream with
+// the results, up to a bound.
+function openRouterStream({ interceptSearches = false, requestBody, sendContinuation, search, log = () => {}, closed = () => false, scope = '' }) {
   const decoder = new StringDecoder('utf8');
   const firstBuffer = { pending: '', passThrough: false };
   let searches = 0;
@@ -609,7 +674,7 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
   let transform;
   const emit = event => transform.push(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 
-  const newRound = continuation => ({ continuation, hidden: new Set(), calls: [], otherCalls: false, streamed: [] });
+  const newRound = continuation => ({ continuation, hidden: new Set(), calls: [], otherCalls: false, streamed: [], open: new Map() });
   let round = newRound(false);
 
   const handleEvent = async (block, event) => {
@@ -617,7 +682,7 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
     const item = event?.item;
     if (type === 'response.created' && !round.continuation) firstResponseId = event.response?.id ?? null;
     if (round.continuation && (type === 'response.created' || type === 'response.in_progress')) return;
-    if ((type === 'response.output_item.added' || type === 'response.output_item.done') && isWebSearchCall(item)) {
+    if (interceptSearches && (type === 'response.output_item.added' || type === 'response.output_item.done') && isWebSearchCall(item)) {
       round.hidden.add(item.id);
       if (type === 'response.output_item.done') round.calls.push(item);
       return;
@@ -625,15 +690,35 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
     if (typeof type === 'string' && type.startsWith('response.function_call_arguments.') && round.hidden.has(event.item_id)) return;
     if (type === 'response.output_item.added' && callItemTypes.has(item?.type)) round.otherCalls = true;
     if (!finalEventTypes.has(type)) {
-      // A continuation's finished items stay part of the response if it breaks off later.
-      if (round.continuation && type === 'response.output_item.done' && item) round.streamed.push(item);
-      transform.push(`${block}\n\n`);
+      // A continuation's finished items stay part of the response if it breaks off later,
+      // and a message it started is closed with the text streamed so far.
+      if (round.continuation && type === 'response.output_item.added' && item?.type === 'message') round.open.set(item.id, { item, text: '' });
+      if (round.continuation && type === 'response.output_text.delta' && round.open.has(event.item_id)) {
+        round.open.get(event.item_id).text += typeof event.delta === 'string' ? event.delta : '';
+      }
+      // Codex parses the finished copy of a call's arguments.
+      let forwarded = null;
+      if (type === 'response.output_item.done' && item?.type === 'function_call') {
+        const fixed = wholeNumberCall(item);
+        if (fixed.arguments !== item.arguments) forwarded = { ...event, item: fixed };
+      }
+      if (type === 'response.function_call_arguments.done' && typeof event.arguments === 'string') {
+        const fixed = wholeNumberArguments(event.arguments);
+        if (fixed !== event.arguments) forwarded = { ...event, arguments: fixed };
+      }
+      if (forwarded) log('info', 'tool_arguments.normalized', { name: forwarded.item?.name ?? null });
+      if (round.continuation && type === 'response.output_item.done' && item) {
+        round.open.delete(item.id);
+        round.streamed.push(forwarded?.item ?? item);
+      }
+      if (forwarded) emit(forwarded);
+      else transform.push(`${block}\n\n`);
       return;
     }
 
     usage = addUsage(usage, event.response?.usage);
-    const upstreamOutput = Array.isArray(event.response?.output) ? event.response.output : [];
-    const calls = round.calls.length > 0 ? round.calls : upstreamOutput.filter(isWebSearchCall);
+    const upstreamOutput = (Array.isArray(event.response?.output) ? event.response.output : []).map(wholeNumberCall);
+    const calls = !interceptSearches ? [] : round.calls.length > 0 ? round.calls : upstreamOutput.filter(isWebSearchCall);
     const finalize = output => {
       finished = true;
       emit({ ...event, response: { ...event.response, id: firstResponseId ?? event.response?.id,
@@ -643,6 +728,11 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
     // reading: the searches, whatever the continuation already finished, and
     // the router's diagnostic.
     const diagnose = text => {
+      const unfinished = [...round.open.values()].map(({ item: started, text: streamed }) => ({ ...started, status: 'incomplete',
+        content: [{ type: 'output_text', annotations: [], text: streamed }] }));
+      for (const started of unfinished) emit({ type: 'response.output_item.done', item: started });
+      round.streamed.push(...unfinished);
+      round.open.clear();
       const message = { type: 'message', id: `msg_router_${randomUUID().replaceAll('-', '')}`, role: 'assistant', status: 'completed',
         content: [{ type: 'output_text', annotations: [], text }] };
       emit({ type: 'response.output_item.added', item: message });
@@ -650,6 +740,13 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
       finalize([...round.streamed, message]);
     };
     if (calls.length === 0) {
+      // Nothing to merge or rewrite: the final event passes through exactly as sent.
+      const original = Array.isArray(event.response?.output) ? event.response.output : [];
+      if (!round.continuation && earlierOutput.length === 0 && upstreamOutput.every((entry, index) => entry === original[index])) {
+        finished = true;
+        transform.push(`${block}\n\n`);
+        return;
+      }
       finalize(upstreamOutput);
       return;
     }
@@ -691,8 +788,11 @@ function webSearchStream({ requestBody, sendContinuation, search, log = () => {}
     if (dropped > 0) log('error', 'web_search.limit_reached', { dropped, limit: maxWebSearchesPerRequest });
     const output = upstreamOutput.flatMap(entry => (isWebSearchCall(entry)
       ? searchItems.filter(searchItem => searchItem.id === (entry.call_id || entry.id)) : [entry]));
+    // Searches Codex was shown stay in the output even if the final event left them out.
+    for (const searchItem of searchItems) if (!output.includes(searchItem)) output.push(searchItem);
     // Codex runs its own calls and comes back with the searches in its history.
-    if (round.otherCalls || dropped > 0) {
+    const otherCalls = round.otherCalls || upstreamOutput.some(entry => callItemTypes.has(entry?.type) && !isWebSearchCall(entry));
+    if (otherCalls || dropped > 0) {
       finalize(output);
       return;
     }
@@ -1543,22 +1643,27 @@ const server = http.createServer((request, response) => {
     };
 
     // Searches and continuations the router starts for this response end with it.
-    const auxiliaryRequests = new Set();
+    // Each one is cancelled with its settle callback, so nothing waits on it afterwards.
+    const auxiliaryRequests = new Map();
     const clientGone = () => clientClosed || (response.destroyed && !response.writableFinished);
-    const track = auxiliary => {
+    const cancel = (auxiliary, settle) => {
+      auxiliary.destroy();
+      settle?.();
+    };
+    const track = (auxiliary, settle) => {
       // Work started after Codex disconnected stops at once.
       if (clientGone()) {
-        auxiliary.destroy();
+        cancel(auxiliary, settle);
         return;
       }
-      auxiliaryRequests.add(auxiliary);
+      auxiliaryRequests.set(auxiliary, settle);
       auxiliary.once('close', () => auxiliaryRequests.delete(auxiliary));
     };
     response.once('close', () => {
       if (!response.writableFinished && currentUpstream && !currentUpstream.destroyed) {
         currentUpstream.destroy();
       }
-      if (!response.writableFinished) for (const auxiliary of auxiliaryRequests) auxiliary.destroy();
+      if (!response.writableFinished) for (const [auxiliary, settle] of auxiliaryRequests) cancel(auxiliary, settle);
     });
 
     // Continues a response after the router's own searches. Resolves with
@@ -1594,7 +1699,7 @@ const server = http.createServer((request, response) => {
           resolve({ contextOverflow: parseUpstreamError(refusal).contextOverflow });
         }, () => resolve({ contextOverflow: false })).finally(() => continuation.destroy());
       });
-      track(continuation);
+      track(continuation, () => resolve(null));
     });
 
     const sendUpstream = ({
@@ -1760,9 +1865,10 @@ const server = http.createServer((request, response) => {
           const streams = [upstreamResponse, response];
           const eventStream = status >= 200 && status < 300
             && /^text\/event-stream/i.test(upstreamResponse.headers?.['content-type'] || '');
-          if (eventStream && target.provider === 'openrouter' && webSearch.offered) {
-            const effort = webSearchEffort(requestedModel);
-            streams.splice(1, 0, webSearchStream({
+          if (eventStream && target.provider === 'openrouter') {
+            const effort = webSearch.offered ? webSearchEffort(requestedModel) : null;
+            streams.splice(1, 0, openRouterStream({
+              interceptSearches: webSearch.offered,
               requestBody: JSON.parse(requestBody.toString('utf8')),
               sendContinuation: continueAfterSearch,
               log: (level, event, fields) => logEvent(level, event, { requestId, sessionId: requestInfo.sessionId, model, ...fields }),
