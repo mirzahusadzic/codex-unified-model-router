@@ -159,6 +159,36 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
   checkSummary(shown.stdout, true);
 });
 
+test('a failed configuration merge leaves the stored credentials untouched', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-install-merge-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(join(home, 'unified-router'), { recursive: true });
+  mkdirSync(bin);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\necho {"models":[]}\r\n'
+    : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
+  const routerEnv = join(home, 'unified-router', 'openrouter.env');
+  const stored = `OPENROUTER_API_KEY=stored-key\nCODEX_ROUTER_TOKEN=${'b'.repeat(64)}\n`;
+  writeFileSync(routerEnv, stored, { mode: 0o600 });
+  // A managed block without its end marker passes the collision check, then fails the merge.
+  const config = join(home, 'config.toml');
+  const original = '# BEGIN codex-unified-router managed keys\nmodel = "mine"\n';
+  writeFileSync(config, original);
+  const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
+    ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
+    : [platformScript('install'), '--no-service'], {
+    encoding: 'utf8', timeout: 30000,
+    env: { ...process.env, HOME: directory, CODEX_HOME: home, PATH: bin + (windows ? ';' : ':') + process.env.PATH,
+      OPENROUTER_API_KEY: 'new-key', CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' },
+  });
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Unterminated managed configuration block/);
+  assert.equal(readFileSync(routerEnv, 'utf8'), stored);
+  assert.equal(readFileSync(config, 'utf8'), original);
+});
+
 test('install.mjs runs the platform installer and verifier with translated flags', t => {
   const directory = mkdtempSync(join(tmpdir(), 'router-install-entry-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -307,7 +337,7 @@ test('the daemon step pins the daemon to the CLI, restarts it only when allowed,
     { name: 'pinning turned off', daemon: 'running', env: { CODEX_ROUTER_PIN_DAEMON: '0' }, calls: ['version', 'restart'], stdout: /^Restarted the Codex app-server daemon\.$/m },
     { name: 'restarts turned off', daemon: 'running', env: { CODEX_ROUTER_RESTART_DAEMON: '0' }, calls: ['version'], stderr: /was not pinned, because CODEX_ROUTER_RESTART_DAEMON=0/ },
     { name: 'stopped daemon', installed: true, calls: ['version', pin], stdout: /^Pinned the Codex app-server daemon to the CLI's Codex\.$/m },
-    { name: 'no daemon', calls: ['version'] },
+    { name: 'no daemon', calls: ['version'], stderr: /^No Codex app-server daemon is installed, so there is none to pin\./m },
     { name: 'Codex runs the installer', daemon: 'running', flags: ['--codex-runs-installer'], calls: ['version'], stderr: /not restarted or pinned\. Afterwards run: codex app-server daemon update --from-cli --yes/ },
     { name: 'pinning fails', daemon: 'running', env: { FAKE_PIN_STATUS: '1' }, calls: ['version', pin, 'restart'], stderr: /Could not pin/ },
   ]) {
@@ -365,7 +395,9 @@ test('the daemon check fails while the daemon updates itself or runs another Cod
   assert.match(unpinned.stderr, /updates itself instead of following the CLI/);
   assert.equal(check({ CODEX_ROUTER_PIN_DAEMON: '0' }).status, 0);
   rmSync(packageRoot, { recursive: true });
-  assert.equal(check({ FAKE_DAEMON: '' }).status, 0);
+  const missing = check({ FAKE_DAEMON: '' });
+  assert.equal(missing.status, 0);
+  assert.match(missing.stderr, /^No Codex app-server daemon is installed, so there is none to pin\. If Codex installs one later, rerun the installer/m);
 });
 
 test('the verifier names what is missing from an incomplete installation', t => {

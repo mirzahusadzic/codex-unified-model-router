@@ -184,21 +184,26 @@ if [[ "$native_models" == hide ]]; then step "Hiding native OpenAI models from /
 
 step "Updating the Codex configuration"
 
+# Credentials are prepared with the other generated files and installed with
+# them, so a failed merge leaves the stored ones untouched.
+staged_env="$tmp_dir/openrouter.env"
+if [[ -f "$router_env" ]]; then install -m 600 "$router_env" "$staged_env"; fi
 if [[ -n "$prompted_key" ]]; then
-  printf '%s\n' "$prompted_key" | node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env" --api-key-stdin
+  printf '%s\n' "$prompted_key" | node "$repo_dir/scripts/prepare-credentials.mjs" "$staged_env" --api-key-stdin
   prompted_key=""
 elif [[ -n "$api_key_file" ]]; then
-  node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env" --api-key-file "$api_key_file"
+  node "$repo_dir/scripts/prepare-credentials.mjs" "$staged_env" --api-key-file "$api_key_file"
 else
-  node "$repo_dir/scripts/prepare-credentials.mjs" "$router_env"
+  node "$repo_dir/scripts/prepare-credentials.mjs" "$staged_env"
 fi
 merge_flags=()
 if [[ "$force" -eq 1 ]]; then merge_flags+=(--force); fi
-node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$router_env" "$tmp_dir/unified-openrouter.config.toml" ${merge_flags[@]+"${merge_flags[@]}"}
+node "$repo_dir/scripts/merge-config.mjs" "$existing_config" "$codex_home" "$tmp_dir/config.toml" "$staged_env" "$tmp_dir/unified-openrouter.config.toml" ${merge_flags[@]+"${merge_flags[@]}"}
 
 node "$repo_dir/scripts/verify-catalog.mjs" "$tmp_dir/models.json"
 
 step "Installing the loopback router at 127.0.0.1:18766"
+install -m 600 "$staged_env" "$router_env"
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"

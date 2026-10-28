@@ -183,25 +183,33 @@ try {
     Write-Step 'Updating the Codex configuration'
     $ConfigOut = Join-Path $TempDir 'config.toml'
     $PrepareCredentials = Join-Path $RepoDir 'scripts\prepare-credentials.mjs'
+    # Credentials are prepared with the other generated files and installed with
+    # them, so a failed merge leaves the stored ones untouched.
+    $StagedEnv = Join-Path $TempDir 'openrouter.env'
+    if (Test-Path -LiteralPath $RouterEnv) { Copy-Item -LiteralPath $RouterEnv $StagedEnv }
     if ($PromptedKey) {
-        $PromptedKey | & node $PrepareCredentials $RouterEnv --api-key-stdin
+        $PromptedKey | & node $PrepareCredentials $StagedEnv --api-key-stdin
         $PromptedKey = $null
     } elseif ($ApiKeyFile) {
-        & node $PrepareCredentials $RouterEnv --api-key-file $ApiKeyFile
+        & node $PrepareCredentials $StagedEnv --api-key-file $ApiKeyFile
     } else {
-        & node $PrepareCredentials $RouterEnv
+        & node $PrepareCredentials $StagedEnv
     }
     if ($LASTEXITCODE -ne 0) { throw 'Router credential setup failed.' }
-    Set-PrivatePath $RouterEnv
     $OpenRouterOut = Join-Path $TempDir 'unified-openrouter.config.toml'
     $MergeFlags = @()
     if ($Force) { $MergeFlags += '--force' }
-    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $RouterEnv $OpenRouterOut @MergeFlags
+    & node (Join-Path $RepoDir 'scripts\merge-config.mjs') $ExistingConfig $CodexHome $ConfigOut $StagedEnv $OpenRouterOut @MergeFlags
     if ($LASTEXITCODE -ne 0) { throw 'Codex config merge failed.' }
 
     & node (Join-Path $RepoDir 'scripts\verify-catalog.mjs') $ModelsFile
     if ($LASTEXITCODE -ne 0) { throw 'The generated model catalog does not match the repository.' }
 
+    if (-not (Test-Path -LiteralPath $RouterEnv)) {
+        [System.IO.File]::WriteAllText($RouterEnv, '', $Utf8NoBom)
+    }
+    Set-PrivatePath $RouterEnv
+    [System.IO.File]::WriteAllText($RouterEnv, [System.IO.File]::ReadAllText($StagedEnv, $Utf8NoBom), $Utf8NoBom)
     if (-not (Test-Path -LiteralPath $ExistingConfig)) {
         [System.IO.File]::WriteAllText($ExistingConfig, '', $Utf8NoBom)
     }

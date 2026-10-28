@@ -66,12 +66,17 @@ test('router reads endpoint preferences from its environment file and rejects ma
   assert.match(invalid.stderr, /CODEX_ROUTER_PROVIDER_ORDER entries must look like model=provider/);
 });
 
-test('a corrupt session isolation record does not stop the router', t => {
+test('corrupt router state is logged and does not stop the router', t => {
   const directory = mkdtempSync(join(tmpdir(), 'router-isolation-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   writeFileSync(join(directory, 'session-sides.json'), '{not json');
+  writeFileSync(join(directory, 'web-search-results.json'), '{not json');
   const result = start(undefined, join(directory, 'openrouter.env'));
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /"event":"session\.isolation_load_failed"/);
+  assert.match(result.stderr, /"event":"web_search\.load_failed"/);
+  // Missing state is a first start, not a failure.
+  assert.doesNotMatch(start(undefined).stderr, /load_failed/);
 });
 
 test('router rejects unknown log levels', () => {

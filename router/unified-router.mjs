@@ -104,7 +104,10 @@ function loadSessionSides() {
     const cutoff = Date.now() - sessionSideRetentionMs;
     return new Map(Object.entries(stored).filter(([, entry]) => Object.hasOwn(sideNames, entry?.side)
       && entry.at > cutoff));
-  } catch {
+  } catch (error) {
+    // A missing record is a first start. An unreadable one forgets every
+    // session's side, so isolation starts over and the loss is logged.
+    if (error.code !== 'ENOENT') logEvent('error', 'session.isolation_load_failed', { errorCode: error.code || null });
     return new Map();
   }
 }
@@ -429,7 +432,8 @@ function loadWebSearchResults() {
     // Expired results leave the file as well as memory.
     if (current.size < entries.length) persistJson(webSearchResultsFile, Object.fromEntries(current), 'web_search.persist_failed');
     return current;
-  } catch {
+  } catch (error) {
+    if (error.code !== 'ENOENT') logEvent('error', 'web_search.load_failed', { errorCode: error.code || null });
     return new Map();
   }
 }

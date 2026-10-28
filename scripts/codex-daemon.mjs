@@ -40,9 +40,15 @@ const running = daemon?.status === 'running';
 const packageRoot = join(codexHome, 'packages', 'app-server-daemon');
 const installed = running || existsSync(join(packageRoot, 'current'));
 const pinCommand = 'codex app-server daemon update --from-cli --yes';
+// Codex installs the daemon the first time it needs one, which may be after this installation.
+const notInstalled = 'No Codex app-server daemon is installed, so there is none to pin. If Codex installs one later, rerun the installer to pin it to the CLI\'s Codex.';
 
 if (verify) {
-  if (!pin || !installed) process.exit(0);
+  if (!pin) process.exit(0);
+  if (!installed) {
+    console.error(notInstalled);
+    process.exit(0);
+  }
   // Codex keeps this marker while the daemon follows its own updates and
   // removes it when `update --from-cli` pins the CLI's package.
   if (existsSync(join(packageRoot, 'auto-update-version'))) {
@@ -56,7 +62,10 @@ if (verify) {
   process.exit(0);
 }
 
-if (!installed) process.exit(0);
+if (!installed) {
+  if (pin) console.error(notInstalled);
+  process.exit(0);
+}
 if (running && codexRunsInstaller) {
   console.error(`Codex is running this installer, so its daemon was not restarted${pin ? ' or pinned' : ''}. Afterwards run: ${pin ? pinCommand : 'codex app-server daemon restart'}`);
   process.exit(0);
