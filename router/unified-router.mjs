@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { anthropicRefusal } from './anthropic.mjs';
 import { isObject, routerRevision as sourceRevision } from './common.mjs';
 import { anthropicApiKey, envFile, host, logEvent, modelCatalogFile, openrouterApiKey, port, rejectedRequestDir, routerToken } from './config.mjs';
-import { claudeRoute, holdAnthropicRoute, recordClaudeRoute, sessionRefusal, sessionSide } from './sessions.mjs';
+import { claudeRoute, holdAnthropicRoute, protectedSession, recordClaudeRoute, sessionRefusal, sessionSide } from './sessions.mjs';
 import { contextOverflowMessage, openUpstream, openrouterTarget, parseUpstreamError, readUpstreamBody, routeFor, upstreamHeaders, upstreamModelFor, upstreamTrace, usageLogging, usageTap } from './upstream.mjs';
 import { openRouterStream, runWebSearch, webSearchEffort } from './web-search.mjs';
 import { adaptForUpstream, prepareOpenRouterRecovery } from './adapt.mjs';
@@ -18,6 +18,7 @@ const routerRevision = sourceRevision(fileURLToPath(import.meta.url));
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
 const anthropicRejectedDiagnostic = '[router diagnostic] Anthropic rejected this step. The thread is intact; retry or start a new thread.';
 const openrouterRefusedDiagnostic = status => `[router diagnostic] OpenRouter refused this request (HTTP ${status}). Check OPENROUTER_API_KEY, your OpenRouter credits, and your OpenRouter settings for this model.`;
+const openrouterDataPolicyDiagnostic = '[router diagnostic] This session used a native OpenAI or Claude model, so its OpenRouter requests go only to endpoints that do not collect data, and your OpenRouter settings allow none for this model. Pin it to such an endpoint (CODEX_ROUTER_PROVIDER_ORDER and your OpenRouter guardrails), or start a new thread.';
 const anthropicRefusedDiagnostic = reason => `[router diagnostic] Anthropic's API refused this request (${reason}), and no OpenRouter key is configured to fall back to. Check ANTHROPIC_API_KEY and the organization's credits and limits in the Claude Console.`;
 
 function isAuthenticated(headers) {
@@ -225,7 +226,7 @@ const server = http.createServer((request, response) => {
       capabilities: {
         routingPolicies: ['preserve-model-v1'],
         openrouterRejectionRecovery: 'completed-diagnostic-v1',
-        providerIsolation: 'session-v2',
+        providerIsolation: 'session-v3',
         revisionPrecondition: true,
       },
     });
@@ -320,9 +321,10 @@ const server = http.createServer((request, response) => {
       return;
     }
     if (side === 'anthropic') recordClaudeRoute(requestInfo.sessionId, target.provider);
+    const sessionProtected = protectedSession(requestInfo.sessionId);
     let {
       stateReset, providerOrder, toolHistoryRepairs, structuredOutputInstruction, promptCachingAdded, webSearch,
-    } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId);
+    } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId, { protectedSession: sessionProtected });
     let structuredOutputAdapted = Boolean(structuredOutputInstruction);
     parsed.model = upstreamModel;
     let body;
@@ -351,7 +353,7 @@ const server = http.createServer((request, response) => {
       parsed = JSON.parse(rawBody.toString('utf8'));
       ({
         stateReset, providerOrder, toolHistoryRepairs, structuredOutputInstruction, promptCachingAdded, webSearch,
-      } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId));
+      } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId, { protectedSession: sessionProtected }));
       structuredOutputAdapted = Boolean(structuredOutputInstruction);
       parsed.model = upstreamModel;
       body = Buffer.from(JSON.stringify(parsed));
@@ -463,6 +465,7 @@ const server = http.createServer((request, response) => {
         promptCachingAdded,
         webSearchOverride: webSearch.offered || webSearch.restored > 0 ? { offered: webSearch.offered, restored: webSearch.restored } : null,
         providerOrder,
+        dataCollection: parsed.provider?.data_collection ?? null,
         stateReset,
         routingPolicy: routingPolicy || 'default',
         bytes: requestBody.length,
@@ -507,7 +510,7 @@ const server = http.createServer((request, response) => {
 
           // Refusals are read before Codex sees them: a 401 would make Codex refresh its ChatGPT sign-in,
           // and a 413 would be retried with the same bytes.
-          if ((target.provider === 'openrouter' && [400, 401, 402, 403, 413].includes(status))
+          if ((target.provider === 'openrouter' && [400, 401, 402, 403, 404, 413].includes(status))
               || (target.provider === 'anthropic' && [400, 401, 402, 403, 404, 413, 429].includes(status))) {
             void (async () => {
               const upstreamBody = await readUpstreamBody(upstreamResponse);
@@ -546,10 +549,14 @@ const server = http.createServer((request, response) => {
                 response.end(upstreamBody.body);
                 return;
               }
-              if (target.provider === 'openrouter' && [401, 402, 403].includes(status)) {
-                logEvent('error', 'openrouter.refused', { requestId, sessionId: requestInfo.sessionId, model, status, attempt, ...trace });
+              if (target.provider === 'openrouter' && [401, 402, 403, 404].includes(status)) {
+                // OpenRouter finds no endpoint for a protected session when every allowed one collects data.
+                const dataPolicy = status === 404 && parsed.provider?.data_collection === 'deny'
+                  && /data policy/i.test(upstreamBody.body.toString('utf8'));
+                logEvent('error', 'openrouter.refused', { requestId, sessionId: requestInfo.sessionId, model, status, dataPolicy, attempt, ...trace });
                 if (clientClosed || response.destroyed) return;
-                sendResponsesDiagnostic(response, requestId, openrouterRefusedDiagnostic(status), 'openrouter-request-refused');
+                sendResponsesDiagnostic(response, requestId, dataPolicy ? openrouterDataPolicyDiagnostic : openrouterRefusedDiagnostic(status),
+                  dataPolicy ? 'openrouter-data-policy' : 'openrouter-request-refused');
                 return;
               }
 
@@ -649,6 +656,7 @@ const server = http.createServer((request, response) => {
               search: query => runWebSearch({
                 // Searches run through OpenRouter, on its copy of a Claude model.
                 query, upstreamModel: upstreamModelFor(model, 'openrouter'), effort, register: track,
+                dataCollection: sessionProtected ? 'deny' : undefined,
                 log: (level, event, fields) => logEvent(level, event, { requestId, sessionId: requestInfo.sessionId, model, ...fields }),
               }),
             }));

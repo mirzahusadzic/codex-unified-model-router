@@ -311,7 +311,7 @@ test('routing capabilities and implementation revision are discoverable; unknown
   const health = await exchange('', {}, { method: 'GET', url: '/health' });
   assert.deepEqual(health.body.capabilities.routingPolicies, ['preserve-model-v1']);
   assert.equal(health.body.capabilities.openrouterRejectionRecovery, 'completed-diagnostic-v1');
-  assert.equal(health.body.capabilities.providerIsolation, 'session-v2');
+  assert.equal(health.body.capabilities.providerIsolation, 'session-v3');
   assert.match(health.body.revision, /^[a-f0-9]{64}$/);
   assert.equal(health.body.capabilities.revisionPrecondition, true);
   const count = forwarded.length;
@@ -2261,6 +2261,41 @@ test('a search a thread keeps replaying keeps its results past 30 days', async t
   assert.match(await replay(), /688 contributors/);
   t.mock.timers.setTime(Date.now() + 29 * dayMs);
   assert.match(await replay(), /688 contributors/);
+});
+
+test('after a native OpenAI or Claude model, OpenRouter requests go only to endpoints that do not collect data', async t => {
+  const deepseek = { model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello' };
+  // A session on DeepSeek alone keeps OpenRouter's normal routing.
+  assert.equal((await send(deepseek, inClaudeSession('policy-open'))).body.provider, undefined);
+  // After Claude, the same model is asked only of endpoints that do not collect data, so a
+  // DeepSeek pinned to such an endpoint runs there, and DeepSeek's own endpoint does not qualify.
+  await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello' }, inClaudeSession('policy-claude'));
+  assert.deepEqual((await send(deepseek, inClaudeSession('policy-claude'))).body.provider, { data_collection: 'deny' });
+  // A configured endpoint order keeps its place beside the policy.
+  const pinned = await send({ model: 'openrouter/vendor/pinned', input: 'Hello' }, inClaudeSession('policy-claude'));
+  assert.deepEqual(pinned.body.provider, { order: ['google-vertex/us', 'google-ai-studio'], data_collection: 'deny' });
+  await send({ model: 'gpt-6-astra', input: 'Hello' }, inClaudeSession('policy-openai'));
+  assert.deepEqual((await send(deepseek, inClaudeSession('policy-openai'))).body.provider, { data_collection: 'deny' });
+  const logged = parsedLogEntries().findLast(entry => entry.event === 'request.forwarded');
+  assert.equal(logged.dataCollection, 'deny');
+
+  // When every endpoint the account allows collects data, Codex gets a diagnostic, not a retried 404.
+  mockUpstreamSequence(t, [
+    { status: 404, body: JSON.stringify({ error: { code: 404, message: '0 endpoints out of 39 requested are available matching your guardrail restrictions and data policy.' } }) },
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+  ]);
+  const refused = await exchangeRaw(JSON.stringify(deepseek), inClaudeSession('policy-claude'));
+  assert.equal(refused.status, 200);
+  assert.equal(refused.headers['x-codex-router-diagnostic'], 'openrouter-data-policy');
+  assert.match(parseSse(refused.rawBody).find(event => event.type === 'response.output_item.done').item.content[0].text,
+    /go only to endpoints that do not collect data/);
+  // The router's own search, which carries a query from the session, follows the same policy.
+  await exchangeRaw(searchRequest(), inClaudeSession('policy-claude'));
+  const search = forwarded.find(request => Array.isArray(request.body.plugins) && request.body.input?.[0]?.content?.[0]?.text?.startsWith('Search the web')
+    && forwarded.indexOf(request) >= forwarded.length - 3);
+  assert.deepEqual(search.body.provider, { data_collection: 'deny' });
 });
 
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {

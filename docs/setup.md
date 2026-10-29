@@ -192,7 +192,7 @@ Approval prompts do not depend on a plan: `approvals_reviewer` defaults to `user
 
 | Model | Slug | Context | Notes |
 | --- | --- | --- | --- |
-| **DeepSeek V4.1 Flash 1017** (default) | `deepseek/deepseek-v4.1-flash-1017` | 960,000 tokens | [Context window](#deepseek-context-window) |
+| **DeepSeek V4.1 Flash 1017** (default) | `deepseek/deepseek-v4.1-flash-1017` | 960,000 tokens | DeepSeek's own endpoint may train on its inputs; see [DeepSeek context window](#deepseek-context-window) |
 | **DeepSeek V4.1 Flash 1017 · Ultra Spark** | `ultra-spark/deepseek-v4.1-flash-1017` | 960,000 tokens | Delegates to Muse workers; see [Ultra Spark mode](#ultra-spark-mode) |
 | **Muse Spark 1.3 Contributor** | `openrouter/meta/muse-spark-1.3-contributor` | 1,048,576 tokens | Meta trains on its inputs; see [Muse Spark 1.3 Contributor](#muse-spark-13-contributor) |
 | **Claude Sonnet 5.5** | `anthropic/claude-sonnet-5-5` | 1,000,000 tokens | Anthropic's API or OpenRouter; see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55) |
@@ -209,6 +209,8 @@ The entry for `deepseek/deepseek-v4.1-flash-1017` in [`catalog/deepseek-model.js
 | `max_context_window` | `960000` | Maximum context window declared by this entry. |
 | `effective_context_window_percent` | `95` | Effective budget of **912,000 tokens** (`960,000 × 95%`). |
 | `auto_compact_token_limit` | `null` | No explicit compaction threshold supplied by the catalog. |
+
+DeepSeek's own endpoint may train on prompts and completions, according to OpenRouter's data policy, and OpenRouter can route DeepSeek models there unless you pin another endpoint. Codex sends file contents and command output with each step, so on that endpoint use DeepSeek for code you are willing to share. In a session that used a native OpenAI or Claude model, DeepSeek runs only on an endpoint that does not collect data, such as one you pin with [`CODEX_ROUTER_PROVIDER_ORDER`](#openrouter-endpoint-preferences); see [Provider isolation](#provider-isolation).
 
 The installer merges this entry into `models.json` and points `model_catalog_json` at it, so no manual context setting is needed; native OpenAI models keep their bundled limits. The effective budget covers the whole conversation context, including instructions, messages, and tool results; it is not a maximum output length. These are the project's configured limits, not a live measurement of upstream capacity.
 
@@ -297,7 +299,7 @@ Native OpenAI models and Claude models never share a tracked Codex session with 
 | A native OpenAI model or a Claude model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
 | Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model or a Claude model |
 
-Claude counts on either route, by its upstream slug `anthropic/…` or the `anthropic/` catalog prefix. DeepSeek and other OpenRouter models work with either side. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
+Claude counts on either route, by its upstream slug `anthropic/…` or the `anthropic/` catalog prefix. DeepSeek and other OpenRouter models work with either side, but in a session that used a native OpenAI or Claude model, OpenRouter requests, the router's own searches included, carry `provider.data_collection: "deny"`, so OpenRouter routes them only to endpoints that do not collect data, and that output never reaches an endpoint that may train on it. A model pinned to such an endpoint runs as usual; DeepSeek's own endpoint, which may train on prompts, is left out. When no endpoint your OpenRouter settings allow qualifies, Codex receives a `[router diagnostic]` instead of OpenRouter's HTTP 404: pin the model to another endpoint or start a new thread. `request.forwarded` logs `dataCollection`. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
 
 The router keeps each session's side, without any content, in `unified-router/session-sides.json`, so the rule survives restarts. A record expires 30 days after the session's last request. There is no opt-out; `CODEX_ROUTER_TRAINING_MODELS` can only add models to the training tier.
 
@@ -321,7 +323,7 @@ OpenRouter chooses an endpoint for each request. To prefer particular endpoints 
 CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
 ```
 
-The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
+The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field, and in a session that used a native OpenAI or Claude model it adds `data_collection: "deny"` beside it. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
 
 ### OpenRouter-only profile
 
@@ -344,7 +346,7 @@ Use the main configuration for native OpenAI models. The profile supplies transp
 | --- | --- |
 | `capabilities.routingPolicies` | Supported routing policies (`preserve-model-v1`). |
 | `capabilities.openrouterRejectionRecovery` | The bounded OpenRouter 400 recovery contract. |
-| `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v2`, which adds Claude to the protected side). |
+| `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v3`: `session-v2` added Claude to the protected side, and `session-v3` sends OpenRouter requests in protected sessions only to endpoints that do not collect data). |
 | `capabilities.revisionPrecondition` | Support for the `X-Codex-Router-Revision` header below. |
 | `revision` | SHA-256 over the running router's entry file and the modules beside it. |
 
@@ -366,7 +368,7 @@ Credential-bearing files, including the OpenRouter-only profile, are private: th
 
 The router rejects browser origins, unexpected Host headers, and non-JSON model requests, and its per-provider header allowlists keep unrelated credentials from being forwarded. Request bodies are limited to 64 MiB, and a larger one ends with `context_length_exceeded` so Codex compacts the thread; this is a local single-user service, not a shared network gateway.
 
-The verifier checks both configurations against the stored token, their managed settings, and private ownership and permissions. The installed router and every module beside it must match this repository; reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v2"`, and the installed source's SHA-256, so a reachable older router does not pass, and health redirects are rejected.
+The verifier checks both configurations against the stored token, their managed settings, and private ownership and permissions. The installed router and every module beside it must match this repository; reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v3"`, and the installed source's SHA-256, so a reachable older router does not pass, and health redirects are rejected.
 
 Logs never include request or response bodies, authorization headers, or API keys. See [Structured logs](operations.md#structured-logs) for log levels, event names, and platform log locations.
 

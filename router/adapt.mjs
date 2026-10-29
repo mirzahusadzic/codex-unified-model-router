@@ -181,7 +181,7 @@ function normalizeToolHistoryForOpenRouter(input) {
 // Shapes a request for its upstream in place and reports what changed, for the
 // forwarding log. OpenAI requests only lose other providers' reasoning, and
 // Claude's requests are translated to Messages at the wire (openUpstream).
-export function adaptForUpstream(request, provider, upstreamModel, scope) {
+export function adaptForUpstream(request, provider, upstreamModel, scope, { protectedSession = false } = {}) {
   const adaptation = {
     stateReset: false, providerOrder: null, toolHistoryRepairs: null, structuredOutputInstruction: null,
     promptCachingAdded: false, webSearch: { offered: false, restored: 0 },
@@ -207,6 +207,13 @@ export function adaptForUpstream(request, provider, upstreamModel, scope) {
   if (providerOrders.has(upstreamModel) && request.provider === undefined) {
     adaptation.providerOrder = providerOrders.get(upstreamModel);
     request.provider = { order: adaptation.providerOrder };
+  }
+  // After a native OpenAI or Claude model, a session reaches only endpoints
+  // that do not collect data, so their output never goes where it may be
+  // trained on. A model pinned to such an endpoint still runs there; DeepSeek's
+  // own endpoint, which may train on prompts, does not qualify.
+  if (protectedSession && request.provider?.data_collection === undefined) {
+    request.provider = { ...request.provider, data_collection: 'deny' };
   }
   adaptation.stateReset = normalizeStateForOpenRouter(request);
   normalizeReasoningForOpenRouter(request.reasoning, upstreamModel);

@@ -59,6 +59,7 @@ test('Muse Spark 1.3 Contributor catalog entry matches the OpenRouter model capa
   assert.equal(muse.default_reasoning_level, 'medium');
   assert.equal(muse.supports_parallel_tool_calls, false);
   assert.match(muse.description, /Meta may train on prompts and completions/);
+  assert.match(deepseek.description, /DeepSeek's own endpoint may train on prompts and completions/);
 });
 
 test('Claude catalog entries match the model capabilities on each route', () => {

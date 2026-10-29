@@ -73,7 +73,7 @@ flowchart LR
     OR["<b>OpenRouter</b><br/>your API key"]
     AN["<b>Anthropic API</b><br/>optional Console key"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
-    DS["<b>DeepSeek V4.1 Flash</b><br/>default"]
+    DS["<b>DeepSeek V4.1 Flash</b><br/>default; its own endpoint may train"]
     CL["<b>Claude Sonnet · Opus 5.5</b><br/>Anthropic, prompt-cached"]
     AM["<b>Any OpenRouter model</b><br/>with a catalog entry"]
     subgraph TT["Training tier"]
@@ -85,7 +85,7 @@ flowchart LR
     RT -->|"native models"| OA
     RT -->|"anthropic/ with a Console key"| AN
     AN --> CL
-    OR --> DS
+    OR -->|"after OpenAI or Claude: endpoints that keep no data"| DS
     OR -->|"without a Console key"| CL
     OR --> AM
     OR --> US
@@ -110,7 +110,7 @@ flowchart LR
     class TT trainingTier
 ```
 
-<p align="center"><em>All requests go through the router; labels show the route. The dotted lines keep training-tier models out of native OpenAI and Claude sessions.</em></p>
+<p align="center"><em>All requests go through the router; labels show the route. The dotted lines keep training-tier models out of native OpenAI and Claude sessions, and after one of those models a session's OpenRouter requests skip endpoints that collect data, such as DeepSeek's own.</em></p>
 
 ## Install
 
@@ -156,7 +156,7 @@ codex -m anthropic/claude-opus-5-5                      # Claude Opus 5.5
 | **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
 | **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 
-Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. The router refuses to mix them with native OpenAI or Claude models in a tracked Codex session; requests without a session ID are not tracked ([details](docs/setup.md#provider-isolation)).
+Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. DeepSeek's own endpoint may train on prompts too; after a native OpenAI or Claude model, a session's OpenRouter requests go only to endpoints that keep no data, so pin DeepSeek to one to use it there. The router refuses to mix them with native OpenAI or Claude models in a tracked Codex session; requests without a session ID are not tracked ([details](docs/setup.md#provider-isolation)).
 
 Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 

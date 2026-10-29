@@ -187,7 +187,7 @@ function formatWebSearchResults(query, results, failure) {
 
 // One search through OpenRouter's web plugin: the reply is a token or two, and
 // the results arrive as its citations, each with an excerpt of the page.
-export function runWebSearch({ query, upstreamModel, effort, log, register }) {
+export function runWebSearch({ query, upstreamModel, effort, dataCollection, log, register }) {
   return new Promise(resolve => {
     const startedAt = Date.now();
     let settled = false;
@@ -207,6 +207,8 @@ export function runWebSearch({ query, upstreamModel, effort, log, register }) {
       reasoning: { effort },
       max_output_tokens: 4096,
       store: false,
+      // A protected session's query goes only to endpoints that do not collect data.
+      ...(dataCollection ? { provider: { data_collection: dataCollection } } : {}),
     }));
     try {
       const searchRequest = openUpstream({

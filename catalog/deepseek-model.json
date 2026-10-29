@@ -1,7 +1,7 @@
 {
   "slug": "deepseek/deepseek-v4.1-flash-1017",
   "display_name": "DeepSeek V4.1 Flash 1017",
-  "description": "DeepSeek V4.1 Flash 1017 through OpenRouter",
+  "description": "DeepSeek V4.1 Flash 1017 through OpenRouter; DeepSeek's own endpoint may train on prompts and completions",
   "default_reasoning_level": "high",
   "supported_reasoning_levels": [
     {

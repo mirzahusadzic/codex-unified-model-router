@@ -48,6 +48,12 @@ export function sessionSide(requestedModel, provider, upstreamModel) {
   return null;
 }
 
+// A session that used a native OpenAI or Claude model: its OpenRouter
+// requests go only to endpoints that do not collect data (see adaptForUpstream).
+export function protectedSession(sessionId) {
+  return ['openai', 'anthropic'].includes(sessionId ? sessionSides.get(sessionId)?.side : undefined);
+}
+
 function recordSessionSide(sessionId, side) {
   const cutoff = Date.now() - sessionSideRetentionMs;
   for (const [id, entry] of sessionSides) if (entry.at <= cutoff) sessionSides.delete(id);
