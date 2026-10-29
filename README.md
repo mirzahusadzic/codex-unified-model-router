@@ -3,7 +3,7 @@
 [![CI](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml/badge.svg)](https://github.com/mirzahusadzic/codex-unified-model-router/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Node.js 20+](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=node.js&logoColor=white)
-![Codex CLI 0.165](https://img.shields.io/badge/Codex%20CLI-0.165-111111)
+![Codex CLI 0.166](https://img.shields.io/badge/Codex%20CLI-0.166-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
 A loopback-only router that lets one Codex thread switch between native OpenAI, DeepSeek, Anthropic Claude, Meta Muse Spark, and configured OpenRouter models through Codex’s existing model picker. It normalizes mixed-provider messages, tool calls, reasoning state, and structured output; preserves the selected model; streams responses; performs bounded recovery for rejected or oversized OpenRouter requests; and runs web search through the router so later turns retain the results. Training-tier Muse and Ultra Spark sessions are isolated from OpenAI and Claude sessions, with additional fork-context safeguards for spawned workers. Includes cross-platform installers and verifiers, configuration backups, daemon pinning, Linux/macOS/Windows CI, and no npm runtime dependencies.
@@ -114,10 +114,10 @@ flowchart LR
 
 ## Install
 
-Requires Codex CLI (tested with **0.165.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
+Requires Codex CLI (tested with **0.166.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
 
 ```sh
-npm install -g @openai/codex@0.165.0    # skip if you already have Codex 0.165.0
+npm install -g @openai/codex@0.166.0    # skip if you already have Codex 0.166.0
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
 node install.mjs                        # asks for your OpenRouter API key on the first install

@@ -25,7 +25,7 @@ const installedVersion = spawnSync('codex', ['--version'], { encoding: 'utf8', s
 const versionSkip = !installedVersion ? 'the Codex CLI is not installed'
   : installedVersion !== testedVersion ? `Codex ${installedVersion} is installed; the expectations are for ${testedVersion}` : false;
 
-// Reviewed on macOS with Codex 0.165.0. Feature defaults and tools can differ
+// Reviewed on macOS with Codex 0.166.0. Feature defaults and tools can differ
 // by platform, so other platforms skip until their expectations are added.
 const reviewed = {
   darwin: {
@@ -55,7 +55,7 @@ const reviewed = {
       'guardian_reuse_parent_compaction', 'hooks', 'image_generation', 'in_app_browser', 'in_app_chat',
       'in_app_dictation', 'in_app_local_automation', 'in_app_updates', 'in_app_voice', 'incremental_tools',
       'instant_interrupt', 'item_ids', 'mcp_oauth_refresh_coordination', 'mentions_v2', 'multi_agent',
-      'plugin_sharing', 'plugins', 'prediction_preserve_parent_tools', 'realtime_conversation',
+      'plugin_discovery_prefetch', 'plugin_sharing', 'plugins', 'prediction_preserve_parent_tools', 'realtime_conversation',
       'reasoning_effort_override', 'remote_plugin', 'resize_all_images', 'shell_snapshot',
       'shell_tool', 'skill_mcp_dependency_install', 'skill_search', 'sleep_tool', 'sqlite', 'steer',
       'system_proxy_fallback', 'terminal_resize_reflow', 'tool_call_mcp_elicitation',
