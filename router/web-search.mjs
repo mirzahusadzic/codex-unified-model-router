@@ -6,7 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isObject, maxEventLineChars } from './common.mjs';
-import { envFile, logEvent, modelCatalogFile, persistJson } from './config.mjs';
+import { envFile, logEvent, modelCatalogFile, persistJson, providerOrders } from './config.mjs';
 import { contextOverflowMessage, finalEventTypes, openUpstream, openrouterTarget, readUpstreamBody, upstreamHeaders } from './upstream.mjs';
 
 // Web search for OpenRouter models runs in the router. Codex's hosted
@@ -207,8 +207,12 @@ export function runWebSearch({ query, upstreamModel, effort, dataCollection, log
       reasoning: { effort },
       max_output_tokens: 4096,
       store: false,
-      // A protected session's query goes only to endpoints that do not collect data.
-      ...(dataCollection ? { provider: { data_collection: dataCollection } } : {}),
+      // The model's configured endpoint order applies, and a protected session's
+      // query goes only to endpoints that do not collect data.
+      ...(providerOrders.has(upstreamModel) || dataCollection ? { provider: {
+        ...(providerOrders.has(upstreamModel) ? { order: providerOrders.get(upstreamModel) } : {}),
+        ...(dataCollection ? { data_collection: dataCollection } : {}),
+      } } : {}),
     }));
     try {
       const searchRequest = openUpstream({

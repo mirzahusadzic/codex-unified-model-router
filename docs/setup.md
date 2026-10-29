@@ -336,7 +336,7 @@ OpenRouter chooses an endpoint for each request. To prefer particular endpoints 
 CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
 ```
 
-The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field, and in a session that used a native OpenAI or Claude model it adds `data_collection: "deny"` beside it. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
+The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field, and in a session that used a native OpenAI or Claude model it adds `data_collection: "deny"` beside it. The router's own web search requests follow the same order for their model. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
 
 ### OpenRouter-only profile
 

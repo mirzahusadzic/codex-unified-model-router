@@ -2333,6 +2333,18 @@ test('a protected session\'s data policy holds against a caller\'s own provider 
   assert.deepEqual(strict.body.provider, { data_collection: 'deny' });
 });
 
+test('the router\'s search request follows the model\'s configured endpoint order', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+  ]);
+  await exchangeRaw(JSON.stringify({ model: 'openrouter/vendor/pinned', input: 'Find it.', stream: true, tools: [{ type: 'web_search' }] }));
+  const search = forwarded.at(-2);
+  assert.ok(Array.isArray(search.body.plugins));
+  assert.deepEqual(search.body.provider, { order: ['google-vertex/us', 'google-ai-studio'] });
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
