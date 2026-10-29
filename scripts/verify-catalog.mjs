@@ -29,7 +29,10 @@ if (!Array.isArray(installed)) fail(`The model catalog ${catalogFile} has no mod
 
 if (report) {
   const native = installed.filter(model => !usesOpenRouterPrompts(model.slug) && model.visibility !== 'hide').length;
-  console.log(`Router models: ${installed.filter(model => usesOpenRouterPrompts(model.slug)).map(model => model.slug).join(', ')}`);
+  const router = installed.filter(model => usesOpenRouterPrompts(model.slug));
+  console.log(`Router models: ${router.filter(model => model.visibility !== 'hide').map(model => model.slug).join(', ')}`);
+  const byName = router.filter(model => model.visibility === 'hide').map(model => model.slug);
+  if (byName.length > 0) console.log(`Router models usable by name: ${byName.join(', ')}`);
   console.log(native ? `Native OpenAI models: ${native} in /model (require a ChatGPT plan)` : 'Native OpenAI models: hidden from /model');
   process.exit(0);
 }

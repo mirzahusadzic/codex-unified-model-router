@@ -121,6 +121,18 @@ test('config upgrades preserve unrelated tables and synchronize the local token'
   assert.notEqual(run('scripts/verify-credentials.mjs', [home]).status, 0);
 });
 
+test('an Anthropic key in the router environment survives reinstallation, and a sign-in token fails verification', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  writeFileSync(envFile, `${readFileSync(envFile, 'utf8')}ANTHROPIC_API_KEY=sk-ant-api03-synthetic\n`);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  assert.match(readFileSync(envFile, 'utf8'), /^ANTHROPIC_API_KEY=sk-ant-api03-synthetic$/m);
+  succeeds(run('scripts/merge-config.mjs', [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')]));
+  succeeds(run('scripts/verify-credentials.mjs', [home]));
+  writeFileSync(envFile, readFileSync(envFile, 'utf8').replace('sk-ant-api03-synthetic', 'sk-ant-oat01-synthetic'));
+  assert.match(run('scripts/verify-credentials.mjs', [home]).stderr, /Claude sign-in token/);
+});
+
 test('config merges disable Codex apps by default inside a single features table', t => {
   const { home, envFile, config } = fixture(t);
   succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
@@ -272,6 +284,19 @@ test('router refuses to start without a local authentication token', t => {
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /CODEX_ROUTER_TOKEN is required/);
+});
+
+test('router ignores an Anthropic subscription sign-in token', t => {
+  const { envFile } = fixture(t);
+  writeFileSync(envFile, `CODEX_ROUTER_TOKEN=${'b'.repeat(64)}\nANTHROPIC_API_KEY=sk-ant-oat01-synthetic\n`);
+  // The router keeps running, so the timeout ends it after its startup records.
+  const result = spawnSync(process.execPath, [join(root, 'router/unified-router.mjs')], {
+    encoding: 'utf8', timeout: 2000,
+    env: { ...process.env, CODEX_ROUTER_ENV_FILE: envFile, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_PORT: '0',
+      CODEX_ROUTER_LOG_LEVEL: 'info', OPENROUTER_API_KEY: 'synthetic-key', ANTHROPIC_API_KEY: '' },
+  });
+  assert.match(result.stderr, /"event":"anthropic.sign_in_token_ignored"/);
+  assert.match(result.stdout, /"event":"router.ready".*"anthropicConfigured":false/);
 });
 
 test('OpenRouter-only profile supplies transport and strict routing without changing mixed-provider defaults', t => {

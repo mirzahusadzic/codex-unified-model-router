@@ -7,9 +7,9 @@ Source: @openai/codex 0.165.0, codex debug models --bundled
 Upstream project: https://github.com/openai/codex
 
 Modified for Codex Unified Model Router in 2026, derived from the adjacent
-DeepSeek entry: Claude Sonnet 5.5 model identity, OpenRouter routing,
-capabilities, context limits, reasoning settings, and main and persistent
-instructions maintained in prompts/.
+DeepSeek entry: Claude Sonnet 5.5 model identity, Anthropic API routing with an
+OpenRouter fallback, capabilities, context limits, reasoning settings, and
+main and persistent instructions maintained in prompts/.
 
 The following model_messages sections match templates in the bundled Codex
 catalog: approvals, collaboration_modes, auto_review, multi_agent,

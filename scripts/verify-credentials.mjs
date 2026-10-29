@@ -12,6 +12,10 @@ const token = env.match(/^CODEX_ROUTER_TOKEN=([a-f0-9]{64})\r?$/m)?.[1];
 if (!token || !/^OPENROUTER_API_KEY=.+\r?$/m.test(env)) {
   throw new Error('Router credentials are missing; rerun the installer');
 }
+// Anthropic does not allow subscription sign-in tokens in other tools; the router ignores one.
+if (/^ANTHROPIC_API_KEY=["']?sk-ant-oat/m.test(env)) {
+  throw new Error('ANTHROPIC_API_KEY holds a Claude sign-in token; use an API key from the Claude Console');
+}
 function managedBlock(text, name) {
   const lines = logicalLines(text).map(line => line.trim());
   const begins = lines.flatMap((line, index) => (line === `# BEGIN codex-unified-router ${name}` ? [index] : []));

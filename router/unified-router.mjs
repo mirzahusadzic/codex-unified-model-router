@@ -6,13 +6,16 @@ import { StringDecoder } from 'node:string_decoder';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { anthropicHeaders, anthropicRefusal, anthropicResponse, isAnthropicThinking, messagesRequest } from './anthropic.mjs';
+import { contextOverflowPattern, isObject, maxEventLineChars, routerRevision as sourceRevision } from './common.mjs';
 
 const host = '127.0.0.1';
 const port = Number(process.env.CODEX_ROUTER_PORT || 18766);
 const envFile = process.env.CODEX_ROUTER_ENV_FILE || join(homedir(), '.codex', 'unified-router', 'openrouter.env');
 const modelCatalogFile = process.env.CODEX_MODEL_CATALOG || join(homedir(), '.codex', 'models.json');
 const maxBodyBytes = 64 * 1024 * 1024;
-const routerRevision = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
+const routerRevision = sourceRevision(fileURLToPath(import.meta.url));
 
 function readEnvironmentFile(file) {
   if (!existsSync(file)) return {};
@@ -41,6 +44,14 @@ if (!Object.hasOwn(logLevels, configuredLogLevel)) {
   throw new Error('CODEX_ROUTER_LOG_LEVEL must be error, info, or debug');
 }
 const openrouterApiKey = process.env.OPENROUTER_API_KEY || fileEnvironment.OPENROUTER_API_KEY || '';
+// Claude runs on Anthropic's API only with a Console API key. Anthropic does
+// not allow subscription sign-in tokens in other tools, so one is ignored.
+const anthropicApiKey = (() => {
+  const key = process.env.ANTHROPIC_API_KEY || fileEnvironment.ANTHROPIC_API_KEY || '';
+  if (!key.startsWith('sk-ant-oat')) return key;
+  logEvent('error', 'anthropic.sign_in_token_ignored');
+  return '';
+})();
 const routerToken = process.env.CODEX_ROUTER_TOKEN || fileEnvironment.CODEX_ROUTER_TOKEN || '';
 const rejectedRequestDir = String(
   process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR
@@ -122,7 +133,7 @@ const sessionSides = loadSessionSides();
 function sessionSide(requestedModel, provider, upstreamModel) {
   if (provider === 'openai') return 'openai';
   if (requestedModel.startsWith('ultra-spark/') || trainingModels.has(upstreamModel)) return 'training';
-  if (upstreamModel.startsWith('anthropic/')) return 'anthropic';
+  if (provider === 'anthropic' || upstreamModel.startsWith('anthropic/')) return 'anthropic';
   return null;
 }
 
@@ -131,6 +142,48 @@ function recordSessionSide(sessionId, side) {
   for (const [id, entry] of sessionSides) if (entry.at <= cutoff) sessionSides.delete(id);
   sessionSides.set(sessionId, { side, at: Date.now() });
   persistJson(sessionSidesFile, Object.fromEntries(sessionSides), 'session.isolation_persist_failed');
+}
+
+// A session keeps the route its first Claude request took. Prompt caches and
+// Claude's signed thinking stay with the route that made them, so moving a
+// thread costs a full cache write and its earlier reasoning. Records follow the
+// isolation records' retention and survive restarts.
+const claudeRoutesFile = join(dirname(envFile), 'claude-routes.json');
+const claudeRoutes = loadClaudeRoutes();
+// After a refusal no retry can fix, such as spent credits, Anthropic's API is
+// tried again for new sessions an hour later.
+const anthropicRetryMs = 60 * 60 * 1000;
+let anthropicUnavailableUntil = 0;
+
+function loadClaudeRoutes() {
+  try {
+    const stored = JSON.parse(readFileSync(claudeRoutesFile, 'utf8'));
+    const cutoff = Date.now() - sessionSideRetentionMs;
+    return new Map(Object.entries(stored).filter(([, entry]) => ['anthropic', 'openrouter'].includes(entry?.route)
+      && entry.at > cutoff));
+  } catch (error) {
+    if (error.code !== 'ENOENT') logEvent('error', 'claude.routes_load_failed', { errorCode: error.code || null });
+    return new Map();
+  }
+}
+
+function recordClaudeRoute(sessionId, route) {
+  if (!sessionId) return;
+  const recorded = claudeRoutes.get(sessionId);
+  if (recorded?.route === route && Date.now() - recorded.at < sessionSideRefreshMs) return;
+  const cutoff = Date.now() - sessionSideRetentionMs;
+  for (const [id, entry] of claudeRoutes) if (entry.at <= cutoff) claudeRoutes.delete(id);
+  claudeRoutes.set(sessionId, { route, at: Date.now() });
+  persistJson(claudeRoutesFile, Object.fromEntries(claudeRoutes), 'claude.routes_persist_failed');
+}
+
+// The session's route while it can still be used; otherwise Anthropic's API
+// when it has a key and has not refused recently, and OpenRouter after that.
+function claudeRoute(sessionId) {
+  const recorded = sessionId ? claudeRoutes.get(sessionId)?.route : undefined;
+  if (recorded === 'openrouter' && openrouterApiKey) return 'openrouter';
+  if ((anthropicApiKey && Date.now() >= anthropicUnavailableUntil) || !openrouterApiKey) return 'anthropic';
+  return 'openrouter';
 }
 
 // Ultra Spark workers must start with fork_context: false, but only the prompt
@@ -181,6 +234,8 @@ function forkedLeadCallIds(sessionId, input) {
 }
 
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
+const anthropicRejectedDiagnostic = '[router diagnostic] Anthropic rejected this step. The thread is intact; retry or start a new thread.';
+const anthropicRefusedDiagnostic = reason => `[router diagnostic] Anthropic's API refused this request (${reason}), and no OpenRouter key is configured to fall back to. Check ANTHROPIC_API_KEY and the organization's credits and limits in the Claude Console.`;
 const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
 const openrouterRecoveryCompactBytes = 1024 * 1024;
 const openrouterRecoveryCompactItems = 80;
@@ -200,10 +255,6 @@ function isAuthenticated(headers) {
     && timingSafeEqual(Buffer.from(supplied), Buffer.from(routerToken));
 }
 
-function isObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function validRequest(body) {
   return isObject(body)
     && typeof body.model === 'string' && body.model.trim().length > 0
@@ -218,8 +269,18 @@ function validRequest(body) {
 // OpenRouter slugs: `deepseek/` and `openrouter/<vendor>/<model>`, plus the
 // `ultra-spark/` alias, which selects DeepSeek with the delegation policy.
 const openrouterPrefixes = ['deepseek/', 'openrouter/', 'ultra-spark/'];
+// `anthropic/<model ID>` selects Claude on its route: Anthropic's API, or
+// OpenRouter's copy of the same model (see claudeRoute).
+const anthropicPrefix = 'anthropic/';
+const anthropicTarget = {
+  provider: 'anthropic',
+  hostname: 'api.anthropic.com',
+  path: '/v1/messages',
+  protocol: https,
+};
 
 function routeFor(model) {
+  if (typeof model === 'string' && model.startsWith(anthropicPrefix)) return anthropicTarget;
   if (typeof model === 'string' && openrouterPrefixes.some(prefix => model.startsWith(prefix))) {
     return {
       provider: 'openrouter',
@@ -237,7 +298,11 @@ function routeFor(model) {
 }
 
 function upstreamModelFor(model, provider) {
-  if (provider !== 'openrouter' || typeof model !== 'string') return model;
+  if (typeof model !== 'string') return model;
+  if (provider === 'anthropic') return model.slice(anthropicPrefix.length);
+  if (provider !== 'openrouter') return model;
+  // OpenRouter writes Claude's version with a dot: claude-sonnet-5-5 is anthropic/claude-sonnet-5.5.
+  if (model.startsWith(anthropicPrefix)) return model.replace(/-(\d+)-(\d+)$/, '-$1.$2');
   if (model.startsWith('openrouter/')) return model.slice('openrouter/'.length);
   if (model.startsWith('ultra-spark/')) return `deepseek/${model.slice('ultra-spark/'.length)}`;
   return model;
@@ -931,16 +996,30 @@ function sessionRefusal({ requestId, sessionId, threadId, requestedModel, side, 
 }
 
 // Shapes a request for its upstream in place and reports what changed, for the
-// forwarding log. OpenAI requests only lose OpenRouter's plaintext reasoning.
+// forwarding log. OpenAI requests only lose other providers' reasoning, and
+// Claude's requests are translated to Messages at the wire (openUpstream).
 function adaptForUpstream(request, provider, upstreamModel, scope) {
   const adaptation = {
     stateReset: false, providerOrder: null, toolHistoryRepairs: null, structuredOutputInstruction: null,
     promptCachingAdded: false, webSearch: { offered: false, restored: 0 },
   };
-  if (provider !== 'openrouter') {
+  if (provider === 'openai') {
     request.input = normalizeInputForOpenAI(request.input);
     return adaptation;
   }
+  if (provider === 'anthropic') {
+    // Searches run through OpenRouter's web plugin, so without its key Codex's search is not offered.
+    if (!openrouterApiKey && Array.isArray(request.tools)) {
+      request.tools = request.tools.filter(tool => !['web_search', 'web_search_preview'].includes(tool?.type));
+    }
+    adaptation.stateReset = normalizeStateForOpenRouter(request);
+    adaptation.webSearch = overrideWebSearchForOpenRouter(request, scope);
+    // The Messages translation pairs calls with their outputs and adds the cache breakpoint.
+    adaptation.promptCachingAdded = true;
+    return adaptation;
+  }
+  // Claude's signed thinking is readable only on Anthropic's API.
+  if (Array.isArray(request.input)) request.input = request.input.filter(item => !isAnthropicThinking(item));
   // Fallbacks stay enabled so an endpoint outage degrades to a cache miss.
   if (providerOrders.has(upstreamModel) && request.provider === undefined) {
     adaptation.providerOrder = providerOrders.get(upstreamModel);
@@ -960,6 +1039,8 @@ function adaptForUpstream(request, provider, upstreamModel, scope) {
 function normalizeInputForOpenAI(input) {
   if (!Array.isArray(input)) return input;
   return input.flatMap(item => {
+    // Claude's signed thinking would fail the backend's decryption.
+    if (isAnthropicThinking(item)) return [];
     if (item?.type !== 'reasoning' || !Array.isArray(item.content) || item.content.length === 0) {
       return [item];
     }
@@ -970,6 +1051,7 @@ function normalizeInputForOpenAI(input) {
     return [reasoning];
   });
 }
+
 
 function logEvent(level, event, fields = {}) {
   if (logLevels[level] > logLevels[configuredLogLevel]) return;
@@ -998,6 +1080,14 @@ function upstreamTrace(headers) {
 }
 
 function upstreamHeaders(requestHeaders, provider, bodyLength) {
+  if (provider === 'anthropic') {
+    if (!anthropicApiKey) {
+      const error = new Error('ANTHROPIC_API_KEY is not configured for the Codex Unified Model Router');
+      error.statusCode = 503;
+      throw error;
+    }
+    return anthropicHeaders(anthropicApiKey, bodyLength);
+  }
   const allowed = ['accept', 'user-agent'];
   if (provider === 'openai') {
     // Codex 0.163 sends hyphenated session headers; earlier versions used
@@ -1035,17 +1125,25 @@ const openrouterTarget = routeFor('openrouter/');
 // Every request the router sends upstream starts here: the same options,
 // timeout, and error handling, and the body is sent at once. Callers track the
 // returned request so a client disconnect can cancel it.
-function openUpstream({ target, headers, body, timeoutMs = upstreamTimeoutMs, onError }, onResponse) {
+function openUpstream({ target, headers, body, timeoutMs = upstreamTimeoutMs, onError, log = () => {} }, onResponse) {
+  let sent = body;
+  let respond = onResponse;
+  if (target.provider === 'anthropic') {
+    const translated = messagesRequest(JSON.parse(body.toString('utf8')));
+    sent = Buffer.from(JSON.stringify(translated.body));
+    headers = { ...headers, 'content-length': String(sent.length) };
+    respond = upstreamResponse => onResponse(anthropicResponse(upstreamResponse, translated.declared, log));
+  }
   const upstream = target.protocol.request({
     hostname: target.hostname,
     path: target.path,
     method: 'POST',
     headers,
     timeout: timeoutMs,
-  }, onResponse);
+  }, respond);
   upstream.on('timeout', () => upstream.destroy(new Error('Upstream request timed out')));
   upstream.on('error', onError);
-  upstream.end(body);
+  upstream.end(sent);
   return upstream;
 }
 
@@ -1103,8 +1201,6 @@ function captureRejectedRequest({
     return null;
   }
 }
-
-const contextOverflowPattern = /context[ _-]?(?:length|window)|maximum context|too many tokens|prompt is too long/i;
 
 function parseUpstreamError(body) {
   try {
@@ -1170,7 +1266,6 @@ function readUpstreamBody(stream, limit = maxCapturedUpstreamErrorBytes) {
 const usageLogging = logLevels[configuredLogLevel] >= logLevels.info;
 const finalEventTypes = new Set(['response.completed', 'response.incomplete', 'response.failed']);
 const finalEventPattern = /"type"\s*:\s*"response\.(?:completed|incomplete|failed)"/;
-const maxEventLineChars = 16 * 1024 * 1024;
 
 // Only numbers are kept, one level deep, so usage can never carry content.
 function tokenCounts(usage) {
@@ -1413,9 +1508,9 @@ function sendSyntheticResponse(response, requestId, diagnostic, finalEvents) {
   response.end();
 }
 
-function sendResponsesDiagnostic(response, requestId) {
+function sendResponsesDiagnostic(response, requestId, text = openrouterRejectedDiagnostic, diagnostic = 'openrouter-request-rejected') {
   // Omit usage so Codex keeps its last real token accounting.
-  sendSyntheticResponse(response, requestId, 'openrouter-request-rejected', responseId => [
+  sendSyntheticResponse(response, requestId, diagnostic, responseId => [
     {
       type: 'response.output_item.done',
       item: {
@@ -1423,7 +1518,7 @@ function sendResponsesDiagnostic(response, requestId) {
         id: responseId.replace(/^resp_/, 'msg_'),
         role: 'assistant',
         phase: 'final_answer',
-        content: [{ type: 'output_text', text: openrouterRejectedDiagnostic }],
+        content: [{ type: 'output_text', text }],
       },
     },
     {
@@ -1513,6 +1608,7 @@ const server = http.createServer((request, response) => {
       ok: true,
       openai: true,
       openrouter: Boolean(openrouterApiKey),
+      anthropic: Boolean(anthropicApiKey),
       clientAuth: true,
       revision: routerRevision,
       capabilities: {
@@ -1575,9 +1671,10 @@ const server = http.createServer((request, response) => {
   request.on('end', () => {
     if (rejected || response.destroyed) return;
     const startedAt = Date.now();
+    const rawBody = Buffer.concat(chunks);
     let parsed;
     try {
-      parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      parsed = JSON.parse(rawBody.toString('utf8'));
     } catch (error) {
       sendJson(response, 400, { error: { message: `Invalid JSON request: ${error.message}` } });
       return;
@@ -1598,19 +1695,22 @@ const server = http.createServer((request, response) => {
     // The router never substitutes another model, including for structured
     // output; preserve-model-v1 remains accepted for clients that send it.
     const model = requestedModel;
-    const target = routeFor(model);
+    let target = routeFor(model);
+    if (target.provider === 'anthropic' && claudeRoute(requestInfo.sessionId) === 'openrouter') target = openrouterTarget;
 
-    const upstreamModel = upstreamModelFor(model, target.provider);
+    let upstreamModel = upstreamModelFor(model, target.provider);
+    const side = sessionSide(requestedModel, target.provider, upstreamModel);
     const refusal = sessionRefusal({ requestId, sessionId: requestInfo.sessionId, threadId, requestedModel,
-      side: sessionSide(requestedModel, target.provider, upstreamModel), input: parsed.input });
+      side, input: parsed.input });
     if (refusal) {
       sendJson(response, 409, { error: refusal });
       return;
     }
-    const {
+    if (side === 'anthropic') recordClaudeRoute(requestInfo.sessionId, target.provider);
+    let {
       stateReset, providerOrder, toolHistoryRepairs, structuredOutputInstruction, promptCachingAdded, webSearch,
     } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId);
-    const structuredOutputAdapted = Boolean(structuredOutputInstruction);
+    let structuredOutputAdapted = Boolean(structuredOutputInstruction);
     parsed.model = upstreamModel;
     let body;
     try {
@@ -1629,6 +1729,24 @@ const server = http.createServer((request, response) => {
     let currentUpstream;
     let upstreamErrorLogged = false;
     let recoveryAttempted = false;
+    // After a refusal no retry can fix, the same request goes to OpenRouter's
+    // copy of the model, and the session stays there.
+    const fallBackToOpenRouter = () => {
+      target = openrouterTarget;
+      upstreamModel = upstreamModelFor(model, target.provider);
+      recordClaudeRoute(requestInfo.sessionId, target.provider);
+      parsed = JSON.parse(rawBody.toString('utf8'));
+      ({
+        stateReset, providerOrder, toolHistoryRepairs, structuredOutputInstruction, promptCachingAdded, webSearch,
+      } = adaptForUpstream(parsed, target.provider, upstreamModel, requestInfo.sessionId));
+      structuredOutputAdapted = Boolean(structuredOutputInstruction);
+      parsed.model = upstreamModel;
+      body = Buffer.from(JSON.stringify(parsed));
+      recoveryAttempted = false;
+    };
+    const anthropicLog = (level, event, fields) => logEvent(level, event, {
+      requestId, sessionId: requestInfo.sessionId, model, ...fields,
+    });
     const upstreamError = error => {
       if (clientClosed || response.writableFinished || upstreamErrorLogged) return;
       upstreamFailed = true;
@@ -1687,7 +1805,7 @@ const server = http.createServer((request, response) => {
         return;
       }
       const continuation = openUpstream({
-        target, headers, body: continuationRequestBody, onError: () => resolve(null),
+        target, headers, body: continuationRequestBody, onError: () => resolve(null), log: anthropicLog,
       }, continuationResponse => {
         const status = continuationResponse.statusCode || null;
         logEvent(status >= 200 && status < 300 ? 'info' : 'error', 'web_search.continuation', {
@@ -1748,7 +1866,7 @@ const server = http.createServer((request, response) => {
 
       let upstream;
       try {
-        upstream = openUpstream({ target, headers, body: requestBody, onError: upstreamError }, upstreamResponse => {
+        upstream = openUpstream({ target, headers, body: requestBody, onError: upstreamError, log: anthropicLog }, upstreamResponse => {
           if (response.destroyed) {
             upstreamResponse.destroy();
             return;
@@ -1774,7 +1892,9 @@ const server = http.createServer((request, response) => {
             ...trace,
           });
 
-          if (target.provider === 'openrouter' && status === 400) {
+          // Anthropic's refusals are read before Codex sees them: a 401 would make Codex refresh its ChatGPT sign-in.
+          if ((target.provider === 'openrouter' && status === 400)
+              || (target.provider === 'anthropic' && [400, 401, 402, 403, 404, 429].includes(status))) {
             void (async () => {
               const upstreamBody = await readUpstreamBody(upstreamResponse);
               logEvent('error', 'upstream.response_finished', {
@@ -1789,6 +1909,30 @@ const server = http.createServer((request, response) => {
                 ...trace,
               });
 
+              const refusalReason = target.provider === 'anthropic' ? anthropicRefusal(status, upstreamBody.body) : null;
+              if (refusalReason) {
+                anthropicUnavailableUntil = Date.now() + anthropicRetryMs;
+                logEvent('error', 'anthropic.refused', {
+                  requestId, sessionId: requestInfo.sessionId, model, status, reason: refusalReason, attempt,
+                  fallback: Boolean(openrouterApiKey), ...trace,
+                });
+                if (clientClosed || response.destroyed) return;
+                if (!openrouterApiKey) {
+                  sendResponsesDiagnostic(response, requestId, anthropicRefusedDiagnostic(refusalReason), 'anthropic-request-refused');
+                  return;
+                }
+                fallBackToOpenRouter();
+                sendUpstream({ requestBody: body, attempt: attempt + 1 });
+                return;
+              }
+              // Other rate limits pass through with their retry-after, which Codex honours.
+              if (status === 429) {
+                if (clientClosed || response.destroyed) return;
+                response.writeHead(status, responseHeaders(upstreamResponse.headers));
+                response.end(upstreamBody.body);
+                return;
+              }
+
               const capture = captureRejectedRequest({
                 requestId,
                 attempt,
@@ -1799,6 +1943,7 @@ const server = http.createServer((request, response) => {
               logEvent('error', 'openrouter.request_rejected', {
                 requestId,
                 sessionId: requestInfo.sessionId,
+                provider: target.provider,
                 model,
                 upstreamModel,
                 status,
@@ -1860,7 +2005,8 @@ const server = http.createServer((request, response) => {
                 payloadSha256: requestHash,
                 ...trace,
               });
-              sendResponsesDiagnostic(response, requestId);
+              if (target.provider === 'anthropic') sendResponsesDiagnostic(response, requestId, anthropicRejectedDiagnostic, 'anthropic-request-rejected');
+              else sendResponsesDiagnostic(response, requestId);
             })().catch(error => upstreamError(error));
             return;
           }
@@ -1869,7 +2015,7 @@ const server = http.createServer((request, response) => {
           const streams = [upstreamResponse, response];
           const eventStream = status >= 200 && status < 300
             && /^text\/event-stream/i.test(upstreamResponse.headers?.['content-type'] || '');
-          if (eventStream && target.provider === 'openrouter') {
+          if (eventStream && target.provider !== 'openai') {
             const effort = webSearch.offered ? webSearchEffort(requestedModel) : null;
             streams.splice(1, 0, openRouterStream({
               interceptSearches: webSearch.offered,
@@ -1879,7 +2025,8 @@ const server = http.createServer((request, response) => {
               closed: clientGone,
               scope: requestInfo.sessionId,
               search: query => runWebSearch({
-                query, upstreamModel, effort, register: track,
+                // Searches run through OpenRouter, on its copy of a Claude model.
+                query, upstreamModel: upstreamModelFor(model, 'openrouter'), effort, register: track,
                 log: (level, event, fields) => logEvent(level, event, { requestId, sessionId: requestInfo.sessionId, model, ...fields }),
               }),
             }));
@@ -1935,6 +2082,7 @@ server.listen(port, host, () => {
     host,
     port,
     openrouterConfigured: Boolean(openrouterApiKey),
+    anthropicConfigured: Boolean(anthropicApiKey),
     revision: routerRevision,
   });
 });

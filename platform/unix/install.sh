@@ -207,6 +207,10 @@ install -m 600 "$staged_env" "$router_env"
 install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
+# The router's modules sit beside its entry file, which is installed as router.mjs.
+for module in "$repo_dir"/router/*.mjs; do
+  [[ "$(basename "$module")" == unified-router.mjs ]] || install -m 600 "$module" "$router_dir/$(basename "$module")"
+done
 install -m 600 "$repo_dir/router/unified-router.mjs" "$router_file"
 
 if [[ -f "$codex_home/deepseek.config.toml" ]]; then

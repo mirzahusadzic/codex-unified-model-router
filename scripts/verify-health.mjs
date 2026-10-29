@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
+import { routerRevision } from '../router/common.mjs';
 
 const [source, endpoint] = process.argv.slice(2);
 if (!source) throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url]');
-const revision = createHash('sha256').update(readFileSync(source)).digest('hex');
+const revision = routerRevision(source);
 
 async function fetchHealth(endpoint) {
   const url = new URL(endpoint);

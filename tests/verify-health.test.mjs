@@ -6,12 +6,13 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { routerRevision } from '../router/common.mjs';
 
 const source = fileURLToPath(new URL('../router/unified-router.mjs', import.meta.url));
 const verifier = fileURLToPath(new URL('../scripts/verify-health.mjs', import.meta.url));
 const health = {
   ok: true, openai: true, openrouter: true, clientAuth: true,
-  revision: createHash('sha256').update(readFileSync(source)).digest('hex'),
+  revision: routerRevision(source),
   capabilities: {
     routingPolicies: ['preserve-model-v1'],
     openrouterRejectionRecovery: 'completed-diagnostic-v1',
@@ -20,7 +21,9 @@ const health = {
 };
 
 test('health verifier requires current source identity and capabilities, not just old booleans', () => {
-  for (const value of [health, { ...health, revision: '0'.repeat(64) },
+  // The revision covers the router's modules, not only its entry file.
+  const entryOnly = createHash('sha256').update(readFileSync(source)).digest('hex');
+  for (const value of [health, { ...health, revision: '0'.repeat(64) }, { ...health, revision: entryOnly },
     { ...health, capabilities: undefined }, { ...health, capabilities: { routingPolicies: ['preserve-model-v1'] } },
     { ...health, capabilities: { routingPolicies: 'preserve-model-v1', revisionPrecondition: true } },
     { ...health, capabilities: { ...health.capabilities, openrouterRejectionRecovery: undefined } },

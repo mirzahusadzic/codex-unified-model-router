@@ -222,6 +222,10 @@ try {
     [System.IO.File]::WriteAllText($OpenRouterProfile, [System.IO.File]::ReadAllText($OpenRouterOut, $Utf8NoBom), $Utf8NoBom)
     Write-Step 'Installing the loopback router at 127.0.0.1:18766'
     Copy-Item -Force $ModelsFile (Join-Path $CodexHome 'models.json')
+    # The router's modules sit beside its entry file, which is installed as router.mjs.
+    Get-ChildItem -LiteralPath (Join-Path $RepoDir 'router') -Filter '*.mjs' |
+        Where-Object { $_.Name -ne 'unified-router.mjs' } |
+        ForEach-Object { Copy-Item -Force $_.FullName (Join-Path $RouterDir $_.Name) }
     Copy-Item -Force (Join-Path $RepoDir 'router\unified-router.mjs') $RouterFile
 
     $LegacyProfile = Join-Path $CodexHome 'deepseek.config.toml'

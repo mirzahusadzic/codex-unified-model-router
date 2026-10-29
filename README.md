@@ -71,6 +71,7 @@ flowchart LR
     CX["<b>Codex</b><br/>CLI and app-server"]
     RT["<b>Unified Model Router</b><br/>127.0.0.1, local token"]
     OR["<b>OpenRouter</b><br/>your API key"]
+    AN["<b>Anthropic API</b><br/>optional Console key"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
     DS["<b>DeepSeek V4.1 Flash</b><br/>default"]
     CL["<b>Claude Sonnet · Opus 5.5</b><br/>Anthropic, prompt-cached"]
@@ -82,8 +83,10 @@ flowchart LR
     CX -->|"Responses API"| RT
     RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
     RT -->|"native models"| OA
+    RT -->|"anthropic/ with a Console key"| AN
+    AN --> CL
     OR --> DS
-    OR --> CL
+    OR -->|"without a Console key"| CL
     OR --> AM
     OR --> US
     US -->|"spawns up to 10 workers"| MU
@@ -102,7 +105,7 @@ flowchart LR
     class OR,AM openrouter
     class DS,US deepseek
     class CX,OA openai
-    class CL anthropic
+    class AN,CL anthropic
     class MU training
     class TT trainingTier
 ```
@@ -140,8 +143,8 @@ On an existing Codex configuration, the installer asks before merging into it an
 codex                                                   # DeepSeek V4.1 Flash 1017
 codex -m ultra-spark/deepseek-v4.1-flash-1017           # Ultra Spark mode
 codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contributor
-codex -m openrouter/anthropic/claude-sonnet-5.5         # Claude Sonnet 5.5
-codex -m openrouter/anthropic/claude-opus-5.5           # Claude Opus 5.5
+codex -m anthropic/claude-sonnet-5-5                    # Claude Sonnet 5.5
+codex -m anthropic/claude-opus-5-5                      # Claude Opus 5.5
 ```
 
 | Model | Best for |
@@ -149,7 +152,7 @@ codex -m openrouter/anthropic/claude-opus-5.5           # Claude Opus 5.5
 | **DeepSeek V4.1 Flash 1017** (default) | Everyday agentic coding with a long context. [Details](docs/setup.md#deepseek-context-window) |
 | **DeepSeek · Ultra Spark** | Broad tasks such as reviews, audits, and changes across many files. [Details](docs/setup.md#ultra-spark-mode) |
 | **Muse Spark 1.3 Contributor** | Fast, inexpensive work on public code. [Details](docs/setup.md#muse-spark-13-contributor) |
-| **Claude Sonnet 5.5 · Claude Opus 5.5** | Hard problems that need Anthropic's models; prompt caching keeps long threads affordable. [Details](docs/setup.md#claude-sonnet-55-and-claude-opus-55) |
+| **Claude Sonnet 5.5 · Claude Opus 5.5** | Hard problems that need Anthropic's models; prompt caching keeps long threads affordable. Runs on Anthropic's API when you add `ANTHROPIC_API_KEY` to the [router settings](docs/setup.md#router-settings), otherwise on OpenRouter. [Details](docs/setup.md#claude-sonnet-55-and-claude-opus-55) |
 | **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
 | **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 

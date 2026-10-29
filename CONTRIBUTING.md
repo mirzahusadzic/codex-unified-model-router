@@ -18,8 +18,10 @@ The installed router is a separate copy under your Codex home directory. Run `no
 
 | Path | Contents |
 | --- | --- |
-| `router/unified-router.mjs` | The router: routing, request adaptation, recovery, provider isolation, and streaming. |
-| `catalog/` | OpenRouter model entries for the Codex catalog, each with a license notice. |
+| `router/unified-router.mjs` | The router: routing, request adaptation, recovery, provider isolation, and streaming. The installers copy it as `router.mjs`, with the modules beside it. |
+| `router/anthropic.mjs` | Claude on Anthropic's API: Responses-to-Messages request translation, the streamed-event translation back, and refusals that move Claude to OpenRouter. |
+| `router/common.mjs` | Helpers shared by the router's modules and the health verifier, including the source revision. |
+| `catalog/` | Router model entries for the Codex catalog (OpenRouter models and Claude), each with a license notice. |
 | `prompts/` | Shared OpenRouter instructions and the Ultra Spark delegation policy. |
 | `install.mjs` | Cross-platform entry point that runs the installer or verifier for the current OS. |
 | `platform/` | Per-OS installers and verifiers in `unix/` and `windows/`, plus the Windows access-control helper; see the [platform index](platform/README.md). |

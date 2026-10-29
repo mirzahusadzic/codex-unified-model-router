@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-// Every entry the router forwards to OpenRouter shares the maintained prompts.
+// Every entry the router serves (OpenRouter models and Claude, on either of its
+// routes) shares the maintained prompts.
 // An entry may append one more prompt from the same directory by naming it in
 // `router_instructions_suffix`; the generated Codex catalog omits that field.
 export const suffixField = 'router_instructions_suffix';
 
 export function usesOpenRouterPrompts(slug) {
-  return ['deepseek/', 'openrouter/', 'ultra-spark/'].some(prefix => slug.startsWith(prefix));
+  return ['anthropic/', 'deepseek/', 'openrouter/', 'ultra-spark/'].some(prefix => slug.startsWith(prefix));
 }
 
 export function readPrompts(instructionsFile, persistentFile) {

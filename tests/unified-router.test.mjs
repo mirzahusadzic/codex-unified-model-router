@@ -20,6 +20,7 @@ writeFileSync(join(routerHome, 'session-sides.json'), JSON.stringify({
   'isolation-expired': { side: 'openai', at: Date.now() - 31 * dayMs },
 }));
 process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
 process.env.CODEX_ROUTER_REJECTED_REQUEST_DIR = rejectedRequestDir;
 process.env.CODEX_ROUTER_TOKEN = 'a'.repeat(64);
 process.env.CODEX_ROUTER_PORT = '18766';
@@ -412,8 +413,7 @@ test('Claude requests through OpenRouter get automatic prompt caching; other mod
   const explicit = await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello',
     cache_control: { type: 'ephemeral', ttl: '1h' } });
   assert.deepEqual(explicit.body.cache_control, { type: 'ephemeral', ttl: '1h' });
-  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/meta/muse-spark-1.3-contributor',
-    'anthropic/claude-sonnet-5.5']) {
+  for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/meta/muse-spark-1.3-contributor']) {
     const upstream = await send({ model, input: 'Hello' });
     assert.equal(upstream.body.cache_control, undefined, model);
   }
@@ -1927,4 +1927,266 @@ test('whole-number floats in OpenRouter tool arguments reach Codex as integers, 
   assert.equal(events.find(event => event.type === 'response.output_item.done').item.arguments, expected);
   assert.equal(events.at(-1).response.output[0].arguments, expected);
   assert.ok(parsedLogEntries().slice(before).some(entry => entry.event === 'tool_arguments.normalized' && entry.name === 'exec_command'));
+});
+
+// Claude on Anthropic's API: the router translates Codex's Responses requests
+// to Messages requests and Claude's streamed events back. The tests that
+// switch a request to OpenRouter come last, because a refusal holds new
+// sessions on OpenRouter for an hour.
+const anthropicSse = events => events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+const claudeThinking = (thinking, signature) => ({ type: 'reasoning', id: `rs_${signature}`, summary: [{ type: 'summary_text', text: thinking }],
+  encrypted_content: `codex-router-anthropic-thinking:v1:${Buffer.from(JSON.stringify({ type: 'thinking', thinking, signature })).toString('base64url')}` });
+const claudeStream = (blocks, { stopReason = 'end_turn', stopDetails, usage = {} } = {}) => anthropicSse([
+  { type: 'message_start', message: { id: 'msg_claude', model: 'claude-sonnet-5-5', usage: { input_tokens: 10, cache_read_input_tokens: 100,
+    cache_creation_input_tokens: 20, output_tokens: 1, ...usage } } },
+  ...blocks.flatMap((block, index) => [
+    { type: 'content_block_start', index, content_block: block.start },
+    ...(block.deltas ?? []).map(delta => ({ type: 'content_block_delta', index, delta })),
+    { type: 'content_block_stop', index }]),
+  { type: 'message_delta', delta: { stop_reason: stopReason, ...(stopDetails ? { stop_details: stopDetails } : {}) }, usage: { output_tokens: 30 } },
+  { type: 'message_stop' },
+]);
+const claudeRequest = (input, extra = {}) => JSON.stringify({ model: 'anthropic/claude-sonnet-5-5', stream: true, input,
+  tools: [{ type: 'function', name: 'exec_command', parameters: { type: 'object', properties: { cmd: { type: 'string' } } } }], ...extra });
+const inClaudeSession = id => ({ 'session-id': id, 'thread-id': id });
+
+test('Claude slugs run on Anthropic\'s API as Messages requests with the history in Claude\'s turns', async () => {
+  const developer = text => ({ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] });
+  const user = text => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] });
+  const call = (callId, name, args, namespace) => ({ type: 'function_call', call_id: callId, name, arguments: args, ...(namespace ? { namespace } : {}) });
+  const output = (callId, value) => ({ type: 'function_call_output', call_id: callId, output: value });
+  const upstream = await send({
+    model: 'anthropic/claude-sonnet-5-5',
+    reasoning: { effort: 'minimal', summary: 'auto' },
+    parallel_tool_calls: true,
+    tools: [
+      { type: 'function', name: 'exec_command', description: 'Run a command.', strict: false, parameters: { type: 'object', properties: { cmd: { type: 'string' } } } },
+      { type: 'namespace', name: 'multi_agent_v1', description: 'Agents.', tools: [
+        { type: 'function', name: 'spawn_agent', description: 'Spawn.', parameters: { type: 'object', properties: { message: { type: 'string' } } } }] },
+      { type: 'web_search', external_web_access: false },
+    ],
+    input: [
+      developer('Base instructions.'), developer('Permissions.'), user('Context.'), user('Spawn a helper and list files.'),
+      claudeThinking('Plan both.', 'sig-a'), call('toolu_spawn', 'spawn_agent', '{"message":"help"}', 'multi_agent_v1'),
+      claudeThinking('Now list.', 'sig-b'), call('toolu_ls', 'exec_command', '{"cmd":"ls"}'), call('call:lost', 'exec_command', '{}'),
+      output('toolu_spawn', 'spawned'), output('toolu_ls', [{ type: 'input_text', text: 'a.txt' },
+        { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0K' }]), output('call_ghost', 'orphan'),
+      deepseekReasoning,
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Done: a.txt.' }] },
+      developer('Mode changed.'), user('Thanks.'),
+    ],
+  }, inClaudeSession('claude-translate'));
+  assert.equal(upstream.hostname, 'api.anthropic.com');
+  assert.equal(upstream.path, '/v1/messages');
+  assert.equal(upstream.headers['x-api-key'], 'test-anthropic-key');
+  assert.equal(upstream.headers['anthropic-version'], '2026-10-21');
+  assert.equal(upstream.headers['anthropic-beta'], 'thinking-binding-controls-2026-08-01');
+  // Codex's ChatGPT credentials never reach Anthropic.
+  assert.equal(upstream.headers.authorization, undefined);
+  assert.equal(upstream.headers['chatgpt-account-id'], undefined);
+  const { body } = upstream;
+  assert.equal(body.model, 'claude-sonnet-5-5');
+  assert.equal(body.stream, true);
+  assert.equal(body.max_tokens, 64000);
+  assert.deepEqual(body.cache_control, { type: 'ephemeral' });
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'drop_block' } });
+  // Claude cannot turn thinking off, so the lowest efforts become low.
+  assert.deepEqual(body.output_config, { effort: 'low' });
+  assert.deepEqual(body.tool_choice, { type: 'auto' });
+  assert.deepEqual(body.tools.map(tool => tool.name), ['exec_command', 'multi_agent_v1__spawn_agent', 'web_search']);
+  assert.deepEqual(body.tools[0], { name: 'exec_command', description: 'Run a command.', input_schema: { type: 'object', properties: { cmd: { type: 'string' } } } });
+  // Codex's opening developer messages join the system prompt; a later one sits just before Claude's turn.
+  assert.deepEqual(body.system, [{ type: 'text', text: 'Base instructions.' }, { type: 'text', text: 'Permissions.' }]);
+  assert.deepEqual(body.messages, [
+    { role: 'user', content: [{ type: 'text', text: 'Context.' }, { type: 'text', text: 'Spawn a helper and list files.' }] },
+    { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'Plan both.', signature: 'sig-a' },
+      { type: 'tool_use', id: 'toolu_spawn', name: 'multi_agent_v1__spawn_agent', input: { message: 'help' } },
+      { type: 'thinking', thinking: 'Now list.', signature: 'sig-b' },
+      { type: 'tool_use', id: 'toolu_ls', name: 'exec_command', input: { cmd: 'ls' } }] },
+    { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_spawn', content: 'spawned' },
+      { type: 'tool_result', tool_use_id: 'toolu_ls', content: [{ type: 'text', text: 'a.txt' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0K' } }] }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Done: a.txt.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Thanks.' }] },
+    { role: 'system', content: [{ type: 'text', text: 'Mode changed.' }] },
+  ]);
+  const routes = JSON.parse(readFileSync(join(routerHome, 'claude-routes.json'), 'utf8'));
+  assert.equal(routes['claude-translate'].route, 'anthropic');
+});
+
+test('a step\'s tool output ends Claude\'s turn, so the next request extends the same prefix', async () => {
+  const first = [{ role: 'user', content: 'List files.' }, claudeThinking('List.', 'sig-c'),
+    { type: 'function_call', call_id: 'toolu_one', name: 'exec_command', arguments: '{"cmd":"ls"}' },
+    { type: 'function_call_output', call_id: 'toolu_one', output: 'a.txt' }];
+  const before = (await send(JSON.parse(claudeRequest(first)))).body.messages;
+  const after = (await send(JSON.parse(claudeRequest([...first,
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'One file.' }] },
+    { role: 'user', content: 'Thanks.' }])))).body.messages;
+  assert.deepEqual(after.slice(0, before.length), before);
+  assert.deepEqual(after.slice(before.length).map(message => message.role), ['assistant', 'user']);
+});
+
+test('Claude\'s stream reaches Codex as Responses events, and its signed thinking comes back unchanged', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([
+      { start: { type: 'thinking', thinking: '', signature: '' }, deltas: [{ type: 'thinking_delta', thinking: 'Plan ' },
+        { type: 'thinking_delta', thinking: 'it.' }, { type: 'signature_delta', signature: 'sig-live' }] },
+      { start: { type: 'text', text: '' }, deltas: [{ type: 'text_delta', text: 'On it.' }] },
+      { start: { type: 'tool_use', id: 'toolu_live', name: 'multi_agent_v1__spawn_agent', input: {} },
+        deltas: [{ type: 'input_json_delta', partial_json: '{"message":' }, { type: 'input_json_delta', partial_json: '"go"}' }] },
+    ], { stopReason: 'tool_use' }) },
+    { status: 200, contentType: 'application/json', body: '{}' },
+    { status: 200, contentType: 'application/json', body: '{}' },
+    { status: 200, contentType: 'application/json', body: '{}' },
+  ]);
+  const tools = [{ type: 'namespace', name: 'multi_agent_v1', tools: [{ type: 'function', name: 'spawn_agent', parameters: { type: 'object' } }] }];
+  const result = await exchangeRaw(claudeRequest('Spawn.', { tools }));
+  assert.equal(result.status, 200);
+  const events = parseSse(result.rawBody);
+  assert.equal(events[0].type, 'response.created');
+  // Every item is announced before its deltas, which Codex requires.
+  const added = events.filter(event => event.type === 'response.output_item.added').map(event => event.item.type);
+  assert.deepEqual(added, ['reasoning', 'message', 'function_call']);
+  assert.deepEqual(events.filter(event => event.type === 'response.reasoning_summary_text.delta').map(event => event.delta), ['Plan ', 'it.']);
+  const done = events.filter(event => event.type === 'response.output_item.done').map(event => event.item);
+  assert.deepEqual(done[0].summary, [{ type: 'summary_text', text: 'Plan it.' }]);
+  assert.match(done[0].encrypted_content, /^codex-router-anthropic-thinking:v1:/);
+  assert.deepEqual(done[1].content, [{ type: 'output_text', text: 'On it.', annotations: [] }]);
+  // Codex dispatches a grouped tool by its namespace and name.
+  assert.equal(done[2].name, 'spawn_agent');
+  assert.equal(done[2].namespace, 'multi_agent_v1');
+  assert.equal(done[2].call_id, 'toolu_live');
+  assert.equal(done[2].arguments, '{"message":"go"}');
+  const completed = events.at(-1);
+  assert.equal(completed.type, 'response.completed');
+  assert.deepEqual(completed.response.usage, { input_tokens: 130, input_tokens_details: { cached_tokens: 100, cache_write_tokens: 20 },
+    output_tokens: 30, total_tokens: 160 });
+
+  // Codex sends the items back; Claude gets its turn back unchanged, and no other upstream sees the thinking.
+  const history = [{ role: 'user', content: 'Spawn.' }, ...done, { type: 'function_call_output', call_id: 'toolu_live', output: 'ok' }];
+  await exchange(claudeRequest(history, { tools }));
+  assert.deepEqual(forwarded.at(-1).body.messages[1].content, [
+    { type: 'thinking', thinking: 'Plan it.', signature: 'sig-live' },
+    { type: 'text', text: 'On it.' },
+    { type: 'tool_use', id: 'toolu_live', name: 'multi_agent_v1__spawn_agent', input: { message: 'go' } },
+  ]);
+  for (const model of ['gpt-6-astra', 'deepseek/deepseek-v4.1-flash-1017']) {
+    await exchange(JSON.stringify({ model, input: history }));
+    assert.ok(!forwarded.at(-1).body.input.some(item => item.type === 'reasoning'), model);
+  }
+});
+
+test('Claude\'s stop reasons and stream errors end the response the way Codex expects', async t => {
+  const text = { start: { type: 'text', text: '' }, deltas: [{ type: 'text_delta', text: 'Partial' }] };
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([text], { stopReason: 'max_tokens' }) },
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([], { stopReason: 'refusal', stopDetails: { type: 'refusal', category: 'cyber' } }) },
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([text], { stopReason: 'model_context_window_exceeded' }) },
+    { status: 200, contentType: 'text/event-stream', body: anthropicSse([
+      { type: 'message_start', message: { id: 'msg_err', usage: { input_tokens: 5 } } },
+      { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }]) },
+  ]);
+  const final = async () => parseSse((await exchangeRaw(claudeRequest('Go.'))).rawBody).at(-1);
+  const incomplete = await final();
+  assert.equal(incomplete.type, 'response.incomplete');
+  assert.deepEqual(incomplete.response.incomplete_details, { reason: 'max_output_tokens' });
+  const refused = await final();
+  assert.equal(refused.type, 'response.completed');
+  assert.match(refused.response.output.at(-1).content[0].text, /Claude declined to continue this request \(cyber\)/);
+  const overflow = await final();
+  assert.equal(overflow.type, 'response.failed');
+  assert.equal(overflow.response.error.code, 'context_length_exceeded');
+  // Codex retries other failures with backoff.
+  const failed = await final();
+  assert.equal(failed.type, 'response.failed');
+  assert.equal(failed.response.error.code, 'server_error');
+});
+
+test('Claude\'s rejections: an overflow compacts, another 400 retries once without thinking, and rate limits pass through', async t => {
+  const error = (type, message, extra = {}) => JSON.stringify({ type: 'error', error: { type, message, ...extra } });
+  mockUpstreamSequence(t, [
+    { status: 400, body: error('invalid_request_error', 'prompt is too long: 1000001 tokens > 1000000 maximum') },
+    { status: 400, body: error('invalid_request_error', 'messages.1.content.0: Invalid `signature` in `thinking` block') },
+    { status: 400, body: error('invalid_request_error', 'still invalid') },
+    { status: 429, body: error('rate_limit_error', 'Slow down'), headers: { 'retry-after': '7' } },
+  ]);
+  const history = [{ role: 'user', content: 'Go.' }, claudeThinking('Think.', 'sig-bad'),
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Went.' }] }, { role: 'user', content: 'Again.' }];
+  const overflow = parseSse((await exchangeRaw(claudeRequest(history))).rawBody).at(-1);
+  assert.equal(overflow.response.error.code, 'context_length_exceeded');
+  const result = await exchangeRaw(claudeRequest(history));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['x-codex-router-diagnostic'], 'anthropic-request-rejected');
+  assert.match(parseSse(result.rawBody).find(event => event.type === 'response.output_item.done').item.content[0].text, /Anthropic rejected this step/);
+  // The retry left out the signed thinking.
+  assert.ok(forwarded.at(-2).body.messages[1].content.some(block => block.type === 'thinking'));
+  assert.ok(!forwarded.at(-1).body.messages[1].content.some(block => block.type === 'thinking'));
+  const limited = await exchangeRaw(claudeRequest('Go.'));
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers['retry-after'], '7');
+});
+
+test('a session keeps its Claude route, and Claude stays apart from the training tier', async () => {
+  await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello' }, inClaudeSession('claude-sticky'));
+  const continued = await send({ model: 'anthropic/claude-sonnet-5-5', input: 'Hello' }, inClaudeSession('claude-sticky'));
+  assert.equal(continued.hostname, 'openrouter.ai');
+  assert.equal(continued.body.model, 'anthropic/claude-sonnet-5.5');
+  assert.deepEqual(continued.body.cache_control, { type: 'ephemeral' });
+  await send({ model: 'anthropic/claude-opus-5-5', input: 'Hello' }, inClaudeSession('claude-isolated'));
+  const refusal = await exchange(JSON.stringify({ model: 'openrouter/meta/muse-spark-1.3-contributor', input: 'Hello' }),
+    inClaudeSession('claude-isolated'));
+  assert.equal(refusal.status, 409);
+  assert.match(refusal.body.error.message, /already used a Claude model/);
+});
+
+test('web search on Claude\'s direct route runs through OpenRouter and continues on Anthropic\'s API', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([{ start: { type: 'tool_use', id: 'toolu_search', name: 'web_search', input: {} },
+      deltas: [{ type: 'input_json_delta', partial_json: '{"query":"openai codex contributors"}' }] }], { stopReason: 'tool_use' }) },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([{ start: { type: 'text', text: '' },
+      deltas: [{ type: 'text_delta', text: 'GitHub lists 688 contributors.' }] }]) },
+  ]);
+  const result = await exchangeRaw(claudeRequest('How many contributors?', { tools: [{ type: 'web_search' }] }), inClaudeSession('claude-search'));
+  const events = parseSse(result.rawBody);
+  assert.ok(events.some(event => event.type === 'response.output_item.done' && event.item.type === 'web_search_call'));
+  assert.equal(events.at(-1).type, 'response.completed');
+  const [first, search, continuation] = forwarded.slice(-3);
+  assert.equal(first.hostname, 'api.anthropic.com');
+  assert.equal(search.hostname, 'openrouter.ai');
+  assert.equal(search.body.model, 'anthropic/claude-sonnet-5.5');
+  assert.equal(continuation.hostname, 'api.anthropic.com');
+  assert.deepEqual(continuation.body.messages.slice(1).map(message => message.content.map(block => block.type)), [['tool_use'], ['tool_result']]);
+  assert.match(continuation.body.messages[2].content[0].content, /688 contributors/);
+});
+
+test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
+  mockUpstreamSequence(t, [
+    { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
+      message: 'Your credit balance is too low to access the Anthropic API.' } }) },
+    { status: 200, body: JSON.stringify({ id: 'resp_fallback', output: [] }) },
+    { status: 200, body: JSON.stringify({ id: 'resp_next', output: [] }) },
+  ]);
+  const history = [{ role: 'user', content: 'Go.' }, claudeThinking('Think.', 'sig-x'),
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Went.' }] }, { role: 'user', content: 'Again.' }];
+  const before = parsedLogEntries().length;
+  const result = await exchange(claudeRequest(history), inClaudeSession('claude-fallback'));
+  assert.equal(result.status, 200);
+  const [refused, fallback] = forwarded.slice(-2);
+  assert.equal(refused.hostname, 'api.anthropic.com');
+  assert.equal(fallback.hostname, 'openrouter.ai');
+  assert.equal(fallback.body.model, 'anthropic/claude-sonnet-5.5');
+  assert.equal(fallback.headers.authorization, 'Bearer test-openrouter-key');
+  assert.deepEqual(fallback.body.cache_control, { type: 'ephemeral' });
+  assert.ok(!fallback.body.input.some(item => item.type === 'reasoning'));
+  const log = parsedLogEntries().slice(before).find(entry => entry.event === 'anthropic.refused');
+  assert.equal(log.reason, 'billing');
+  assert.equal(log.fallback, true);
+  const routes = JSON.parse(readFileSync(join(routerHome, 'claude-routes.json'), 'utf8'));
+  assert.equal(routes['claude-fallback'].route, 'openrouter');
+  const next = await exchange(claudeRequest('Hello'), inClaudeSession('claude-after-refusal'));
+  assert.equal(next.status, 200);
+  assert.equal(forwarded.at(-1).hostname, 'openrouter.ai');
 });

@@ -33,7 +33,7 @@ test('checked-in OpenRouter entries carry the rendered maintained prompts', () =
       checked += 1;
     }
   }
-  assert.equal(checked, 5);
+  assert.equal(checked, 7);
 });
 
 test('OpenRouter prompts never mention Codex tools that OpenRouter threads lack', () => {
@@ -61,22 +61,26 @@ test('Muse Spark 1.3 Contributor catalog entry matches the OpenRouter model capa
   assert.match(muse.description, /Meta may train on prompts and completions/);
 });
 
-test('Claude catalog entries match the OpenRouter model capabilities', () => {
-  for (const [name, slug, displayName] of [
-    ['claude-sonnet-model.json', 'openrouter/anthropic/claude-sonnet-5.5', 'Claude Sonnet 5.5'],
-    ['claude-opus-model.json', 'openrouter/anthropic/claude-opus-5.5', 'Claude Opus 5.5'],
+test('Claude catalog entries match the model capabilities on each route', () => {
+  for (const [name, slug, displayName, visibility, parallel] of [
+    ['claude-sonnet-model.json', 'anthropic/claude-sonnet-5-5', 'Claude Sonnet 5.5', 'list', true],
+    ['claude-opus-model.json', 'anthropic/claude-opus-5-5', 'Claude Opus 5.5', 'list', true],
+    // OpenRouter-only entries stay usable by name, for threads that started on them.
+    ['claude-sonnet-openrouter-model.json', 'openrouter/anthropic/claude-sonnet-5.5', 'Claude Sonnet 5.5', 'hide', false],
+    ['claude-opus-openrouter-model.json', 'openrouter/anthropic/claude-opus-5.5', 'Claude Opus 5.5', 'hide', false],
   ]) {
     const entry = readEntry(name);
     assert.equal(entry.slug, slug);
     assert.equal(entry.display_name, displayName);
+    assert.equal(entry.visibility, visibility);
     assert.equal(entry.context_window, 1000000);
     assert.equal(entry.max_context_window, 1000000);
     assert.equal(entry.effective_context_window_percent, 95);
     // Thinking cannot be turned off on these models, so `none` must not be offered.
     assert.deepEqual(entry.supported_reasoning_levels.map(level => level.effort), ['low', 'medium', 'high', 'xhigh', 'max']);
     assert.equal(entry.default_reasoning_level, 'medium');
-    // OpenRouter lists no parallel_tool_calls parameter for Claude.
-    assert.equal(entry.supports_parallel_tool_calls, false);
+    // Anthropic's API runs parallel tool calls; OpenRouter lists no parallel_tool_calls parameter for Claude.
+    assert.equal(entry.supports_parallel_tool_calls, parallel);
     assert.deepEqual(entry.input_modalities, ['text', 'image']);
   }
 });
@@ -139,7 +143,7 @@ test('catalog builds reject missing prompts, duplicate slugs, and replacements o
     [{ slug: 'openrouter/vendor/bundled', context_window: 999999 }], prompted).stderr,
     /openrouter\/vendor\/bundled would replace a bundled Codex model/);
   assert.match(build([], [{ slug: 'open-router/vendor/typo' }], prompted).stderr,
-    /open-router\/vendor\/typo must start with deepseek\/, openrouter\/, or ultra-spark\//);
+    /open-router\/vendor\/typo must start with anthropic\/, deepseek\/, openrouter\/, or ultra-spark\//);
 });
 
 test('prompt suffixes must name a file in the prompts directory', () => {
@@ -171,8 +175,9 @@ test('verify-catalog checks router entries against the repository and reports wh
   assert.equal(build('show').status, 0);
   assert.equal(verify(catalogFile).status, 0, verify(catalogFile).stderr);
   const shown = verify('--report', catalogFile);
-  assert.equal(shown.stdout, 'Router models: openrouter/anthropic/claude-opus-5.5, openrouter/anthropic/claude-sonnet-5.5, '
+  assert.equal(shown.stdout, 'Router models: anthropic/claude-opus-5-5, anthropic/claude-sonnet-5-5, '
     + `${deepseek.slug}, ${ultraSpark.slug}, ${muse.slug}\n`
+    + 'Router models usable by name: openrouter/anthropic/claude-opus-5.5, openrouter/anthropic/claude-sonnet-5.5\n'
     + 'Native OpenAI models: 1 in /model (require a ChatGPT plan)\n');
   assert.equal(build('hide').status, 0);
   assert.match(verify('--report', catalogFile).stdout, /^Native OpenAI models: hidden from \/model$/m);

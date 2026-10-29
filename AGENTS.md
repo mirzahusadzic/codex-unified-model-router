@@ -15,6 +15,7 @@ Keep this project a small local router that fits Codex's existing model picker a
 | Task | Source to edit |
 | --- | --- |
 | Request routing, history normalization, streaming, router-run web search | `router/unified-router.mjs` |
+| Claude on Anthropic's API: Messages translation, refusals | `router/anthropic.mjs` |
 | Add or update an OpenRouter model | `catalog/*.json` |
 | Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
@@ -26,17 +27,17 @@ Keep this project a small local router that fits Codex's existing model picker a
 
 For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
 
-Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, `deepseek/` is preserved, and the `ultra-spark/` alias forwards as `deepseek/` with the Ultra Spark prompt. Other slugs route to the native Codex backend.
+Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, `deepseek/` is preserved, and the `ultra-spark/` alias forwards as `deepseek/` with the Ultra Spark prompt. `anthropic/<model ID>` runs Claude on Anthropic's API with `ANTHROPIC_API_KEY`, otherwise on OpenRouter's copy of the model, and a session keeps its first route. Other slugs route to the native Codex backend.
 
 After editing the maintained prompts or adding an OpenRouter entry, run `node scripts/render-openrouter-entries.mjs` and include the updated catalog entries. An entry can append one more prompt from `prompts/` by naming it in `router_instructions_suffix`; the generated Codex catalog omits that field. Keep model-specific context settings in the catalog; preserve native models' bundled limits.
 
 ## Preserve these behaviors
 
 - Bind the router to loopback. Keep credentials and request/response bodies out of logs and committed files.
-- OpenRouter requests replace Codex authentication with the OpenRouter key; native OpenAI requests retain Codex authentication.
-- Mixed history preserves messages, tool calls, tool results, and encrypted reasoning while removing unsupported plaintext reasoning from OpenAI requests and native tool declarations (`additional_tools` items) from OpenRouter requests.
-- A pre-stream OpenRouter 400 may receive one bounded recovery attempt, but it must never escape as HTTP 400 to Codex. Context-window rejections instead return a streamed `response.failed` with `context_length_exceeded` so Codex compacts the thread. If recovery fails, return a completed router diagnostic while preserving the real rejection in logs and keeping exact bodies out of logs unless capture is explicitly enabled.
-- Never substitute a model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
+- OpenRouter requests replace Codex authentication with the OpenRouter key, and Claude requests on Anthropic's API with the Anthropic key (an API key, never a Claude sign-in token); native OpenAI requests retain Codex authentication.
+- Mixed history preserves messages, tool calls, tool results, and encrypted reasoning while removing unsupported plaintext reasoning from OpenAI requests, native tool declarations (`additional_tools` items) from OpenRouter requests, and Claude's signed thinking from every request outside Anthropic's API. Keep the Messages translation append-only, so each request is a prefix of the next: that keeps Claude's cache and its signed thinking valid.
+- A pre-stream OpenRouter or Anthropic 400 may receive one bounded recovery attempt, but it must never escape as HTTP 400 to Codex. Anthropic refusals no retry fixes (credits, spend limits, the key, model access) move the request to OpenRouter, or end in a router diagnostic without an OpenRouter key; a 401 must never reach Codex, which would refresh its ChatGPT sign-in. Context-window rejections instead return a streamed `response.failed` with `context_length_exceeded` so Codex compacts the thread. If recovery fails, return a completed router diagnostic while preserving the real rejection in logs and keeping exact bodies out of logs unless capture is explicitly enabled.
+- Never substitute a model, and never send Anthropic's `fallbacks`; moving Claude between Anthropic's API and OpenRouter keeps the model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction.
 - Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
 - Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, keep Ultra Spark spawning workers with `fork_context: false` (as a backstop, the router refuses Muse and other non-Ultra Spark training-tier requests from spawned agents that carry tool call IDs from an Ultra Spark main thread), and never let native OpenAI or Claude models share a session with training-tier models.
 - OpenRouter models search through the router: Codex's hosted `web_search` becomes a function the router runs through OpenRouter's web plugin, Codex sees a native `web_search_call`, and later requests carry the stored results as the call's output. Keep a step's calls together ahead of their outputs, so providers that require reasoning with tool calls (DeepSeek) see one assistant turn. Never log the query.
