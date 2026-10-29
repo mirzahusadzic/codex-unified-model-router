@@ -14,7 +14,7 @@ if (!token || !/^OPENROUTER_API_KEY=.+\r?$/m.test(env)) {
 }
 // Anthropic does not allow subscription sign-in tokens in other tools; the router ignores one.
 if (/^ANTHROPIC_API_KEY=["']?sk-ant-oat/m.test(env)) {
-  throw new Error('ANTHROPIC_API_KEY holds a Claude sign-in token; use an API key from the Claude Console');
+  throw new Error('ANTHROPIC_API_KEY holds a Claude sign-in token; use an Anthropic API key');
 }
 function managedBlock(text, name) {
   const lines = logicalLines(text).map(line => line.trim());

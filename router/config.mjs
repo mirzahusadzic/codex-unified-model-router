@@ -36,7 +36,7 @@ if (!Object.hasOwn(logLevels, configuredLogLevel)) {
   throw new Error('CODEX_ROUTER_LOG_LEVEL must be error, info, or debug');
 }
 export const openrouterApiKey = process.env.OPENROUTER_API_KEY || fileEnvironment.OPENROUTER_API_KEY || '';
-// Claude runs on Anthropic's API only with a Console API key. Anthropic does
+// Claude runs on Anthropic's API only with an API key. Anthropic does
 // not allow subscription sign-in tokens in other tools, so one is ignored.
 export const anthropicApiKey = (() => {
   const key = process.env.ANTHROPIC_API_KEY || fileEnvironment.ANTHROPIC_API_KEY || '';
