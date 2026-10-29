@@ -57,19 +57,31 @@ function decodeAnthropicThinking(item) {
 
 // Claude tool names allow letters, digits, `_` and `-`, up to 64 characters.
 // A grouped tool such as multi_agent_v1.spawn_agent becomes
-// multi_agent_v1__spawn_agent; the stream translation maps it back.
+// multi_agent_v1__spawn_agent; the stream translation maps it back. Codex
+// treats the `functions` namespace as none.
+const toolNamespace = namespace => (namespace && namespace !== 'functions' ? namespace : undefined);
+
 function claudeToolName(name, namespace) {
-  const joined = namespace ? `${namespace}__${name}` : String(name);
+  const joined = toolNamespace(namespace) ? `${namespace}__${name}` : String(name);
   const safe = joined.replace(/[^a-zA-Z0-9_-]/g, '_');
   return safe.length <= 64 ? safe : `${safe.slice(0, 55)}_${createHash('sha256').update(joined).digest('hex').slice(0, 8)}`;
 }
 
-const claudeCallId = callId => callId.replace(/[^a-zA-Z0-9_-]/g, '_');
+// A call ID Claude cannot take gets a suffix from the original, so two IDs
+// that differ only in punctuation stay apart, and every request maps an ID
+// the same way. Claude's own IDs pass unchanged.
+function claudeCallId(callId) {
+  const safe = callId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return safe === callId ? callId : `${safe}_${createHash('sha256').update(callId).digest('hex').slice(0, 8)}`;
+}
+
+const claudeImageTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 function claudeImage(part) {
   const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
   if (typeof url !== 'string') return null;
   const data = url.match(/^data:([^;,]+);base64,(.*)$/s);
+  if (data && !claudeImageTypes.has(data[1])) return { type: 'text', text: `[image omitted: Claude does not read ${data[1]}]` };
   if (data) return { type: 'image', source: { type: 'base64', media_type: data[1], data: data[2] } };
   return /^https?:\/\//.test(url) ? { type: 'image', source: { type: 'url', url } } : null;
 }
@@ -124,7 +136,7 @@ function claudeTools(tools) {
     });
   };
   for (const tool of Array.isArray(tools) ? tools : []) {
-    if (tool?.type === 'namespace' && Array.isArray(tool.tools)) for (const member of tool.tools) declare(member, tool.name);
+    if (tool?.type === 'namespace' && Array.isArray(tool.tools)) for (const member of tool.tools) declare(member, toolNamespace(tool.name));
     else declare(tool);
   }
   return { declared, definitions };
@@ -224,8 +236,9 @@ function claudeMessages(request) {
   }
   closeTurn();
   flushDeveloper();
-  // The conversation must open with a user turn.
+  // The conversation must open with a user turn, and these models reject one that ends with Claude's.
   if (messages[0]?.role !== 'user') messages.unshift({ role: 'user', content: [{ type: 'text', text: '(The conversation continues.)' }] });
+  if (messages.at(-1)?.role === 'assistant') messages.push({ role: 'user', content: [{ type: 'text', text: '(Continue.)' }] });
   return { system, messages };
 }
 
@@ -332,6 +345,8 @@ function anthropicResponseStream({ declared, log }) {
     } else if (block?.type === 'tool_use') {
       const tool = declared.get(block.name) ?? { name: block.name };
       state.kind = tool.custom ? 'custom' : 'call';
+      // The input normally streams as JSON deltas; a start block that already carries it is kept.
+      state.startInput = isObject(block.input) && Object.keys(block.input).length > 0 ? JSON.stringify(block.input) : '';
       state.item = tool.custom
         ? { type: 'custom_tool_call', id: itemId('ctc'), call_id: block.id, name: tool.name, input: '' }
         : { type: 'function_call', id: itemId('fc'), call_id: block.id, name: tool.name,
@@ -390,11 +405,11 @@ function anthropicResponseStream({ declared, log }) {
       item = { ...state.item, summary: state.text ? [{ type: 'summary_text', text: state.text }] : [],
         ...(block ? { encrypted_content: encodeAnthropicThinking(block) } : {}) };
     } else if (state.kind === 'call') {
-      const text = state.json || '{}';
+      const text = state.json || state.startInput || '{}';
       emit({ type: 'response.function_call_arguments.done', ...ids, arguments: text });
       item = { ...state.item, arguments: text, status: 'completed' };
     } else {
-      const input = claudeCallInput(state.json).input;
+      const input = claudeCallInput(state.json || state.startInput).input;
       item = { ...state.item, input: typeof input === 'string' ? input : '' };
     }
     output[state.outputIndex] = item;

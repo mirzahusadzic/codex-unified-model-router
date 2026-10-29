@@ -2162,6 +2162,39 @@ test('web search on Claude\'s direct route runs through OpenRouter and continues
   assert.match(continuation.body.messages[2].content[0].content, /688 contributors/);
 });
 
+test('Claude history survives shapes other models leave: the functions namespace, odd call IDs, other image types, and a closing reply', async () => {
+  const history = [
+    { role: 'user', content: [{ type: 'input_text', text: 'Look.' }, { type: 'input_image', image_url: 'data:image/tiff;base64,SUkqAA' }] },
+    // A native model records top-level calls under the `functions` namespace, which Codex treats as none.
+    { type: 'function_call', call_id: 'a:b', name: 'exec_command', namespace: 'functions', arguments: '{"cmd":"ls"}' },
+    { type: 'function_call', call_id: 'a/b', name: 'exec_command', arguments: '{"cmd":"pwd"}' },
+    { type: 'function_call_output', call_id: 'a:b', output: 'one' },
+    { type: 'function_call_output', call_id: 'a/b', output: 'two' },
+    { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Both ran.' }] },
+  ];
+  const { body } = await send(JSON.parse(claudeRequest(history)));
+  assert.deepEqual(body.messages[0].content[1], { type: 'text', text: '[image omitted: Claude does not read image/tiff]' });
+  const calls = body.messages[1].content;
+  assert.deepEqual(calls.map(block => block.name), ['exec_command', 'exec_command']);
+  // Each ID Claude cannot take becomes its own valid ID, and its result follows it.
+  const ids = calls.map(block => block.id);
+  assert.notEqual(ids[0], ids[1]);
+  for (const id of ids) assert.match(id, /^[a-zA-Z0-9_-]+$/);
+  assert.deepEqual(body.messages[2].content.map(block => block.tool_use_id), ids);
+  // The same history maps IDs the same way, so the prefix holds.
+  assert.deepEqual((await send(JSON.parse(claudeRequest(history)))).body.messages[1].content.map(block => block.id), ids);
+  // These models reject a request that ends with Claude's own turn.
+  assert.deepEqual(body.messages.at(-1), { role: 'user', content: [{ type: 'text', text: '(Continue.)' }] });
+});
+
+test('a Claude tool call whose input arrives in its start event keeps that input', async t => {
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: claudeStream([
+    { start: { type: 'tool_use', id: 'toolu_start', name: 'exec_command', input: { cmd: 'ls' } } }], { stopReason: 'tool_use' }) }]);
+  const events = parseSse((await exchangeRaw(claudeRequest('List.'))).rawBody);
+  const call = events.find(event => event.type === 'response.output_item.done').item;
+  assert.equal(call.arguments, '{"cmd":"ls"}');
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
