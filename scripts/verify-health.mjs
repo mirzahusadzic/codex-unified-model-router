@@ -44,6 +44,7 @@ if (!health || !['ok', 'openai', 'openrouter', 'clientAuth'].every(key => health
     || !Array.isArray(health.capabilities?.routingPolicies)
     || !health.capabilities.routingPolicies.includes('preserve-model-v1')
     || health.capabilities.openrouterRejectionRecovery !== 'completed-diagnostic-v1'
+    || health.capabilities.providerIsolation !== 'session-v2'
     || health.capabilities.revisionPrecondition !== true || health.revision !== revision) {
   throw new Error('Router health, required capabilities or installed source revision do not match; update and restart the router');
 }

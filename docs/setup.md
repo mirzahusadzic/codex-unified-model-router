@@ -366,7 +366,7 @@ Credential-bearing files, including the OpenRouter-only profile, are private: th
 
 The router rejects browser origins, unexpected Host headers, and non-JSON model requests, and its per-provider header allowlists keep unrelated credentials from being forwarded. Request bodies are limited to 64 MiB, and a larger one ends with `context_length_exceeded` so Codex compacts the thread; this is a local single-user service, not a shared network gateway.
 
-The verifier checks both configurations against the stored token, their managed settings, and private ownership and permissions. Readiness requires the current capabilities and the installed source's SHA-256, so a reachable older router does not pass, and health redirects are rejected.
+The verifier checks both configurations against the stored token, their managed settings, and private ownership and permissions. The installed router and every module beside it must match this repository; reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v2"`, and the installed source's SHA-256, so a reachable older router does not pass, and health redirects are rejected.
 
 Logs never include request or response bodies, authorization headers, or API keys. See [Structured logs](operations.md#structured-logs) for log levels, event names, and platform log locations.
 

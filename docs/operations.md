@@ -8,7 +8,7 @@ The router and Codex's app-server daemon are separate processes. Restart the rou
 node install.mjs --verify
 ```
 
-The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, local health, platform startup setup, and that the Codex daemon is pinned to the CLI's Codex. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
+The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, that the installed router and every module beside it match this repository, local health, platform startup setup, and that the Codex daemon is pinned to the CLI's Codex. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
 
 ## Service management
 

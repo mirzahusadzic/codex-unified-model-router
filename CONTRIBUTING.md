@@ -55,6 +55,7 @@ Helpers the installers and verifiers call:
 | `scripts/config-managed.mjs` | Report through its exit status whether a configuration already has the managed marker, which decides whether the installer asks before merging into it. |
 | `scripts/verify-credentials.mjs` | Check the managed blocks, local tokens, and private permissions. |
 | `scripts/verify-health.mjs` | Check the running router's health, capabilities, and source revision. |
+| `scripts/verify-router.mjs` | Check that the installed router and every module beside it match this repository. |
 | `scripts/codex-daemon.mjs [--verify] <codex-home>` | Restart Codex's app-server daemon after an installation and pin it to the CLI's Codex, or with `--verify`, check that it follows the CLI. Both installers and verifiers use it. |
 | `scripts/verify-catalog.mjs [--report] <models.json>` | Check that a generated or installed catalog carries every router entry with the repository's context limits and prompts, or with `--report`, print what `/model` lists. Both installers and verifiers use it. |
 | `platform/windows/private-path.ps1` | On Windows, restrict a file or directory to the current user. |

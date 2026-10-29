@@ -34,6 +34,7 @@ for file in "$codex_home/config.toml" "$codex_home/unified-openrouter.config.tom
   fi
 done
 node "$script_dir/verify-credentials.mjs" "$codex_home"
+node "$script_dir/verify-router.mjs" "$codex_home"
 
 # The last argument is the expected text; the others are grep options.
 require_config() {

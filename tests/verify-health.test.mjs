@@ -16,6 +16,7 @@ const health = {
   capabilities: {
     routingPolicies: ['preserve-model-v1'],
     openrouterRejectionRecovery: 'completed-diagnostic-v1',
+    providerIsolation: 'session-v2',
     revisionPrecondition: true,
   },
 };
@@ -27,6 +28,9 @@ test('health verifier requires current source identity and capabilities, not jus
     { ...health, capabilities: undefined }, { ...health, capabilities: { routingPolicies: ['preserve-model-v1'] } },
     { ...health, capabilities: { routingPolicies: 'preserve-model-v1', revisionPrecondition: true } },
     { ...health, capabilities: { ...health.capabilities, openrouterRejectionRecovery: undefined } },
+    // Claude's isolation from the training tier needs session-v2.
+    { ...health, capabilities: { ...health.capabilities, providerIsolation: undefined } },
+    { ...health, capabilities: { ...health.capabilities, providerIsolation: 'session-v1' } },
     { ...health, clientAuth: false }, { ...health, openrouter: false }, null]) {
     const result = spawnSync(process.execPath, [verifier, source], { input: JSON.stringify(value), encoding: 'utf8' });
     assert.equal(result.status === 0, value === health, result.stderr);

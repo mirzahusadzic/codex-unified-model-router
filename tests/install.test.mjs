@@ -142,7 +142,7 @@ test('installs with a key file, and fails without a key when it cannot prompt', 
   const checkSummary = (stdout, nativeShown) => {
     const summary = stdout.slice(stdout.indexOf('Start Codex'));
     for (const slug of ['ultra-spark/deepseek-v4.1-flash-1017', 'openrouter/meta/muse-spark-1.3-contributor',
-      'openrouter/anthropic/claude-sonnet-5.5', 'openrouter/anthropic/claude-opus-5.5']) {
+      'anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5']) {
       assert.match(summary, new RegExp(`^ {4}codex -m ${slug.replaceAll('.', '\\.')}\\r?$`, 'm'));
     }
     assert.equal(/^ {4}codex -m gpt-6-astra\r?$/m.test(summary), nativeShown);
@@ -412,4 +412,39 @@ test('the verifier names what is missing from an incomplete installation', t => 
   const missing = verify();
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /Missing required file: .*config\.toml/);
+});
+
+test('verification requires every router module as this repository has it, and reinstalling removes modules it no longer has', t => {
+  const directory = mkdtempSync(join(tmpdir(), 'router-modules-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const home = join(directory, 'codex-home');
+  const bin = join(directory, 'bin');
+  mkdirSync(home);
+  mkdirSync(bin);
+  writeFileSync(join(bin, windows ? 'codex.cmd' : 'codex'), windows
+    ? '@echo off\r\necho {"models":[]}\r\n'
+    : '#!/bin/sh\nprintf \'{"models":[]}\\n\'\n', { mode: 0o700 });
+  const environment = { ...process.env, HOME: directory, CODEX_HOME: home,
+    PATH: bin + (windows ? ';' : ':') + process.env.PATH, OPENROUTER_API_KEY: 'synthetic-install-key',
+    CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1' };
+  const invoke = (verify = false) => spawnSync(windows ? 'powershell.exe' : 'bash', windows
+    ? ['-NoProfile', '-File', platformScript(verify ? 'verify-install' : 'install'), '-NoService']
+    : [platformScript(verify ? 'verify-install' : 'install'), '--no-service'],
+  { env: environment, encoding: 'utf8', timeout: 30000 });
+  const routerDir = join(home, 'unified-router');
+  assert.equal(invoke().status, 0);
+  assert.equal(invoke(true).status, 0);
+  // The entry cannot start without its modules.
+  rmSync(join(routerDir, 'anthropic.mjs'));
+  const missing = invoke(true);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Missing router module: .*anthropic\.mjs/);
+  assert.equal(invoke().status, 0);
+  writeFileSync(join(routerDir, 'upstream.mjs'), `${readFileSync(join(routerDir, 'upstream.mjs'), 'utf8')}\n// edited\n`);
+  assert.match(invoke(true).stderr, /installed router differs from this repository/);
+  // A module from another version would change the revision; reinstalling removes it.
+  writeFileSync(join(routerDir, 'retired.mjs'), 'export {};\n');
+  assert.equal(invoke().status, 0);
+  assert.ok(!readdirSync(routerDir).includes('retired.mjs'));
+  assert.equal(invoke(true).status, 0);
 });

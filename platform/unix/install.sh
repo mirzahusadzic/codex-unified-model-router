@@ -208,6 +208,12 @@ install -m 600 "$tmp_dir/config.toml" "$codex_home/config.toml"
 install -m 600 "$tmp_dir/unified-openrouter.config.toml" "$codex_home/unified-openrouter.config.toml"
 install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
 # The router's modules sit beside its entry file, which is installed as router.mjs.
+# A module this version no longer has is removed, since the revision covers every one.
+for module in "$router_dir"/*.mjs; do
+  [[ -e "$module" ]] || continue
+  name="$(basename "$module")"
+  [[ "$name" == router.mjs || -f "$repo_dir/router/$name" ]] || rm -f "$module"
+done
 for module in "$repo_dir"/router/*.mjs; do
   [[ "$(basename "$module")" == unified-router.mjs ]] || install -m 600 "$module" "$router_dir/$(basename "$module")"
 done
@@ -376,9 +382,9 @@ Start Codex with a model, or switch with /model:
   Muse Spark 1.3 Contributor
     codex -m openrouter/meta/muse-spark-1.3-contributor
   Claude Sonnet 5.5
-    codex -m openrouter/anthropic/claude-sonnet-5.5
+    codex -m anthropic/claude-sonnet-5-5
   Claude Opus 5.5
-    codex -m openrouter/anthropic/claude-opus-5.5
+    codex -m anthropic/claude-opus-5-5
 EOF
 if [[ "$native_models" == show ]]; then
   printf '  GPT-6 Astra (requires a ChatGPT plan)\n    codex -m gpt-6-astra\n'

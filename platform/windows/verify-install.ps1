@@ -39,6 +39,8 @@ foreach ($Path in $RequiredPaths) {
 
 & node (Join-Path $ScriptsDir 'verify-credentials.mjs') $CodexHome
 if ($LASTEXITCODE -ne 0) { throw 'Router credential verification failed.' }
+& node (Join-Path $ScriptsDir 'verify-router.mjs') $CodexHome
+if ($LASTEXITCODE -ne 0) { throw 'The installed router differs from this repository; rerun the installer.' }
 foreach ($Path in @($ConfigPath, $ProfilePath, (Join-Path $CodexHome 'unified-router'), (Join-Path $CodexHome 'unified-router\openrouter.env'))) {
     Assert-PrivatePath $Path
 }
