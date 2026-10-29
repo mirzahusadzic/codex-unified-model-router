@@ -14,7 +14,12 @@ Keep this project a small local router that fits Codex's existing model picker a
 
 | Task | Source to edit |
 | --- | --- |
-| Request routing, history normalization, streaming, router-run web search | `router/unified-router.mjs` |
+| Request handling, recovery flow, diagnostics, health | `router/unified-router.mjs` |
+| Routes, upstream headers and transport, error bodies, usage tap | `router/upstream.mjs` |
+| History normalization and request shaping per upstream, recovery payloads | `router/adapt.mjs` |
+| Router-run web search and the stream rewriter | `router/web-search.mjs` |
+| Provider isolation, Claude routes, Ultra Spark lead call IDs | `router/sessions.mjs` |
+| Router settings, keys, logging | `router/config.mjs` |
 | Claude on Anthropic's API: Messages translation, refusals | `router/anthropic.mjs` |
 | Add or update an OpenRouter model | `catalog/*.json` |
 | Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |

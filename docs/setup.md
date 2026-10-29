@@ -256,9 +256,9 @@ Native models come from Codex's bundled catalog; update Codex and rerun the inst
 3. Update the display name, description, context limits, reasoning levels, and other capabilities to match the model.
 4. Refresh the prompts with `node scripts/render-openrouter-entries.mjs`, then rerun the installer.
 
-The router removes the `openrouter/` prefix before forwarding. The catalog build fails on an unsupported slug prefix, a duplicate slug, a slug that matches a bundled Codex model, or a missing prompt file. Catalog entries must start with `deepseek/`, `openrouter/`, or `ultra-spark/`.
+The router removes the `openrouter/` prefix before forwarding. The catalog build fails on an unsupported slug prefix, a duplicate slug, a slug that matches a bundled Codex model, or a missing prompt file. Catalog entries must start with `anthropic/`, `deepseek/`, `openrouter/`, or `ultra-spark/`.
 
-Every `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained instructions in [`prompts/`](../prompts/), which the installer also injects into its generated catalog. An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field.
+Every `anthropic/`, `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained instructions in [`prompts/`](../prompts/), which the installer also injects into its generated catalog. An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field.
 
 ## Routing
 
@@ -325,13 +325,13 @@ The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spar
 
 ### OpenRouter-only profile
 
-The installer writes `unified-openrouter.config.toml` beside `config.toml`, with the same local token and catalog. It sets `requires_openai_auth = false`, so OpenRouter models need no ChatGPT login, and sends the `preserve-model-v1` header. Select it with any OpenRouter model in the catalog; Ultra Spark's Muse workers use the same profile:
+The installer writes `unified-openrouter.config.toml` beside `config.toml`, with the same local token and catalog. It sets `requires_openai_auth = false`, so OpenRouter models and Claude need no ChatGPT login, and sends the `preserve-model-v1` header. Select it with any router model in the catalog; Ultra Spark's Muse workers use the same profile:
 
 ```sh
 codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
 codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017
 codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
-codex --profile unified-openrouter --model openrouter/anthropic/claude-sonnet-5.5
+codex --profile unified-openrouter --model anthropic/claude-sonnet-5-5
 ```
 
 Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.165.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.

@@ -18,7 +18,12 @@ The installed router is a separate copy under your Codex home directory. Run `no
 
 | Path | Contents |
 | --- | --- |
-| `router/unified-router.mjs` | The router: routing, request adaptation, recovery, provider isolation, and streaming. The installers copy it as `router.mjs`, with the modules beside it. |
+| `router/unified-router.mjs` | The router's entry: the local HTTP server, request handling, the recovery flow, and diagnostics. The installers copy it as `router.mjs`, with the modules below beside it. |
+| `router/upstream.mjs` | Routes from model slugs, upstream headers, the shared request opener, error bodies, and the usage tap. |
+| `router/adapt.mjs` | Request shaping for each upstream (history normalization, reasoning, structured output, caching) and the bounded recovery payload. |
+| `router/web-search.mjs` | Router-run web search and the stream rewriter that runs it and normalizes tool arguments. |
+| `router/sessions.mjs` | Per-session state: provider isolation sides, Claude routes, and Ultra Spark lead call IDs. |
+| `router/config.mjs` | Router settings from `openrouter.env` and the environment, keys, logging, and private state writes. |
 | `router/anthropic.mjs` | Claude on Anthropic's API: Responses-to-Messages request translation, the streamed-event translation back, and refusals that move Claude to OpenRouter. |
 | `router/common.mjs` | Helpers shared by the router's modules and the health verifier, including the source revision. |
 | `catalog/` | Router model entries for the Codex catalog (OpenRouter models and Claude), each with a license notice. |
@@ -62,7 +67,7 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 
 | Test file | Covers | Platforms |
 | --- | --- | --- |
-| `tests/unified-router.test.mjs` | Routing, history repair, reasoning and structured-output adaptation, OpenRouter recovery, provider isolation, endpoint preferences, header allowlists, streaming, and logs. | All |
+| `tests/unified-router.test.mjs` | Routing, history repair, reasoning and structured-output adaptation, OpenRouter recovery, provider isolation, endpoint preferences, header allowlists, streaming, web search, Claude's Messages translation and route fallback, and logs. | All |
 | `tests/credentials.test.mjs` | Credential files and configuration merging: tokens, managed apps, analytics, and agent settings, and TOML strings and comments. | All |
 | `tests/catalog.test.mjs` | Catalog entries, rendered prompts and the Codex tools they must not mention, prompt suffixes, catalog-build validation, and `verify-catalog.mjs`. | All |
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |

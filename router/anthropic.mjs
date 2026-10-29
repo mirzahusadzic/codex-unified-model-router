@@ -1,3 +1,5 @@
+// Claude on Anthropic's Messages API: request and stream translation, and the
+// refusals that move Claude to OpenRouter.
 import { createHash, randomUUID } from 'node:crypto';
 import { pipeline, Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
