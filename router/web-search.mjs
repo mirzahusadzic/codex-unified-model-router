@@ -34,7 +34,19 @@ const webSearchRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const maxStoredWebSearches = 1000;
 const maxWebSearchesPerRequest = 8;
 const webSearchResultCount = 5;
+// A replayed result counts as used, so a thread that keeps replaying a search
+// keeps the same tool result, and with it Claude's cached prefix and signed
+// thinking. Uses are saved with the next write, or on their own at most hourly.
+const webSearchUseSaveMs = 60 * 60 * 1000;
 const webSearchResults = loadWebSearchResults();
+let webSearchesSavedAt = Date.now();
+let webSearchesUsed = false;
+
+function saveWebSearchResults() {
+  webSearchesSavedAt = Date.now();
+  webSearchesUsed = false;
+  persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+}
 
 function loadWebSearchResults() {
   try {
@@ -65,7 +77,7 @@ function pruneWebSearchResults() {
 }
 // A router that runs for weeks without a search still drops expired results.
 setInterval(() => {
-  if (pruneWebSearchResults()) persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+  if (pruneWebSearchResults() || webSearchesUsed) saveWebSearchResults();
 }, 24 * 60 * 60 * 1000).unref();
 
 // Results belong to the session that searched: call IDs are unique only
@@ -77,10 +89,18 @@ function storedWebSearchResults(scope, callId) {
   if (!scope) return null;
   const key = webSearchKey(scope, callId);
   const entry = webSearchResults.get(key);
-  if (entry && Date.now() - entry.at < webSearchRetentionMs) return entry.text;
+  const now = Date.now();
+  if (entry && now - entry.at < webSearchRetentionMs) {
+    // Its 30 days start again, and it moves to the back of the eviction order.
+    webSearchResults.delete(key);
+    webSearchResults.set(key, { ...entry, at: now });
+    webSearchesUsed = true;
+    if (now - webSearchesSavedAt >= webSearchUseSaveMs) saveWebSearchResults();
+    return entry.text;
+  }
   if (entry) {
     webSearchResults.delete(key);
-    persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+    saveWebSearchResults();
   }
   return null;
 }
@@ -93,7 +113,7 @@ function storeWebSearchResults(scope, callId, text) {
   webSearchResults.delete(key);
   webSearchResults.set(key, { at: now, text });
   while (webSearchResults.size > maxStoredWebSearches) webSearchResults.delete(webSearchResults.keys().next().value);
-  persistJson(webSearchResultsFile, Object.fromEntries(webSearchResults), 'web_search.persist_failed');
+  saveWebSearchResults();
 }
 
 const callItemTypes = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'mcp_call', 'computer_call']);

@@ -2239,6 +2239,30 @@ test('requests too large to send compact the thread, and OpenRouter refusals end
     /OpenRouter refused this request \(HTTP 401\)/);
 });
 
+test('a search a thread keeps replaying keeps its results past 30 days', async t => {
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, body: JSON.stringify({ id: 'resp_replay', output: [] }) },
+    { status: 200, body: JSON.stringify({ id: 'resp_replay', output: [] }) },
+  ]);
+  const session = inClaudeSession('search-replayed');
+  await exchangeRaw(searchRequest(), session);
+  const replay = async () => {
+    await exchange(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: [
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'How many?' }] },
+      { type: 'web_search_call', id: 'call_search', status: 'completed', action: { type: 'search', query: 'openai codex contributors' } },
+      answer, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Thanks.' }] }] }), session);
+    return forwarded.at(-1).body.input.find(item => item.type === 'function_call_output').output;
+  };
+  // Each replay restarts the result's 30 days, so a thread active for two months still sees what it found.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 29 * dayMs });
+  assert.match(await replay(), /688 contributors/);
+  t.mock.timers.setTime(Date.now() + 29 * dayMs);
+  assert.match(await replay(), /688 contributors/);
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
