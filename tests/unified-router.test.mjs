@@ -2211,6 +2211,34 @@ test('a Claude tool call whose input arrives in its start event keeps that input
   assert.equal(call.arguments, '{"cmd":"ls"}');
 });
 
+test('requests too large to send compact the thread, and OpenRouter refusals end in a diagnostic, never a retried status', async t => {
+  // Codex retries a 413 with the same bytes and answers a 401 by refreshing its ChatGPT sign-in.
+  const oversized = await exchangeRaw(Buffer.alloc(64 * 1024 * 1024 + 1, ' '));
+  assert.equal(oversized.status, 200);
+  assert.equal(oversized.headers['x-codex-router-diagnostic'], 'router-request-too-large');
+  assert.equal(parseSse(oversized.rawBody).at(-1).response.error.code, 'context_length_exceeded');
+  mockUpstreamSequence(t, [
+    { status: 413, body: JSON.stringify({ type: 'error', error: { type: 'request_too_large', message: 'Request exceeds the maximum allowed number of bytes.' } }) },
+    { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'prompt is too long: 1000001 tokens > 1000000 maximum' } }) },
+    { status: 413, body: JSON.stringify({ error: { message: 'Payload too large' } }) },
+    { status: 401, body: JSON.stringify({ error: { code: 401, message: 'User not found.' } }) },
+  ]);
+  for (const [body, diagnostic] of [[claudeRequest('Go.'), 'anthropic-context-overflow'], [claudeRequest('Go.'), 'anthropic-context-overflow'],
+    [JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Go.' }), 'openrouter-context-overflow']]) {
+    const result = await exchangeRaw(body);
+    assert.equal(result.status, 200);
+    assert.equal(result.headers['x-codex-router-diagnostic'], diagnostic);
+    const failed = parseSse(result.rawBody).at(-1);
+    assert.equal(failed.response.error.code, 'context_length_exceeded');
+    assert.doesNotMatch(failed.response.error.message, /OpenRouter/);
+  }
+  const refused = await exchangeRaw(JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Go.' }));
+  assert.equal(refused.status, 200);
+  assert.equal(refused.headers['x-codex-router-diagnostic'], 'openrouter-request-refused');
+  assert.match(parseSse(refused.rawBody).find(event => event.type === 'response.output_item.done').item.content[0].text,
+    /OpenRouter refused this request \(HTTP 401\)/);
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',

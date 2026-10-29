@@ -7,7 +7,7 @@ import { anthropicHeaders, anthropicResponse, messagesRequest } from './anthropi
 import { contextOverflowPattern, isObject, maxEventLineChars } from './common.mjs';
 import { anthropicApiKey, configuredLogLevel, logLevels, openrouterApiKey } from './config.mjs';
 
-export const openrouterContextOverflowMessage = 'The conversation exceeds the OpenRouter model context window.';
+export const contextOverflowMessage = 'The conversation exceeds the model context window.';
 
 const maxCapturedUpstreamErrorBytes = 256 * 1024;
 

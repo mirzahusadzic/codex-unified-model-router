@@ -8,7 +8,7 @@ import { anthropicRefusal } from './anthropic.mjs';
 import { isObject, routerRevision as sourceRevision } from './common.mjs';
 import { anthropicApiKey, envFile, host, logEvent, modelCatalogFile, openrouterApiKey, port, rejectedRequestDir, routerToken } from './config.mjs';
 import { claudeRoute, holdAnthropicRoute, recordClaudeRoute, sessionRefusal, sessionSide } from './sessions.mjs';
-import { openUpstream, openrouterContextOverflowMessage, openrouterTarget, parseUpstreamError, readUpstreamBody, routeFor, upstreamHeaders, upstreamModelFor, upstreamTrace, usageLogging, usageTap } from './upstream.mjs';
+import { contextOverflowMessage, openUpstream, openrouterTarget, parseUpstreamError, readUpstreamBody, routeFor, upstreamHeaders, upstreamModelFor, upstreamTrace, usageLogging, usageTap } from './upstream.mjs';
 import { openRouterStream, runWebSearch, webSearchEffort } from './web-search.mjs';
 import { adaptForUpstream, prepareOpenRouterRecovery } from './adapt.mjs';
 
@@ -17,6 +17,7 @@ const routerRevision = sourceRevision(fileURLToPath(import.meta.url));
 
 const openrouterRejectedDiagnostic = '[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.';
 const anthropicRejectedDiagnostic = '[router diagnostic] Anthropic rejected this step. The thread is intact; retry or start a new thread.';
+const openrouterRefusedDiagnostic = status => `[router diagnostic] OpenRouter refused this request (HTTP ${status}). Check OPENROUTER_API_KEY, your OpenRouter credits, and your OpenRouter settings for this model.`;
 const anthropicRefusedDiagnostic = reason => `[router diagnostic] Anthropic's API refused this request (${reason}), and no OpenRouter key is configured to fall back to. Check ANTHROPIC_API_KEY and the organization's credits and limits in the Claude Console.`;
 
 function isAuthenticated(headers) {
@@ -143,16 +144,16 @@ function sendResponsesDiagnostic(response, requestId, text = openrouterRejectedD
   ]);
 }
 
-function sendContextOverflow(response, requestId) {
+function sendContextOverflow(response, requestId, diagnostic, message = contextOverflowMessage) {
   // Codex maps this code to its context-window error, which drives compaction.
-  sendSyntheticResponse(response, requestId, 'openrouter-context-overflow', responseId => [
+  sendSyntheticResponse(response, requestId, diagnostic, responseId => [
     {
       type: 'response.failed',
       response: {
         id: responseId,
         object: 'response',
         status: 'failed',
-        error: { code: 'context_length_exceeded', message: openrouterContextOverflowMessage },
+        error: { code: 'context_length_exceeded', message },
       },
     },
   ]);
@@ -272,7 +273,9 @@ const server = http.createServer((request, response) => {
     if (receivedBytes > maxBodyBytes) {
       rejected = true;
       response.once('finish', () => request.destroy());
-      sendJson(response, 413, { error: { message: 'Request body exceeds the Codex Unified Model Router limit' } });
+      // Codex would retry a 413 with the same bytes; compaction makes the thread smaller.
+      sendContextOverflow(response, requestId, 'router-request-too-large',
+        'The request exceeds the Codex Unified Model Router\'s 64 MiB limit.');
       return;
     }
     chunks.push(chunk);
@@ -502,9 +505,10 @@ const server = http.createServer((request, response) => {
             ...trace,
           });
 
-          // Anthropic's refusals are read before Codex sees them: a 401 would make Codex refresh its ChatGPT sign-in.
-          if ((target.provider === 'openrouter' && status === 400)
-              || (target.provider === 'anthropic' && [400, 401, 402, 403, 404, 429].includes(status))) {
+          // Refusals are read before Codex sees them: a 401 would make Codex refresh its ChatGPT sign-in,
+          // and a 413 would be retried with the same bytes.
+          if ((target.provider === 'openrouter' && [400, 401, 402, 403, 413].includes(status))
+              || (target.provider === 'anthropic' && [400, 401, 402, 403, 404, 413, 429].includes(status))) {
             void (async () => {
               const upstreamBody = await readUpstreamBody(upstreamResponse);
               logEvent('error', 'upstream.response_finished', {
@@ -542,6 +546,12 @@ const server = http.createServer((request, response) => {
                 response.end(upstreamBody.body);
                 return;
               }
+              if (target.provider === 'openrouter' && [401, 402, 403].includes(status)) {
+                logEvent('error', 'openrouter.refused', { requestId, sessionId: requestInfo.sessionId, model, status, attempt, ...trace });
+                if (clientClosed || response.destroyed) return;
+                sendResponsesDiagnostic(response, requestId, openrouterRefusedDiagnostic(status), 'openrouter-request-refused');
+                return;
+              }
 
               const capture = captureRejectedRequest({
                 requestId,
@@ -550,6 +560,8 @@ const server = http.createServer((request, response) => {
                 responseBody: upstreamBody.body,
               });
               const upstreamErrorDetails = parseUpstreamError(upstreamBody.body);
+              // A request too large for the upstream shrinks the same way as one over the context window.
+              if (status === 413) upstreamErrorDetails.contextOverflow = true;
               logEvent('error', 'openrouter.request_rejected', {
                 requestId,
                 sessionId: requestInfo.sessionId,
@@ -577,7 +589,7 @@ const server = http.createServer((request, response) => {
               if (upstreamErrorDetails.contextOverflow) {
                 // Let Codex compact the thread itself instead of silently
                 // retrying with history the router chose to discard.
-                sendContextOverflow(response, requestId);
+                sendContextOverflow(response, requestId, `${target.provider}-context-overflow`);
                 return;
               }
               if (!recoveryAttempted) {

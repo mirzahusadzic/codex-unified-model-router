@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isObject, maxEventLineChars } from './common.mjs';
 import { envFile, logEvent, modelCatalogFile, persistJson } from './config.mjs';
-import { finalEventTypes, openUpstream, openrouterContextOverflowMessage, openrouterTarget, readUpstreamBody, upstreamHeaders } from './upstream.mjs';
+import { contextOverflowMessage, finalEventTypes, openUpstream, openrouterTarget, readUpstreamBody, upstreamHeaders } from './upstream.mjs';
 
 // Web search for OpenRouter models runs in the router. Codex's hosted
 // web_search tool would run on OpenRouter's side, which returns the results
@@ -427,7 +427,7 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
       // As for any request, a context overflow fails the response so Codex compacts the thread.
       finished = true;
       emit({ type: 'response.failed', response: { ...event.response, id: firstResponseId ?? event.response?.id, status: 'failed',
-        output: earlierOutput, error: { code: 'context_length_exceeded', message: openrouterContextOverflowMessage }, ...(usage ? { usage } : {}) } });
+        output: earlierOutput, error: { code: 'context_length_exceeded', message: contextOverflowMessage }, ...(usage ? { usage } : {}) } });
       return;
     }
     if (!continued?.stream) {
