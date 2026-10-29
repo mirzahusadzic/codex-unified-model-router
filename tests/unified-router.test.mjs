@@ -1902,6 +1902,22 @@ test('restored searches keep a step\'s calls together, ahead of their outputs', 
     'function_call_output:call_exec', 'function_call_output:ws_one', 'function_call_output:ws_two', 'message']);
 });
 
+test('a step\'s calls reach OpenRouter as one turn across the reasoning between them, ahead of their outputs', async () => {
+  const reasoning = id => ({ type: 'reasoning', id, summary: [], content: [{ type: 'reasoning_text', text: id }] });
+  const call = id => ({ type: 'function_call', call_id: id, name: 'exec_command', arguments: '{}' });
+  const output = id => ({ type: 'function_call_output', call_id: id, output: id });
+  const upstream = await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check.' }] },
+    reasoning('rs_one'), call('one'), reasoning('rs_two'), call('two'), output('two'), output('one'),
+    // A later step starts after the outputs and stays separate.
+    reasoning('rs_three'), call('three'), output('three'), reasoning('rs_four'), call('four'), output('four')] });
+  assert.deepEqual(upstream.body.input.map(item => `${item.type}:${item.call_id ?? item.id ?? item.role}`), [
+    'message:user', 'reasoning:rs_one', 'function_call:one', 'reasoning:rs_two', 'function_call:two',
+    'function_call_output:one', 'function_call_output:two',
+    'reasoning:rs_three', 'function_call:three', 'function_call_output:three',
+    'reasoning:rs_four', 'function_call:four', 'function_call_output:four']);
+});
+
 test('native OpenAI requests keep the hosted web_search tool', async () => {
   const upstream = await send({ model: 'gpt-6-astra', input: 'Hello', tools: [{ type: 'web_search' }] });
   assert.deepEqual(upstream.body.tools, [{ type: 'web_search' }]);

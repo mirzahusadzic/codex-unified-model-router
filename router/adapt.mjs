@@ -88,12 +88,23 @@ function normalizeToolHistoryForOpenRouter(input) {
       index += 1;
       continue;
     }
+    // A step's calls form one run across the reasoning and text between them,
+    // as when Claude writes a progress note before each call, so the step's
+    // outputs follow its last call and the provider sees one assistant turn.
     const run = { start: index, end: index, calls: [] };
-    while (index < input.length && input[index]?.type === 'function_call') {
-      run.calls.push({ index, item: input[index] });
-      run.end = index;
-      index += 1;
+    while (index < input.length) {
+      if (input[index]?.type === 'function_call') {
+        run.calls.push({ index, item: input[index] });
+        run.end = index;
+        index += 1;
+        continue;
+      }
+      let ahead = index;
+      while (ahead < input.length && (input[ahead]?.type === 'reasoning' || isMessageForRole(input[ahead], 'assistant'))) ahead += 1;
+      if (ahead === index || input[ahead]?.type !== 'function_call') break;
+      index = ahead;
     }
+    index = run.end + 1;
     runs.push(run);
   }
 
@@ -144,9 +155,10 @@ function normalizeToolHistoryForOpenRouter(input) {
   for (let index = 0; index < input.length;) {
     const run = runsByStart.get(index);
     if (run) {
-      const calls = run.calls.filter(call => retainedCallIndexes.has(call.index));
-      normalized.push(...calls.map(call => call.item));
-      for (const call of calls) {
+      for (let member = run.start; member <= run.end; member += 1) {
+        if (input[member]?.type !== 'function_call' || retainedCallIndexes.has(member)) normalized.push(input[member]);
+      }
+      for (const call of run.calls.filter(item => retainedCallIndexes.has(item.index))) {
         const output = outputsByCallId.get(call.item.call_id);
         if (output) normalized.push(output.item);
       }
