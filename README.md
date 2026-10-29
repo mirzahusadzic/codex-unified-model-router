@@ -6,14 +6,15 @@
 ![Codex CLI 0.166](https://img.shields.io/badge/Codex%20CLI-0.166-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
-A loopback-only router that lets one Codex thread switch between native OpenAI, DeepSeek, Anthropic Claude, Meta Muse Spark, and configured OpenRouter models through Codex’s existing model picker. It normalizes mixed-provider messages, tool calls, reasoning state, and structured output; preserves the selected model; streams responses; performs bounded recovery for rejected or oversized OpenRouter requests; and runs web search through the router so later turns retain the results. Training-tier Muse and Ultra Spark sessions are isolated from OpenAI and Claude sessions, with additional fork-context safeguards for spawned workers. Includes cross-platform installers and verifiers, configuration backups, daemon pinning, Linux/macOS/Windows CI, and no npm runtime dependencies.
+A loopback-only router that lets one Codex thread switch between native OpenAI, DeepSeek, Anthropic Claude, Meta Muse Spark, and configured OpenRouter models through Codex’s existing model picker, within its privacy boundaries. It normalizes mixed-provider messages, tool calls, reasoning state, and structured output; runs Claude on Anthropic's API when you add an Anthropic API key; preserves the selected model; streams responses; performs bounded recovery for rejected or oversized requests; and runs web search through the router so later turns retain the results. Training-tier Muse and Ultra Spark sessions are isolated from OpenAI and Claude sessions, with additional fork-context safeguards for spawned workers. Includes cross-platform installers and verifiers, configuration backups, daemon pinning, Linux/macOS/Windows CI, and no npm runtime dependencies.
 
 - **Switch models in place:** OpenAI, DeepSeek, Claude, Muse, Ultra Spark, and cataloged OpenRouter models.
+- **Claude on Anthropic's API:** With `ANTHROPIC_API_KEY`, Claude runs on the Messages API with prompt caching and its signed thinking, and falls back to OpenRouter when Anthropic rejects the key or the credits or spend limit run out. Without the key, it runs on OpenRouter.
 - **Agent orchestration:** Ultra Spark lets DeepSeek coordinate up to 10 Muse Spark workers with `fork_context: false`.
-- **Privacy boundaries:** Training-tier sessions cannot mix with native OpenAI or Claude sessions.
+- **Privacy boundaries:** Training-tier sessions cannot mix with native OpenAI or Claude sessions, and after OpenAI or Claude a session reaches only OpenRouter endpoints that keep no data.
 - **Provider compatibility:** Repairs reasoning and tool history, handles DeepSeek JSON-mode structured output, normalizes problematic tool arguments, and never silently substitutes models.
-- **Resilient streaming:** Bounded OpenRouter recovery, context-overflow signaling for Codex compaction, router diagnostics, and disconnect cancellation.
-- **Router-run web search:** Converts Codex’s hosted search tool into an OpenRouter function, retains results per session, and restores them in later turns.
+- **Resilient streaming:** Bounded recovery for OpenRouter and Anthropic, context-overflow signaling for Codex compaction, router diagnostics, and disconnect cancellation.
+- **Router-run web search:** For every model except native OpenAI ones, Claude included, converts Codex’s hosted search tool into a function the router runs through OpenRouter (requires the OpenRouter key), retains results per session, and restores them in later turns.
 - **Local operations:** Loopback binding, token authentication, private credential storage, launchd/systemd/Windows startup, backups, verifiers, and daemon version pinning.
 - **Minimal footprint:** Node.js 20+, zero npm runtime dependencies.
 
@@ -28,10 +29,16 @@ Codex talks to the router as one model provider. The router picks the upstream f
 config:
     layout: elk
     look: neo
+    themeVariables:
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif'
     flowchart:
-        wrappingWidth: 400
+        wrappingWidth: 220
+        padding: 20
     themeCSS: >-
         foreignObject { overflow: visible; }
+        .node foreignObject, .node foreignObject *, .edgeLabel, .edgeLabel * {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif !important; line-height: 1.5 !important; }
+        .node foreignObject, .node foreignObject * { white-space: nowrap !important; }
         code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
         Consolas, monospace; font-size: 0.9em; line-height: inherit;
         color: inherit !important; text-shadow: none !important;
@@ -50,12 +57,17 @@ config:
         box-shadow: 0 0 0 5px var(--fill), 0 0 0 7px var(--ring); }
         .label[data-id^="L_CX_RT_"] .labelBkg {
         --ring: #2e9e5b; }
-        .label[data-id^="L_RT_OR_"] .labelBkg {
+        .label[data-id^="L_RT_OR_"] .labelBkg,
+        .label[data-id^="L_OR_CL_"] .labelBkg,
+        .label[data-id^="L_OR_DS_"] .labelBkg {
         --ring: #e3a008; }
+        .label[data-id^="L_RT_AN_"] .labelBkg {
+        --ring: #d97757; }
         .label[data-id^="L_RT_OA_"] .labelBkg {
         --ring: #b5bcc6; }
         .label[data-id^="L_US_MU_"] .labelBkg,
-        .label[data-id^="L_OA_TT_"] .labelBkg {
+        .label[data-id^="L_OA_TT_"] .labelBkg,
+        .label[data-id^="L_CL_TT_"] .labelBkg {
         --ring: #c94a4a; }
         .edgeLabel p, .edgeLabel span, .edgeLabel text {
         --halo: var(--fill, var(--vscode-editor-background,
@@ -67,31 +79,30 @@ config:
         -1px -1px var(--halo), 1px -1px var(--halo), -1px 1px var(--halo),
         0 0 3px var(--halo), 0 0 4px var(--halo); }
 ---
-flowchart LR
+flowchart TB
     CX["<b>Codex</b><br/>CLI and app-server"]
     RT["<b>Unified Model Router</b><br/>127.0.0.1, local token"]
-    OR["<b>OpenRouter</b><br/>your API key"]
-    AN["<b>Anthropic API</b><br/>optional Console key"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
+    AN["<b>Anthropic API</b><br/>optional API key"]
+    OR["<b>OpenRouter</b><br/>required key; cataloged models<br/><b>web search for all but native</b>"]
+    CL["<b>Claude Sonnet · Opus 5.5</b><br/>prompt-cached"]
     DS["<b>DeepSeek V4.1 Flash</b><br/>default; its own endpoint may train"]
-    CL["<b>Claude Sonnet · Opus 5.5</b><br/>Anthropic, prompt-cached"]
-    AM["<b>Any OpenRouter model</b><br/>with a catalog entry"]
     subgraph TT["Training tier"]
+        direction LR
         US["<b>Ultra Spark</b><br/>DeepSeek leading workers"]
-        MU["<b>Muse Spark 1.3 Contributor</b><br/>Meta, trains on inputs"]
+        MU["<b>Muse Spark 1.3</b><br/>Meta, trains on inputs"]
     end
     CX -->|"Responses API"| RT
-    RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
     RT -->|"native models"| OA
-    RT -->|"anthropic/ with a Console key"| AN
+    RT -->|"anthropic/ with an Anthropic key"| AN
+    RT -->|"deepseek/ · ultra-spark/ · openrouter/"| OR
     AN --> CL
-    OR -->|"after OpenAI or Claude: endpoints that keep no data"| DS
-    OR -->|"without a Console key"| CL
-    OR --> AM
-    OR --> US
-    US -->|"spawns up to 10 workers"| MU
-    OA -.-|"never in one session, spawned agents included"| TT
-    CL -.-|"never in one session"| TT
+    OR -->|"no Anthropic key, or fallback"| CL
+    OR -->|"after OpenAI or Claude: data-collecting endpoints blocked"| DS
+    OR --> TT
+    US -->|"up to 10 workers"| MU
+    OA -.-|"refused in the same session"| TT
+    CL -.-|"refused in the same session"| TT
 
     classDef default fill:#8a96a82e,stroke:#8a96a8,stroke-width:1px
     classDef router fill:#2e9e5b4d,stroke:#2e9e5b,stroke-width:2px
@@ -102,7 +113,7 @@ flowchart LR
     classDef training fill:#c94a4a4d,stroke:#c94a4a,stroke-width:2px
     classDef trainingTier fill:#c94a4a14,stroke:#c94a4a,stroke-width:2px,stroke-dasharray:6 4
     class RT router
-    class OR,AM openrouter
+    class OR openrouter
     class DS,US deepseek
     class CX,OA openai
     class AN,CL anthropic
@@ -110,7 +121,7 @@ flowchart LR
     class TT trainingTier
 ```
 
-<p align="center"><em>All requests go through the router; labels show the route. The dotted lines keep training-tier models out of native OpenAI and Claude sessions, and after one of those models a session's OpenRouter requests skip endpoints that collect data, such as DeepSeek's own.</em></p>
+<p align="center"><em>All requests go through the router; labels show the route. A dotted line joins models the router never mixes in one session.</em></p>
 
 ## Install
 
@@ -123,6 +134,16 @@ cd codex-unified-model-router
 node install.mjs                        # asks for your OpenRouter API key on the first install
 node install.mjs --verify
 ```
+
+### Keys
+
+| Key | Serves |
+| --- | --- |
+| OpenRouter (required) | DeepSeek, Ultra Spark, Muse, and other OpenRouter models; Claude without an Anthropic key, or as its fallback; web search for every model except native OpenAI ones |
+| Anthropic (optional) | Claude on Anthropic's API first; a thread keeps the route it started on ([which key when](docs/setup.md#claude-sonnet-55-and-claude-opus-55)) |
+| ChatGPT login | Native OpenAI models |
+
+To add the Anthropic key, create an API key at [platform.claude.com](https://platform.claude.com/), put `ANTHROPIC_API_KEY=<the key>` in `~/.codex/unified-router/openrouter.env`, which the installer keeps, and rerun `node install.mjs`.
 
 `install.mjs` runs the installer for your platform from [`platform/`](platform/README.md). Common variations:
 
