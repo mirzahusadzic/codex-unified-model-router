@@ -2322,6 +2322,17 @@ test('after a native OpenAI or Claude model, OpenRouter requests go only to endp
   assert.deepEqual(search.body.provider, { data_collection: 'deny' });
 });
 
+test('a protected session\'s data policy holds against a caller\'s own provider settings', async () => {
+  await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello' }, inClaudeSession('policy-caller'));
+  const overridden = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello',
+    provider: { order: ['deepseek'], data_collection: 'allow' } }, inClaudeSession('policy-caller'));
+  assert.deepEqual(overridden.body.provider, { order: ['deepseek'], data_collection: 'deny' });
+  // A stricter policy from the caller is kept in any session.
+  const strict = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Hello',
+    provider: { data_collection: 'deny' } }, inClaudeSession('policy-caller-open'));
+  assert.deepEqual(strict.body.provider, { data_collection: 'deny' });
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',

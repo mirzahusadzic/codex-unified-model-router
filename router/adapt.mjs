@@ -211,10 +211,9 @@ export function adaptForUpstream(request, provider, upstreamModel, scope, { prot
   // After a native OpenAI or Claude model, a session reaches only endpoints
   // that do not collect data, so their output never goes where it may be
   // trained on. A model pinned to such an endpoint still runs there; DeepSeek's
-  // own endpoint, which may train on prompts, does not qualify.
-  if (protectedSession && request.provider?.data_collection === undefined) {
-    request.provider = { ...request.provider, data_collection: 'deny' };
-  }
+  // own endpoint, which may train on prompts, does not qualify. A caller's own
+  // `allow` does not override it; a caller's `deny` elsewhere is kept.
+  if (protectedSession) request.provider = { ...request.provider, data_collection: 'deny' };
   adaptation.stateReset = normalizeStateForOpenRouter(request);
   normalizeReasoningForOpenRouter(request.reasoning, upstreamModel);
   adaptation.webSearch = overrideWebSearchForOpenRouter(request, scope);
