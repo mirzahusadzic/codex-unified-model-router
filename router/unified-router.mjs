@@ -406,6 +406,33 @@ const server = http.createServer((request, response) => {
     // Continues a response after the router's own searches. Resolves with
     // { stream } for the continuation's events, { contextOverflow } when
     // OpenRouter refuses it, or null when it never answers.
+    // A refused continuation ends the response Codex is already reading, as the
+    // first request would have: a context or size limit compacts the thread, a
+    // refusal no retry fixes on Anthropic's API moves the thread to OpenRouter
+    // and fails the response so Codex retries it there, rate limits and server
+    // errors fail it so Codex retries, and anything else gets the provider's diagnostic.
+    const continuationRefusal = (status, body, continuationBody) => {
+      if (status === 413 || parseUpstreamError(body).contextOverflow) return { contextOverflow: true };
+      const reason = target.provider === 'anthropic' ? anthropicRefusal(status, body) : null;
+      if (reason) {
+        holdAnthropicRoute();
+        logEvent('error', 'anthropic.refused', {
+          requestId, sessionId: requestInfo.sessionId, model, status, reason, continuation: true, fallback: Boolean(openrouterApiKey),
+        });
+        if (!openrouterApiKey) return { diagnostic: anthropicRefusedDiagnostic(reason) };
+        recordClaudeRoute(requestInfo.sessionId, 'openrouter');
+        return { failure: { code: 'server_error', message: `Anthropic's API refused the request (${reason}); the thread continues on OpenRouter.` } };
+      }
+      if (status === 429) return { failure: { code: 'rate_limit_exceeded', message: 'The upstream is limiting requests; try again shortly.' } };
+      if (status >= 500) return { failure: { code: 'server_error', message: `The upstream answered HTTP ${status}.` } };
+      if (target.provider === 'openrouter' && [401, 402, 403, 404].includes(status)) {
+        const dataPolicy = status === 404 && continuationBody.provider?.data_collection === 'deny'
+          && /data policy/i.test(body.toString('utf8'));
+        return { diagnostic: dataPolicy ? openrouterDataPolicyDiagnostic : openrouterRefusedDiagnostic(status) };
+      }
+      return { diagnostic: `[router diagnostic] The web search ran, but ${target.provider === 'anthropic' ? 'Anthropic' : 'OpenRouter'} rejected the next step. The thread is intact; retry or start a new thread.` };
+    };
+
     const continueAfterSearch = continuationBody => new Promise(resolve => {
       if (clientGone()) {
         resolve(null);
@@ -433,8 +460,8 @@ const server = http.createServer((request, response) => {
         }
         // The refusal is read up to a bound, then the connection ends.
         readUpstreamBody(continuationResponse).then(({ body: refusal }) => {
-          resolve({ contextOverflow: parseUpstreamError(refusal).contextOverflow });
-        }, () => resolve({ contextOverflow: false })).finally(() => continuation.destroy());
+          resolve(continuationRefusal(status, refusal, continuationBody));
+        }, () => resolve(null)).finally(() => continuation.destroy());
       });
       track(continuation, () => resolve(null));
     });

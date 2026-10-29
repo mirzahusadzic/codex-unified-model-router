@@ -452,8 +452,17 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
         output: earlierOutput, error: { code: 'context_length_exceeded', message: contextOverflowMessage }, ...(usage ? { usage } : {}) } });
       return;
     }
-    if (!continued?.stream) {
-      diagnose('[router diagnostic] The web search ran, but OpenRouter rejected the next step. The thread is intact; retry or start a new thread.');
+    // A continuation that never answered, or one the upstream will take on a retry, fails so Codex retries the step.
+    const refused = !continued ? { code: 'server_error', message: 'The step after the web search did not reach the upstream.' }
+      : continued.failure;
+    if (refused) {
+      finished = true;
+      emit({ type: 'response.failed', response: { ...event.response, id: firstResponseId ?? event.response?.id, status: 'failed',
+        output: earlierOutput, error: refused, ...(usage ? { usage } : {}) } });
+      return;
+    }
+    if (!continued.stream) {
+      diagnose(continued.diagnostic);
       return;
     }
     let failure = null;

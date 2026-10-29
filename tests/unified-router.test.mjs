@@ -1876,7 +1876,30 @@ test('stored search results expire while the router runs', async t => {
   assert.equal(stored[JSON.stringify(['expiring-session', 'call_search'])], undefined, 'expired results leave the file too');
 });
 
-test('a refused continuation with an oversized body still ends the response', async t => {
+test('a refused continuation ends the response as the first request would: retried, compacted, or with the provider\'s diagnostic', async t => {
+  const error = message => JSON.stringify({ error: { message } });
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() }, webSearchResult(200),
+    { status: 429, body: error('Rate limit exceeded') },
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() }, webSearchResult(200),
+    { status: 413, body: error('Payload too large') },
+    { status: 200, body: JSON.stringify({ id: 'resp_claude', output: [] }) },
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() }, webSearchResult(200),
+    { status: 404, body: error('0 endpoints out of 39 requested are available matching your guardrail restrictions and data policy.') },
+  ]);
+  const final = async headers => parseSse((await exchangeRaw(searchRequest(), headers)).rawBody).at(-1);
+  const limited = await final();
+  assert.equal(limited.type, 'response.failed');
+  assert.equal(limited.response.error.code, 'rate_limit_exceeded');
+  const oversized = await final();
+  assert.equal(oversized.response.error.code, 'context_length_exceeded');
+  await send({ model: 'openrouter/anthropic/claude-sonnet-5.5', input: 'Hello' }, inClaudeSession('continuation-policy'));
+  const policy = await final(inClaudeSession('continuation-policy'));
+  assert.equal(policy.type, 'response.completed');
+  assert.match(policy.response.output.at(-1).content[0].text, /go only to endpoints that do not collect data/);
+});
+
+test('a continuation the upstream fails with an oversized server error ends the response so Codex retries', async t => {
   mockUpstreamSequence(t, [
     { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
     webSearchResult(200),
@@ -1885,8 +1908,9 @@ test('a refused continuation with an oversized body still ends the response', as
   const result = await exchangeRaw(searchRequest());
   assert.equal(result.status, 200);
   const final = parseSse(result.rawBody).at(-1);
-  assert.equal(final.type, 'response.completed');
-  assert.match(final.response.output.at(-1).content[0].text, /OpenRouter rejected the next step/);
+  assert.equal(final.type, 'response.failed');
+  assert.equal(final.response.error.code, 'server_error');
+  assert.deepEqual(final.response.output.map(item => item.type), ['web_search_call']);
 });
 
 test('restored searches keep a step\'s calls together, ahead of their outputs', async () => {
@@ -2324,5 +2348,29 @@ test('a refusal no retry can fix moves the request and its session to OpenRouter
   assert.equal(routes['claude-fallback'].route, 'openrouter');
   const next = await exchange(claudeRequest('Hello'), inClaudeSession('claude-after-refusal'));
   assert.equal(next.status, 200);
+  assert.equal(forwarded.at(-1).hostname, 'openrouter.ai');
+});
+
+test('an Anthropic refusal on the step after a search moves the thread to OpenRouter and fails the response so Codex retries there', async t => {
+  // The test before this one held new sessions on OpenRouter for an hour.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 2 * 60 * 60 * 1000 });
+  mockUpstreamSequence(t, [
+    { status: 200, contentType: 'text/event-stream', body: claudeStream([{ start: { type: 'tool_use', id: 'toolu_find', name: 'web_search', input: {} },
+      deltas: [{ type: 'input_json_delta', partial_json: '{"query":"openai codex contributors"}' }] }], { stopReason: 'tool_use' }) },
+    webSearchResult(200),
+    { status: 401, body: JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }) },
+    { status: 200, body: JSON.stringify({ id: 'resp_retry', output: [] }) },
+  ]);
+  const before = parsedLogEntries().length;
+  const result = await exchangeRaw(claudeRequest('How many contributors?', { tools: [{ type: 'web_search' }] }), inClaudeSession('continuation-refused'));
+  const final = parseSse(result.rawBody).at(-1);
+  assert.equal(final.type, 'response.failed');
+  assert.equal(final.response.error.code, 'server_error');
+  assert.match(final.response.error.message, /continues on OpenRouter/);
+  const log = parsedLogEntries().slice(before).find(entry => entry.event === 'anthropic.refused');
+  assert.equal(log.continuation, true);
+  assert.equal(JSON.parse(readFileSync(join(routerHome, 'claude-routes.json'), 'utf8'))['continuation-refused'].route, 'openrouter');
+  // Codex's retry of the step goes to OpenRouter.
+  await exchange(claudeRequest('How many contributors?'), inClaudeSession('continuation-refused'));
   assert.equal(forwarded.at(-1).hostname, 'openrouter.ai');
 });
