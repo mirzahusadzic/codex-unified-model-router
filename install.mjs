@@ -48,6 +48,9 @@ Environment:
                                   0 leaves Codex's setting alone
   CODEX_ROUTER_AGENT_THREADS      Spawned-agent limit: 10 (default), 1-999,
                                   or 0 to leave it to Codex
+  CODEX_ROUTER_SANDBOX_NETWORK    1 lets sandboxed shell commands reach the
+                                  network without asking; 0 (default) leaves
+                                  Codex's setting alone
   CODEX_ROUTER_RESTART_DAEMON     1 (default) restarts a running Codex daemon
                                   so it loads the new settings; 0 skips it
   CODEX_ROUTER_PIN_DAEMON         1 (default) pins the Codex daemon to the

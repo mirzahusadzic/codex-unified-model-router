@@ -18,7 +18,7 @@ function run(script, args, key = '', extraEnv = {}) {
   return spawnSync(process.execPath, [join(root, script), ...args], {
     encoding: 'utf8',
     env: { ...process.env, OPENROUTER_API_KEY: key, CODEX_ROUTER_TOKEN: '', CODEX_ROUTER_DISABLE_APPS: '1', CODEX_ROUTER_DISABLE_ANALYTICS: '1', CODEX_ROUTER_AGENT_THREADS: '10',
-      CODEX_ROUTER_DISABLE_GUARDIAN: '0', ...extraEnv },
+      CODEX_ROUTER_DISABLE_GUARDIAN: '0', CODEX_ROUTER_SANDBOX_NETWORK: '0', ...extraEnv },
   });
 }
 const featureHeaders = text => text.split('\n').filter(line => line.trim() === '[features]').length;
@@ -274,6 +274,30 @@ test('config merges turn off Codex analytics unless told to leave them alone', t
   assert.doesNotMatch(readFileSync(config, 'utf8'), /codex-unified-router analytics|enabled = false/);
   succeeds(run('scripts/verify-credentials.mjs', [home], '', keep));
   assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_DISABLE_ANALYTICS: 'no' }).status, 0);
+});
+
+test('config merges let sandboxed commands reach the network only when told to', t => {
+  const { home, envFile, config } = fixture(t);
+  succeeds(run('scripts/prepare-credentials.mjs', [envFile], 'synthetic-key'));
+  writeFileSync(config, '[sandbox_workspace_write]\nwritable_roots = ["/tmp/extra"]\nnetwork_access = false\n', { mode: 0o600 });
+  const args = [config, home, config, envFile, join(home, 'unified-openrouter.config.toml')];
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.match(readFileSync(config, 'utf8'), /\[sandbox_workspace_write\]\nwritable_roots = \["\/tmp\/extra"\]\nnetwork_access = false\n/);
+  assert.doesNotMatch(readFileSync(config, 'utf8'), /codex-unified-router sandbox_workspace_write/);
+  const allow = { CODEX_ROUTER_SANDBOX_NETWORK: '1' };
+  assert.notEqual(run('scripts/verify-credentials.mjs', [home], '', allow).status, 0);
+
+  succeeds(run('scripts/merge-config.mjs', args, '', allow));
+  const merged = readFileSync(config, 'utf8');
+  assert.match(merged, /\[sandbox_workspace_write\]\n# BEGIN codex-unified-router sandbox_workspace_write\nnetwork_access = true\n# END codex-unified-router sandbox_workspace_write\nwritable_roots = \["\/tmp\/extra"\]/);
+  assert.doesNotMatch(merged, /network_access = false/);
+  succeeds(run('scripts/verify-credentials.mjs', [home], '', allow));
+
+  // Settings are not stored: a run without it removes the block and leaves the setting to Codex.
+  succeeds(run('scripts/merge-config.mjs', args));
+  assert.doesNotMatch(readFileSync(config, 'utf8'), /codex-unified-router sandbox_workspace_write|network_access/);
+  assert.match(readFileSync(config, 'utf8'), /\[sandbox_workspace_write\]\nwritable_roots = \["\/tmp\/extra"\]/);
+  assert.notEqual(run('scripts/merge-config.mjs', args, '', { CODEX_ROUTER_SANDBOX_NETWORK: 'yes' }).status, 0);
 });
 
 test('router refuses to start without a local authentication token', t => {

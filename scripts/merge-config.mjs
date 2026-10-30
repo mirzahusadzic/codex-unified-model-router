@@ -44,6 +44,11 @@ const agentThreadsSetting = process.env.CODEX_ROUTER_AGENT_THREADS ?? '10';
 if (!/^(0|[1-9][0-9]{0,2})$/.test(agentThreadsSetting)) {
   throw new Error('CODEX_ROUTER_AGENT_THREADS must be 0 or a whole number from 1 to 999');
 }
+// Codex's workspace-write sandbox keeps shell commands off the network unless
+// the user approves each one. Set CODEX_ROUTER_SANDBOX_NETWORK=1 to let them
+// reach it without asking, for every model; 0, the default, leaves it to Codex.
+const sandboxNetworkSetting = process.env.CODEX_ROUTER_SANDBOX_NETWORK ?? '0';
+if (!['0', '1'].includes(sandboxNetworkSetting)) throw new Error('CODEX_ROUTER_SANDBOX_NETWORK must be 0 or 1');
 const managedTables = [
   {
     name: 'features',
@@ -64,6 +69,12 @@ const managedTables = [
     // max_threads is Codex's legacy alias for the same limit.
     ownedKeys: ['max_concurrent_threads_per_session', 'max_threads'],
     optOut: 'CODEX_ROUTER_AGENT_THREADS=0',
+  },
+  {
+    name: 'sandbox_workspace_write',
+    lines: sandboxNetworkSetting === '1' ? ['network_access = true'] : null,
+    ownedKeys: ['network_access'],
+    optOut: 'CODEX_ROUTER_SANDBOX_NETWORK=0',
   },
 ];
 function readExisting(path) {

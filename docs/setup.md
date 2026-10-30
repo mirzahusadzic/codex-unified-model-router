@@ -40,7 +40,7 @@ node install.mjs
 
 `install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, `-ChangeApiKey`, and `-ApiKeyFile` when run directly.
 
-Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, `CODEX_ROUTER_AGENT_THREADS`, and `CODEX_ROUTER_PIN_DAEMON` values.
+Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, `CODEX_ROUTER_AGENT_THREADS`, `CODEX_ROUTER_SANDBOX_NETWORK`, and `CODEX_ROUTER_PIN_DAEMON` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -56,6 +56,7 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 | `CODEX_ROUTER_DISABLE_GUARDIAN` | `1` (default), `0` | `1` turns off Codex's guardian, which sends the agent transcript to OpenAI to review some actions; `0` leaves it to you. See [Codex guardian](#codex-guardian). |
 | `CODEX_ROUTER_DISABLE_ANALYTICS` | `1` (default), `0` | `1` turns off Codex analytics; `0` leaves them to you. See [Codex analytics](#codex-analytics). |
 | `CODEX_ROUTER_AGENT_THREADS` | `10` (default), `1`–`999`, `0` | Spawned-agent limit per session; `0` leaves it to Codex. See [Spawned-agent limit](#spawned-agent-limit). |
+| `CODEX_ROUTER_SANDBOX_NETWORK` | `0` (default), `1` | `1` lets shell commands in Codex's sandbox reach the network without asking; `0` leaves it to you. See [Sandbox network access](#sandbox-network-access). |
 | `CODEX_ROUTER_RESTART_DAEMON` | `1` (default), `0` | `0` skips restarting a running Codex app-server daemon. See [Activate the provider](#activate-the-provider). |
 | `CODEX_ROUTER_PIN_DAEMON` | `1` (default), `0` | `1` pins the Codex app-server daemon to the CLI's Codex, so it stops updating itself; `0` leaves its updates to Codex. See [Daemon updates](#daemon-updates). |
 
@@ -160,7 +161,7 @@ enabled = false
 max_concurrent_threads_per_session = 10
 ```
 
-The installer edits existing `[features]`, `[analytics]`, and `[agents]` tables in place and keeps their other keys. Codex can write its own settings, such as project trust or MCP servers, between the markers; reruns keep everything the router does not own and move foreign tables out of its blocks. Move any top-level dotted keys, such as `features.apps`, into the table first. The OpenRouter-only profile inherits these settings.
+With `CODEX_ROUTER_SANDBOX_NETWORK=1`, it also manages `network_access = true` in `[sandbox_workspace_write]`. The installer edits existing `[features]`, `[analytics]`, `[agents]`, and `[sandbox_workspace_write]` tables in place and keeps their other keys. Codex can write its own settings, such as project trust or MCP servers, between the markers; reruns keep everything the router does not own and move foreign tables out of its blocks. Move any top-level dotted keys, such as `features.apps`, into the table first. The OpenRouter-only profile inherits these settings.
 
 ### ChatGPT apps
 
@@ -187,6 +188,10 @@ Approval prompts do not depend on a plan: `approvals_reviewer` defaults to `user
 ### Spawned-agent limit
 
 `max_concurrent_threads_per_session` limits how many spawned agents a session can keep open, excluding the main thread. The installer sets it to 10 so [Ultra Spark](#ultra-spark-mode) can run 10 workers in parallel, and replaces Codex's legacy `max_threads` alias. Install with `CODEX_ROUTER_AGENT_THREADS=<1-999>` for another limit, or `0` to leave it to Codex.
+
+### Sandbox network access
+
+Codex's `workspace-write` sandbox keeps shell commands off the network: a command that needs it, such as `gh api` or a package download, asks for your approval and then runs outside the sandbox. Web search does not depend on it, because it is a tool, not a shell command. Install with `CODEX_ROUTER_SANDBOX_NETWORK=1` to let commands reach the network without asking; the installer then manages `network_access = true` in `[sandbox_workspace_write]`. It applies to every model, native OpenAI included, and a command written after reading a malicious page or file could then send data out without asking. Like the other settings, pass it on every run: a run without it removes the router's block and leaves the setting to you. For a single session, `codex -c sandbox_workspace_write.network_access=true` turns it on.
 
 ## Models
 

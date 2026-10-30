@@ -152,6 +152,7 @@ node install.mjs --change-api-key                    # replace the stored OpenRo
 node install.mjs --api-key-file ~/openrouter.key     # read the key from a file instead of asking
 CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models from /model
 CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
+CODEX_ROUTER_SANDBOX_NETWORK=1 node install.mjs      # let shell commands reach the network without asking
 ```
 
 On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics, ChatGPT connector tools, and the guardian that sends transcripts to OpenAI for review, and allows 10 parallel agents. `node install.mjs --help` summarizes the options; [Installer settings](docs/setup.md#installer-settings) explains each one with its default.

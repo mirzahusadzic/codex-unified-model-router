@@ -94,7 +94,8 @@ test('installer settings are validated before anything is written', t => {
   const home = join(directory, 'codex-home');
   mkdirSync(home);
   for (const [name, value] of [['CODEX_ROUTER_RESTART_DAEMON', 'yes'], ['CODEX_ROUTER_PIN_DAEMON', 'yes'], ['CODEX_ROUTER_NATIVE_MODELS', 'maybe'],
-    ['CODEX_ROUTER_DISABLE_APPS', 'yes'], ['CODEX_ROUTER_DISABLE_GUARDIAN', 'on'], ['CODEX_ROUTER_DISABLE_ANALYTICS', 'no'], ['CODEX_ROUTER_AGENT_THREADS', '1000']]) {
+    ['CODEX_ROUTER_DISABLE_APPS', 'yes'], ['CODEX_ROUTER_DISABLE_GUARDIAN', 'on'], ['CODEX_ROUTER_DISABLE_ANALYTICS', 'no'], ['CODEX_ROUTER_AGENT_THREADS', '1000'],
+    ['CODEX_ROUTER_SANDBOX_NETWORK', 'yes']]) {
     const result = spawnSync(windows ? 'powershell.exe' : 'bash', windows
       ? ['-NoProfile', '-File', platformScript('install'), '-NoService']
       : [platformScript('install'), '--no-service'], {

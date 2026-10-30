@@ -71,6 +71,11 @@ for (const [file, openrouterOnly] of [[configFile, false], [profileFile, true]])
         || logicalLines(config).filter(line => line.trim() === '[agents]').length !== 1)) {
     throw new Error('The managed agent thread limit differs; rerun the installer');
   }
+  if (!openrouterOnly && process.env.CODEX_ROUTER_SANDBOX_NETWORK === '1'
+      && (!managedBlock(config, 'sandbox_workspace_write').includes('network_access = true')
+        || logicalLines(config).filter(line => line.trim() === '[sandbox_workspace_write]').length !== 1)) {
+    throw new Error('Sandbox network access is not enabled by the managed configuration; rerun the installer');
+  }
 }
 if (process.platform !== 'win32') {
   for (const file of [envFile, configFile, profileFile, join(codexHome, 'unified-router')]) {
