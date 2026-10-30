@@ -2268,6 +2268,8 @@ test('a search a thread keeps replaying keeps its results past 30 days', async t
     { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
     webSearchResult(200),
     { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() }, webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
     { status: 200, body: JSON.stringify({ id: 'resp_replay', output: [] }) },
     { status: 200, body: JSON.stringify({ id: 'resp_replay', output: [] }) },
   ]);
@@ -2282,7 +2284,13 @@ test('a search a thread keeps replaying keeps its results past 30 days', async t
   };
   // Each replay restarts the result's 30 days, so a thread active for two months still sees what it found.
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 29 * dayMs });
+  // Another session's search saves the results just before the replay.
+  await exchangeRaw(searchRequest(), inClaudeSession('search-fresh'));
   assert.match(await replay(), /688 contributors/);
+  // The renewal is saved at once, so a restart keeps it.
+  const saved = Object.entries(JSON.parse(readFileSync(join(routerHome, 'web-search-results.json'), 'utf8')))
+    .find(([key]) => key.includes('search-replayed'))[1];
+  assert.equal(saved.at, Date.now());
   t.mock.timers.setTime(Date.now() + 29 * dayMs);
   assert.match(await replay(), /688 contributors/);
 });

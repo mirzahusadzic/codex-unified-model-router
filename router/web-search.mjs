@@ -36,7 +36,9 @@ const maxWebSearchesPerRequest = 8;
 const webSearchResultCount = 5;
 // A replayed result counts as used, so a thread that keeps replaying a search
 // keeps the same tool result, and with it Claude's cached prefix and signed
-// thinking. Uses are saved with the next write, or on their own at most hourly.
+// thinking. A request that renews a result saved over an hour ago saves the
+// results once, so a restart cannot bring back the old expiry; other uses are
+// saved with the next write or the hourly maintenance.
 const webSearchUseSaveMs = 60 * 60 * 1000;
 const webSearchResults = loadWebSearchResults();
 let webSearchesSavedAt = Date.now();
@@ -78,7 +80,7 @@ function pruneWebSearchResults() {
 // A router that runs for weeks without a search still drops expired results.
 setInterval(() => {
   if (pruneWebSearchResults() || webSearchesUsed) saveWebSearchResults();
-}, 24 * 60 * 60 * 1000).unref();
+}, webSearchUseSaveMs).unref();
 
 // Results belong to the session that searched: call IDs are unique only
 // within a thread, so another session's call with the same ID never sees them.
@@ -95,8 +97,7 @@ function storedWebSearchResults(scope, callId) {
     webSearchResults.delete(key);
     webSearchResults.set(key, { ...entry, at: now });
     webSearchesUsed = true;
-    if (now - webSearchesSavedAt >= webSearchUseSaveMs) saveWebSearchResults();
-    return entry;
+    return { ...entry, renewed: now - entry.at >= webSearchUseSaveMs };
   }
   if (entry) {
     webSearchResults.delete(key);
@@ -128,6 +129,7 @@ export function overrideWebSearchForOpenRouter(request, scope) {
     });
   }
   let restored = 0;
+  let renewed = false;
   if (Array.isArray(request.input)) {
     // A step's calls stay together, so the provider sees one assistant turn
     // with its reasoning: each search becomes a call in place, and its output
@@ -160,6 +162,7 @@ export function overrideWebSearchForOpenRouter(request, scope) {
         outputs.push({ type: 'function_call_output', call_id: callId, output: stored?.text
           ?? 'The results of this search are not available any more. Search again if they matter.' });
         if (stored?.continued !== false) heldAcrossStep = false;
+        if (stored?.renewed) renewed = true;
         continue;
       }
       if (!callItemTypes.has(item?.type) && !(outputs.length > 0 && heldAcrossStep && stepItem(item) && callFollows(index))) flush();
@@ -168,6 +171,7 @@ export function overrideWebSearchForOpenRouter(request, scope) {
     flush();
     request.input = input;
   }
+  if (renewed) saveWebSearchResults();
   // A restored call needs its function declared, even when Codex offered no search this time.
   if (restored > 0 && !offered) {
     request.tools = [...(Array.isArray(request.tools) ? request.tools : []), webSearchFunction];
