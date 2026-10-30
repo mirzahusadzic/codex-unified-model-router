@@ -2345,6 +2345,38 @@ test('the router\'s search request follows the model\'s configured endpoint orde
   assert.deepEqual(search.body.provider, { order: ['google-vertex/us', 'google-ai-studio'] });
 });
 
+test('a restored search keeps its step as the model saw it: continued alone, or beside the step\'s other calls', async t => {
+  const exec = { type: 'function_call', id: 'fc_exec', call_id: 'call_exec', name: 'exec_command', arguments: '{}', status: 'completed' };
+  mockUpstreamSequence(t, [
+    // A step with a search and another call: Codex runs the call, nothing continues.
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse(exec) }, webSearchResult(200),
+    { status: 200, body: JSON.stringify({ id: 'resp_next', output: [] }) },
+    // A step of searches alone continues with their results.
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() }, webSearchResult(200),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+    { status: 200, body: JSON.stringify({ id: 'resp_next', output: [] }) },
+  ]);
+  const reasoning = id => ({ type: 'reasoning', id, summary: [], content: [{ type: 'reasoning_text', text: id }] });
+  const search = { type: 'web_search_call', id: 'call_search', status: 'completed', action: { type: 'search', query: 'q' } };
+  const later = (session, items) => send({ model: 'deepseek/deepseek-v4.1-flash-1017', tools: [{ type: 'web_search' }],
+    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Check.' }] }, ...items] }, session);
+  const order = upstream => upstream.body.input.slice(1).map(item => `${item.type}:${item.call_id ?? item.id}`);
+
+  const mixed = inClaudeSession('restore-mixed');
+  await exchangeRaw(searchRequest(), mixed);
+  assert.deepEqual(order(await later(mixed, [reasoning('rs_one'), search, reasoning('rs_two'), exec,
+    { type: 'function_call_output', call_id: 'call_exec', output: 'ok' }])), [
+    'reasoning:rs_one', 'function_call:call_search', 'reasoning:rs_two', 'function_call:call_exec',
+    'function_call_output:call_search', 'function_call_output:call_exec']);
+
+  const alone = inClaudeSession('restore-alone');
+  await exchangeRaw(searchRequest(), alone);
+  assert.deepEqual(order(await later(alone, [search, reasoning('rs_next'), exec,
+    { type: 'function_call_output', call_id: 'call_exec', output: 'ok' }])), [
+    'function_call:call_search', 'function_call_output:call_search', 'reasoning:rs_next', 'function_call:call_exec',
+    'function_call_output:call_exec']);
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',

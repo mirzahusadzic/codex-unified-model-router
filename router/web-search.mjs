@@ -96,7 +96,7 @@ function storedWebSearchResults(scope, callId) {
     webSearchResults.set(key, { ...entry, at: now });
     webSearchesUsed = true;
     if (now - webSearchesSavedAt >= webSearchUseSaveMs) saveWebSearchResults();
-    return entry.text;
+    return entry;
   }
   if (entry) {
     webSearchResults.delete(key);
@@ -105,13 +105,13 @@ function storedWebSearchResults(scope, callId) {
   return null;
 }
 
-function storeWebSearchResults(scope, callId, text) {
+function storeWebSearchResults(scope, callId, text, continued) {
   if (!scope) return;
   const now = Date.now();
   pruneWebSearchResults();
   const key = webSearchKey(scope, callId);
   webSearchResults.delete(key);
-  webSearchResults.set(key, { at: now, text });
+  webSearchResults.set(key, { at: now, text, continued: Boolean(continued) });
   while (webSearchResults.size > maxStoredWebSearches) webSearchResults.delete(webSearchResults.keys().next().value);
   saveWebSearchResults();
 }
@@ -131,24 +131,38 @@ export function overrideWebSearchForOpenRouter(request, scope) {
   if (Array.isArray(request.input)) {
     // A step's calls stay together, so the provider sees one assistant turn
     // with its reasoning: each search becomes a call in place, and its output
-    // follows the step's last call, beside the outputs Codex returns.
+    // follows the step's last call, beside the outputs Codex returns. A step
+    // of searches alone was continued with their results, so whatever follows
+    // it belongs to the next step. A step that also made other calls ends at
+    // its last call, across the reasoning and text between them; only results
+    // stored as such (`continued: false`) are kept back that way.
     const input = [];
     let outputs = [];
+    let heldAcrossStep = true;
     const flush = () => {
       input.push(...outputs);
       outputs = [];
+      heldAcrossStep = true;
     };
-    for (const item of request.input) {
+    const stepItem = item => item?.type === 'reasoning' || (item?.role === 'assistant' && (item.type == null || item.type === 'message'));
+    const callFollows = index => {
+      let ahead = index;
+      while (ahead < request.input.length && stepItem(request.input[ahead])) ahead += 1;
+      return callItemTypes.has(request.input[ahead]?.type) || request.input[ahead]?.type === 'web_search_call';
+    };
+    for (const [index, item] of request.input.entries()) {
       if (item?.type === 'web_search_call') {
         restored += 1;
         const callId = typeof item.id === 'string' && item.id ? item.id : `ws_restored_${restored}`;
         const query = typeof item.action?.query === 'string' ? item.action.query : '';
+        const stored = storedWebSearchResults(scope, callId);
         input.push({ type: 'function_call', call_id: callId, name: 'web_search', arguments: JSON.stringify({ query }) });
-        outputs.push({ type: 'function_call_output', call_id: callId, output: storedWebSearchResults(scope, callId)
+        outputs.push({ type: 'function_call_output', call_id: callId, output: stored?.text
           ?? 'The results of this search are not available any more. Search again if they matter.' });
+        if (stored?.continued !== false) heldAcrossStep = false;
         continue;
       }
-      if (!callItemTypes.has(item?.type)) flush();
+      if (!callItemTypes.has(item?.type) && !(outputs.length > 0 && heldAcrossStep && stepItem(item) && callFollows(index))) flush();
       input.push(item);
     }
     flush();
@@ -403,6 +417,11 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
     const searchItems = [];
     const results = [];
     let dropped = 0;
+    // Codex runs its own calls and comes back with the searches in its history;
+    // a step of searches alone continues here. Each stored result records
+    // which, so a later request restores the step as the model saw it.
+    const otherCalls = round.otherCalls || upstreamOutput.some(entry => callItemTypes.has(entry?.type) && !isWebSearchCall(entry));
+    const continues = !otherCalls && searches + calls.length <= maxWebSearchesPerRequest;
     for (const call of calls) {
       // Nothing more runs once Codex has gone.
       if (closed()) return;
@@ -423,7 +442,7 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
       searches += 1;
       const text = query ? await search(query) : 'The web search had no query.';
       if (closed()) return;
-      storeWebSearchResults(scope, callId, text);
+      storeWebSearchResults(scope, callId, text, continues);
       const done = { ...searchItem, status: 'completed' };
       emit({ type: 'response.output_item.done', item: done });
       searchItems.push(done);
@@ -434,9 +453,7 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
       ? searchItems.filter(searchItem => searchItem.id === (entry.call_id || entry.id)) : [entry]));
     // Searches Codex was shown stay in the output even if the final event left them out.
     for (const searchItem of searchItems) if (!output.includes(searchItem)) output.push(searchItem);
-    // Codex runs its own calls and comes back with the searches in its history.
-    const otherCalls = round.otherCalls || upstreamOutput.some(entry => callItemTypes.has(entry?.type) && !isWebSearchCall(entry));
-    if (otherCalls || dropped > 0) {
+    if (!continues || dropped > 0) {
       finalize(output);
       return;
     }
