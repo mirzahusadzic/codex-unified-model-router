@@ -225,7 +225,7 @@ try {
     # The router's modules sit beside its entry file, which is installed as router.mjs.
     # A module this version no longer has is removed, since the revision covers every one.
     Get-ChildItem -LiteralPath $RouterDir -Filter '*.mjs' |
-        Where-Object { $_.Name -ne 'router.mjs' -and -not (Test-Path -LiteralPath (Join-Path $RepoDir "router\$($_.Name)")) } |
+        Where-Object { $_.Name -ne 'router.mjs' -and ($_.Name -eq 'unified-router.mjs' -or -not (Test-Path -LiteralPath (Join-Path $RepoDir "router\$($_.Name)"))) } |
         ForEach-Object { Remove-Item -Force -LiteralPath $_.FullName }
     Get-ChildItem -LiteralPath (Join-Path $RepoDir 'router') -Filter '*.mjs' |
         Where-Object { $_.Name -ne 'unified-router.mjs' } |

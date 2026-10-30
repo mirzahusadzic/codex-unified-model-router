@@ -212,7 +212,7 @@ install -m 600 "$tmp_dir/models.json" "$codex_home/models.json"
 for module in "$router_dir"/*.mjs; do
   [[ -e "$module" ]] || continue
   name="$(basename "$module")"
-  [[ "$name" == router.mjs || -f "$repo_dir/router/$name" ]] || rm -f "$module"
+  [[ "$name" == router.mjs || ( "$name" != unified-router.mjs && -f "$repo_dir/router/$name" ) ]] || rm -f "$module"
 done
 for module in "$repo_dir"/router/*.mjs; do
   [[ "$(basename "$module")" == unified-router.mjs ]] || install -m 600 "$module" "$router_dir/$(basename "$module")"

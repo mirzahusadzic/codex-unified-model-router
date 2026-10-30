@@ -442,9 +442,12 @@ test('verification requires every router module as this repository has it, and r
   assert.equal(invoke().status, 0);
   writeFileSync(join(routerDir, 'upstream.mjs'), `${readFileSync(join(routerDir, 'upstream.mjs'), 'utf8')}\n// edited\n`);
   assert.match(invoke(true).stderr, /installed router differs from this repository/);
-  // A module from another version would change the revision; reinstalling removes it.
+  // A module from another version, or a copy of the entry under its repository name,
+  // would change the revision; reinstalling removes both.
   writeFileSync(join(routerDir, 'retired.mjs'), 'export {};\n');
+  writeFileSync(join(routerDir, 'unified-router.mjs'), 'export {};\n');
   assert.equal(invoke().status, 0);
   assert.ok(!readdirSync(routerDir).includes('retired.mjs'));
+  assert.ok(!readdirSync(routerDir).includes('unified-router.mjs'));
   assert.equal(invoke(true).status, 0);
 });
