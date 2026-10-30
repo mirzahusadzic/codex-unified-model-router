@@ -1645,6 +1645,32 @@ test('web search for OpenRouter models runs in the router, reaches Codex as a we
   assert.match(forwarded.at(-1).body.input[2].output, /^The results of this search are not available any more\./);
 });
 
+test('the excerpts of one search share 10,000 characters, so a long one keeps the room short ones leave', async t => {
+  const searchWith = excerpts => ({ status: 200, body: JSON.stringify({ output: [{ type: 'message', role: 'assistant', content: [{
+    type: 'output_text', text: 'OK', annotations: excerpts.map((content, index) => ({
+      type: 'url_citation', url: `https://example.com/${index}`, title: `Page ${index}`, content })) }] }] }) });
+  const cases = [
+    [[300, 9000, 300, 300, 300], [300, 8800, 300, 300, 300]],
+    [[9000, 300, 9000, 300, 300], [4550, 300, 4550, 300, 300]],
+    [[300, 2000, 300, 300, 300], [300, 2000, 300, 300, 300]],
+  ];
+  // One sequence for every request: a second mock in the same test would outlive it.
+  mockUpstreamSequence(t, cases.flatMap(([sent]) => [
+    { status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse() },
+    searchWith(sent.map((length, index) => 'abcde'[index].repeat(length))),
+    { status: 200, contentType: 'text/event-stream', body: continuationResponse },
+  ]));
+  for (const [sent, kept] of cases) {
+    const before = forwarded.length;
+    const result = await exchangeRaw(searchRequest(), { 'session-id': 'web-search-budget-session' });
+    assert.equal(result.status, 200);
+    const output = forwarded.slice(before)[2].body.input.at(-1).output;
+    const excerpts = output.split('\n\n').slice(1).map(block => block.split('\n')[2].trim());
+    assert.deepEqual(excerpts.map(excerpt => excerpt.length), kept, `excerpts of ${sent.join(', ')}`);
+    excerpts.forEach((excerpt, index) => assert.equal(excerpt.endsWith('…'), kept[index] < sent[index]));
+  }
+});
+
 test('a web search beside another call ends the response, and a failed search says so', async t => {
   const exec = { type: 'function_call', id: 'fc_exec', call_id: 'call_exec', name: 'exec_command', arguments: '{"cmd":"ls"}', status: 'completed' };
   mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: webSearchFirstResponse(exec) }, webSearchResult(500)]);

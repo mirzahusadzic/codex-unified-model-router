@@ -199,15 +199,33 @@ export function webSearchEffort(requestedModel) {
   }
 }
 
-// Every part is bounded, so one stored search stays under about 16 KiB.
+// The excerpts of one search share a budget. Exa sizes them unevenly, often
+// four short ones and one many times longer, so the short ones keep all their
+// text and the long ones split what the short ones leave.
+const webSearchExcerptChars = 10000;
+function excerptLimits(lengths) {
+  const limits = [];
+  let left = webSearchExcerptChars;
+  const shortestFirst = lengths.map((length, index) => index).sort((a, b) => lengths[a] - lengths[b]);
+  shortestFirst.forEach((index, position) => {
+    limits[index] = Math.min(lengths[index], Math.floor(left / (lengths.length - position)));
+    left -= limits[index];
+  });
+  return limits;
+}
+
+// Every part is bounded, so one stored search stays under about 18 KiB.
 const shorten = (text, limit) => (text.length > limit ? `${text.slice(0, limit - 1)}…` : text);
 function formatWebSearchResults(query, results, failure) {
   const asked = shorten(query.replace(/\s+/g, ' ').trim(), 500);
   if (failure) return `The web search for "${asked}" failed: ${failure}. Say so, and answer from what you already know or try another query.`;
   if (results.length === 0) return `The web search for "${asked}" returned no results.`;
-  return [`Web search results for "${asked}":`, ...results.slice(0, webSearchResultCount).map((result, index) => [
+  const shown = results.slice(0, webSearchResultCount);
+  const excerpts = shown.map(result => result.content.replace(/\s+/g, ' ').trim());
+  const limits = excerptLimits(excerpts.map(excerpt => excerpt.length));
+  return [`Web search results for "${asked}":`, ...shown.map((result, index) => [
     `${index + 1}. ${shorten(result.title.replace(/\s+/g, ' ').trim() || result.url, 300)}`, `   ${shorten(result.url, 1000)}`,
-    `   ${shorten(result.content.replace(/\s+/g, ' ').trim(), 1500)}`].join('\n'))].join('\n\n');
+    `   ${shorten(excerpts[index], limits[index])}`].join('\n'))].join('\n\n');
 }
 
 // One search through OpenRouter's web plugin: the reply is a token or two, and
