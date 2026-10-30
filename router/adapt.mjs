@@ -21,13 +21,15 @@ function adaptStructuredOutputForDeepSeek(request, model) {
   const format = request.text?.format;
   if (!model.startsWith('deepseek/') || format?.type !== 'json_schema') return null;
   request.text = { ...request.text, format: { type: 'json_object' } };
-  const name = typeof format.name === 'string' && format.name ? ` named ${format.name}` : '';
+  // The schema's name stays out: told of "a JSON object named X", DeepSeek
+  // wraps its answer in an X key about a quarter of the time.
   const instruction = {
     type: 'message',
     role: 'developer',
     content: [{
       type: 'input_text',
-      text: `Respond with only a JSON object${name} that conforms to this JSON schema:\n${JSON.stringify(format.schema ?? {})}`,
+      text: 'Respond with only a JSON object that conforms to this JSON schema, '
+        + `at the top level, not wrapped in another key:\n${JSON.stringify(format.schema ?? {})}`,
     }],
   };
   if (Array.isArray(request.input)) request.input = [...request.input, instruction];

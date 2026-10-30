@@ -258,7 +258,10 @@ test('DeepSeek structured output stays on DeepSeek as JSON mode with the schema 
       assert.deepEqual(upstream.body.input.slice(0, mixedHistory.length), mixedHistory);
       const instruction = upstream.body.input.at(-1);
       assert.equal(instruction.role, 'developer');
-      assert.match(instruction.content[0].text, /JSON object named city/);
+      // The schema's name is no key to wrap the answer in: DeepSeek read "named
+      // city" as {"city": {...}} in about a quarter of its answers.
+      assert.doesNotMatch(instruction.content[0].text, /named|city\b(?!")/);
+      assert.match(instruction.content[0].text, /at the top level, not wrapped/);
       assert.ok(instruction.content[0].text.includes(JSON.stringify(schema)));
       const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
       assert.equal(forwardedLog.structuredOutputAdapted, true);
