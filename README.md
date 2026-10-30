@@ -84,9 +84,9 @@ flowchart TB
     RT["<b>Unified Model Router</b><br/>127.0.0.1, local token"]
     OA["<b>ChatGPT Codex backend</b><br/>needs a ChatGPT plan"]
     AN["<b>Anthropic API</b><br/>optional API key"]
-    OR["<b>OpenRouter</b><br/>required key; cataloged models<br/><b>web search for all but native</b>"]
+    OR["<b>OpenRouter</b><br/>required key<br/>cataloged models<br/><b>web search for all</b><br/><b>but native models</b>"]
     CL["<b>Claude Sonnet · Opus 5.5</b><br/>prompt-cached"]
-    DS["<b>DeepSeek V4.1 Flash</b><br/>default; its own endpoint may train"]
+    DS["<b>DeepSeek V4.1 Flash</b><br/>default; its own<br/>endpoint may train"]
     subgraph TT["Training tier"]
         direction LR
         US["<b>Ultra Spark</b><br/>DeepSeek leading workers"]
