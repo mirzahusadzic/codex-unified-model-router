@@ -3,7 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { pipeline, Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { contextOverflowPattern, isObject, maxEventLineChars } from './common.mjs';
+import { contextOverflowPattern, isObject, maxEventLineChars, sseEvents } from './common.mjs';
 
 // Claude on Anthropic's API speaks the Messages API, so the router translates
 // at the wire (openUpstream): Codex's Responses request becomes a Messages request, and the
@@ -315,7 +315,7 @@ function responsesErrorCode(error) {
 // Codex declared.
 function anthropicResponseStream({ declared, log }) {
   const decoder = new StringDecoder('utf8');
-  let pending = '';
+  const buffered = { pending: '' };
   let passThrough = false;
   let response = null;
   let usage = {};
@@ -480,10 +480,8 @@ function anthropicResponseStream({ declared, log }) {
   // An event larger than the bound ends the translation; Codex sees the stream break off and retries.
   const processText = text => {
     if (passThrough) return;
-    pending += text;
-    const events = pending.split(/\r?\n\r?\n/);
-    pending = events.pop();
-    if (pending.length > maxEventLineChars) {
+    const events = sseEvents(buffered, text);
+    if (buffered.pending.length > maxEventLineChars) {
       passThrough = true;
       fail({ type: 'api_error', message: 'Claude sent an event the router could not read.' });
       return;

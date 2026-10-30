@@ -2418,6 +2418,40 @@ test('Claude keeps tool names apart and an earlier tool result as it first saw i
   assert.deepEqual(after.slice(0, before.length), before);
 });
 
+// Work counts, not times: characters searched while a request runs.
+async function scannedWhile(run) {
+  let scanned = 0;
+  const split = String.prototype.split;
+  const test = RegExp.prototype.test;
+  const indexOf = String.prototype.indexOf;
+  String.prototype.split = function counted(...args) { scanned += this.length; return split.apply(this, args); };
+  RegExp.prototype.test = function counted(text) { scanned += String(text).length; return test.call(this, text); };
+  String.prototype.indexOf = function counted(...args) { scanned += this.length; return indexOf.apply(this, args); };
+  try {
+    await run();
+  } finally {
+    String.prototype.split = split;
+    RegExp.prototype.test = test;
+    String.prototype.indexOf = indexOf;
+  }
+  return scanned;
+}
+
+test('a large streamed event that arrives in many chunks is scanned once, on either stream', async t => {
+  const chunked = (text, size = 1024) => Array.from({ length: Math.ceil(text.length / size) }, (_, index) => text.slice(index * size, (index + 1) * size));
+  const openrouterEvent = bytes => sse([{ type: 'response.output_text.delta', item_id: 'msg_big', output_index: 0, delta: 'x'.repeat(bytes) }]);
+  const claudeEvent = bytes => anthropicSse([{ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x'.repeat(bytes) } }]);
+  const measure = async (bytes, claude) => {
+    mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', chunks: chunked(claude ? claudeEvent(bytes) : openrouterEvent(bytes)) }]);
+    return scannedWhile(() => exchangeRaw(claude ? claudeRequest('Go.') : JSON.stringify({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Go.' })));
+  };
+  for (const claude of [false, true]) {
+    const small = await measure(128 * 1024, claude);
+    const large = await measure(256 * 1024, claude);
+    assert.ok(large < small * 3, `${claude ? 'Claude' : 'OpenRouter'}: doubling the event took ${small} to ${large} scanned characters`);
+  }
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',

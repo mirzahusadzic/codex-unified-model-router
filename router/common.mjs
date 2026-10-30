@@ -21,3 +21,16 @@ export function routerRevision(entryFile) {
   for (const name of modules) hash.update(`\0${name}\0`).update(readFileSync(join(directory, name)));
   return hash.digest('hex');
 }
+
+// Takes the complete events out of buffered SSE text. Only the text that
+// arrived since the last call is searched for the blank line that ends an
+// event, so an event that arrives in many chunks is scanned once, not once
+// per chunk.
+export function sseEvents(buffered, text) {
+  const from = Math.max(0, buffered.pending.length - 3);
+  buffered.pending += text;
+  if (!/\r?\n\r?\n/.test(buffered.pending.slice(from))) return [];
+  const events = buffered.pending.split(/\r?\n\r?\n/);
+  buffered.pending = events.pop();
+  return events;
+}

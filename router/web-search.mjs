@@ -5,7 +5,7 @@ import { Transform } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { isObject, maxEventLineChars } from './common.mjs';
+import { isObject, maxEventLineChars, sseEvents } from './common.mjs';
 import { envFile, logEvent, modelCatalogFile, persistJson, providerOrders } from './config.mjs';
 import { contextOverflowMessage, finalEventTypes, openUpstream, openrouterTarget, readUpstreamBody, upstreamHeaders } from './upstream.mjs';
 
@@ -520,9 +520,7 @@ export function openRouterStream({ interceptSearches = false, requestBody, sendC
       if (text) transform.push(text);
       return;
     }
-    buffer.pending += text;
-    const blocks = buffer.pending.split(/\r?\n\r?\n/);
-    buffer.pending = blocks.pop();
+    const blocks = sseEvents(buffer, text);
     if (buffer.pending.length > maxEventLineChars) {
       log('error', 'web_search.stream_passthrough', { pendingChars: buffer.pending.length });
       buffer.passThrough = true;
