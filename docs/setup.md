@@ -329,7 +329,7 @@ The rule follows session IDs, not content, so these start a new record:
 
 ### Routing policy
 
-The router always forwards the model you selected and never substitutes another, including for structured output. DeepSeek's endpoint rejects JSON schemas, so for DeepSeek a `json_schema` response format becomes JSON mode with the schema appended as the final developer instruction: replies follow the schema, but the provider does not enforce it, and the unchanged history keeps its cache hits. `request.forwarded` logs `structuredOutputAdapted`. Other OpenRouter models receive the schema unchanged.
+The router always forwards the model you selected and never substitutes another, including for structured output. DeepSeek's endpoint rejects JSON schemas, so for DeepSeek a `json_schema` response format becomes JSON mode with the schema appended as the final developer instruction: replies follow the schema, but the provider does not enforce it, and the unchanged history keeps its cache hits. The instruction asks for the object at the top level and leaves out the schema's name, which DeepSeek otherwise took as a key to wrap some answers in. `request.forwarded` logs `structuredOutputAdapted`. Other OpenRouter models receive the schema unchanged.
 
 The `X-Codex-Routing-Policy: preserve-model-v1` header, which the OpenRouter-only profile sends, is still accepted and matches the default behavior. Unknown policy values receive HTTP 400. The policy header and the local token are never forwarded to providers.
 

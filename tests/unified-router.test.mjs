@@ -246,7 +246,7 @@ test('OpenAI can continue mixed history after a DeepSeek turn', async () => {
 
 test('DeepSeek structured output stays on DeepSeek as JSON mode with the schema appended last', async () => {
   const schema = { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] };
-  const format = { type: 'json_schema', name: 'city', strict: true, schema };
+  const format = { type: 'json_schema', name: 'observation', strict: true, schema };
   for (const model of ['deepseek/deepseek-v4.1-flash-1017', 'openrouter/deepseek/deepseek-v4.1-flash-1017',
     'ultra-spark/deepseek-v4.1-flash-1017']) {
     for (const headers of [{}, { 'x-codex-routing-policy': 'preserve-model-v1' }]) {
@@ -258,9 +258,9 @@ test('DeepSeek structured output stays on DeepSeek as JSON mode with the schema 
       assert.deepEqual(upstream.body.input.slice(0, mixedHistory.length), mixedHistory);
       const instruction = upstream.body.input.at(-1);
       assert.equal(instruction.role, 'developer');
-      // The schema's name is no key to wrap the answer in: DeepSeek read "named
-      // city" as {"city": {...}} in about a quarter of its answers.
-      assert.doesNotMatch(instruction.content[0].text, /named|city\b(?!")/);
+      // The schema's name is no key to wrap the answer in: told of "a JSON object
+      // named observation", DeepSeek wrapped 18 of 60 answers in that key.
+      assert.doesNotMatch(instruction.content[0].text, /named|observation/);
       assert.match(instruction.content[0].text, /at the top level, not wrapped/);
       assert.ok(instruction.content[0].text.includes(JSON.stringify(schema)));
       const forwardedLog = parsedLogEntries().filter(entry => entry.event === 'request.forwarded').at(-1);
