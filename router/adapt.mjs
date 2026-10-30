@@ -21,7 +21,7 @@ function adaptStructuredOutputForDeepSeek(request, model) {
   const format = request.text?.format;
   if (!model.startsWith('deepseek/') || format?.type !== 'json_schema') return null;
   request.text = { ...request.text, format: { type: 'json_object' } };
-  // The schema's name stays out: told of "a JSON object named X", DeepSeek
+  // The format's name stays out: told of "a JSON object named X", DeepSeek
   // wraps its answer in an X key about a quarter of the time.
   const instruction = {
     type: 'message',
