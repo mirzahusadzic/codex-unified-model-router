@@ -6,15 +6,14 @@
 ![Codex CLI 0.166](https://img.shields.io/badge/Codex%20CLI-0.166-111111)
 ![macOS · Linux · Windows](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-lightgrey)
 
-A loopback-only router that lets one Codex thread switch between native OpenAI, DeepSeek, Anthropic Claude, Meta Muse Spark, and configured OpenRouter models through Codex’s existing model picker, within its privacy boundaries. It normalizes mixed-provider messages, tool calls, reasoning state, and structured output; runs Claude on Anthropic's API when you add an Anthropic API key; preserves the selected model; streams responses; performs bounded recovery for rejected or oversized requests; and runs web search through the router so later turns retain the results. Training-tier Muse and Ultra Spark sessions are isolated from OpenAI and Claude sessions, with additional fork-context safeguards for spawned workers. Includes cross-platform installers and verifiers, configuration backups, daemon pinning, Linux/macOS/Windows CI, and no npm runtime dependencies.
+A loopback-only router that lets one Codex thread switch between OpenAI, DeepSeek, Claude, Muse Spark and other OpenRouter models from Codex’s own model picker, without losing the thread’s history or crossing its privacy boundaries.
 
-- **Switch models in place:** OpenAI, DeepSeek, Claude, Muse, Ultra Spark, and cataloged OpenRouter models.
-- **Claude on Anthropic's API:** With `ANTHROPIC_API_KEY`, Claude runs on the Messages API with prompt caching and its signed thinking, and falls back to OpenRouter when Anthropic rejects the key or the credits or spend limit run out. Without the key, it runs on OpenRouter.
+- **Claude on Anthropic's API:** With `ANTHROPIC_API_KEY`, Claude runs on the Messages API with prompt caching and signed thinking, and moves to OpenRouter if the key, credits or spend limit fail; without the key it runs on OpenRouter.
 - **Agent orchestration:** Ultra Spark lets DeepSeek coordinate up to 10 Muse Spark workers with `fork_context: false`.
 - **Privacy boundaries:** Training-tier sessions cannot mix with native OpenAI or Claude sessions, and after OpenAI or Claude a session reaches only OpenRouter endpoints that keep no data.
 - **Provider compatibility:** Repairs reasoning and tool history, handles DeepSeek JSON-mode structured output, normalizes problematic tool arguments, and never silently substitutes models.
 - **Resilient streaming:** Bounded recovery for OpenRouter and Anthropic, context-overflow signaling for Codex compaction, router diagnostics, and disconnect cancellation.
-- **Router-run web search:** For every model except native OpenAI ones, Claude included, converts Codex’s hosted search tool into a function the router runs through OpenRouter (requires the OpenRouter key), retains results per session, and restores them in later turns.
+- **Router-run web search:** Every model except native OpenAI ones searches through OpenRouter, and the results stay in the thread for later turns.
 - **Local operations:** Loopback binding, token authentication, private credential storage, launchd/systemd/Windows startup, backups, verifiers, and daemon version pinning.
 - **Minimal footprint:** Node.js 20+, zero npm runtime dependencies.
 
