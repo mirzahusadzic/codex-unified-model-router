@@ -57,14 +57,17 @@ function decodeAnthropicThinking(item) {
 
 // Claude tool names allow letters, digits, `_` and `-`, up to 64 characters.
 // A grouped tool such as multi_agent_v1.spawn_agent becomes
-// multi_agent_v1__spawn_agent; the stream translation maps it back. Codex
-// treats the `functions` namespace as none.
+// multi_agent_v1__spawn_agent; the stream translation maps it back. A name
+// Claude cannot take gets a suffix from the original, so two names that
+// differ only in punctuation stay apart. Codex treats the `functions`
+// namespace as none.
 const toolNamespace = namespace => (namespace && namespace !== 'functions' ? namespace : undefined);
 
 function claudeToolName(name, namespace) {
   const joined = toolNamespace(namespace) ? `${namespace}__${name}` : String(name);
   const safe = joined.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return safe.length <= 64 ? safe : `${safe.slice(0, 55)}_${createHash('sha256').update(joined).digest('hex').slice(0, 8)}`;
+  return safe === joined && safe.length <= 64 ? safe
+    : `${safe.slice(0, 55)}_${createHash('sha256').update(joined).digest('hex').slice(0, 8)}`;
 }
 
 // A call ID Claude cannot take gets a suffix from the original, so two IDs
@@ -153,9 +156,11 @@ function claudeMessages(request) {
     ? [{ type: 'text', text: request.instructions }] : [];
   const input = typeof request.input === 'string' ? [{ role: 'user', content: request.input }]
     : Array.isArray(request.input) ? request.input : [];
+  // The first output for a call stands: a later duplicate would rewrite a turn Claude already saw.
   const outputs = new Map();
   for (const item of input) {
-    if (['function_call_output', 'custom_tool_call_output'].includes(item?.type) && typeof item.call_id === 'string') {
+    if (['function_call_output', 'custom_tool_call_output'].includes(item?.type) && typeof item.call_id === 'string'
+        && !outputs.has(item.call_id)) {
       outputs.set(item.call_id, item.output);
     }
   }

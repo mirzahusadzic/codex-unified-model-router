@@ -2404,6 +2404,20 @@ test('the router\'s search never takes over a caller\'s own tool named web_searc
     ['function_call:docs']);
 });
 
+test('Claude keeps tool names apart and an earlier tool result as it first saw it', async () => {
+  const tool = name => ({ type: 'function', name, parameters: { type: 'object' } });
+  const { body } = await send(JSON.parse(claudeRequest('Hello', { tools: [tool('a.b'), tool('a_b')] })));
+  const names = body.tools.map(entry => entry.name);
+  assert.equal(new Set(names).size, 2);
+  assert.ok(names.includes('a_b'));
+  const step = [{ role: 'user', content: 'Go.' }, { type: 'function_call', call_id: 'toolu_dup', name: 'exec_command', arguments: '{}' },
+    { type: 'function_call_output', call_id: 'toolu_dup', output: 'first result' }];
+  const before = (await send(JSON.parse(claudeRequest(step)))).body.messages;
+  const after = (await send(JSON.parse(claudeRequest([...step,
+    { type: 'function_call_output', call_id: 'toolu_dup', output: 'replacement result' }])))).body.messages;
+  assert.deepEqual(after.slice(0, before.length), before);
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
