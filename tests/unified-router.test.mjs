@@ -2385,6 +2385,25 @@ test('a restored search keeps its step as the model saw it: continued alone, or 
     'function_call_output:call_exec']);
 });
 
+test('the router\'s search never takes over a caller\'s own tool named web_search', async t => {
+  // A caller that declares its own top-level web_search keeps it, declared once.
+  const own = { type: 'function', name: 'web_search', description: 'Search the docs.', parameters: { type: 'object' } };
+  const upstream = await send({ model: 'deepseek/deepseek-v4.1-flash-1017', input: 'Find it.', tools: [own, { type: 'web_search' }] });
+  assert.deepEqual(upstream.body.tools.filter(tool => tool.name === 'web_search'), [own]);
+  // A grouped tool named web_search reaches Codex as the caller's call, not as the router's search.
+  const grouped = { type: 'function_call', id: 'fc_docs', call_id: 'call_docs', name: 'web_search', namespace: 'docs', arguments: '{"query":"x"}', status: 'completed' };
+  mockUpstreamSequence(t, [{ status: 200, contentType: 'text/event-stream', body: sse([
+    { type: 'response.created', response: { id: 'resp_docs', status: 'in_progress', output: [] } },
+    { type: 'response.output_item.added', output_index: 0, item: { ...grouped, arguments: '' } },
+    { type: 'response.output_item.done', output_index: 0, item: grouped },
+    { type: 'response.completed', response: { id: 'resp_docs', status: 'completed', output: [grouped] } }]) }]);
+  const before = forwarded.length;
+  const events = parseSse((await exchangeRaw(searchRequest())).rawBody);
+  assert.equal(forwarded.length, before + 1);
+  assert.deepEqual(events.filter(event => event.type === 'response.output_item.done').map(event => `${event.item.type}:${event.item.namespace}`),
+    ['function_call:docs']);
+});
+
 test('a refusal no retry can fix moves the request and its session to OpenRouter, and new sessions follow for an hour', async t => {
   mockUpstreamSequence(t, [
     { status: 400, body: JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',

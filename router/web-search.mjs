@@ -119,13 +119,20 @@ function storeWebSearchResults(scope, callId, text, continued) {
 
 const callItemTypes = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'mcp_call', 'computer_call']);
 
+// A caller that declares its own top-level web_search keeps it: the router
+// offers its search under that name only when the name is free.
+const ownsWebSearchName = tools => Array.isArray(tools)
+  && tools.some(tool => tool?.type === 'function' && tool.name === webSearchFunction.name);
+
 export function overrideWebSearchForOpenRouter(request, scope) {
   let offered = false;
+  const nameTaken = ownsWebSearchName(request.tools);
   if (Array.isArray(request.tools)) {
-    request.tools = request.tools.map(tool => {
-      if (!['web_search', 'web_search_preview'].includes(tool?.type)) return tool;
+    request.tools = request.tools.flatMap(tool => {
+      if (!['web_search', 'web_search_preview'].includes(tool?.type)) return [tool];
+      if (nameTaken) return [];
       offered = true;
-      return webSearchFunction;
+      return [webSearchFunction];
     });
   }
   let restored = 0;
@@ -173,7 +180,7 @@ export function overrideWebSearchForOpenRouter(request, scope) {
   }
   if (renewed) saveWebSearchResults();
   // A restored call needs its function declared, even when Codex offered no search this time.
-  if (restored > 0 && !offered) {
+  if (restored > 0 && !offered && !nameTaken) {
     request.tools = [...(Array.isArray(request.tools) ? request.tools : []), webSearchFunction];
     offered = true;
   }
@@ -273,7 +280,9 @@ export function runWebSearch({ query, upstreamModel, effort, dataCollection, log
   });
 }
 
-const isWebSearchCall = item => item?.type === 'function_call' && item.name === 'web_search';
+// The router's own search has no namespace; a grouped tool of the same name belongs to the caller.
+const isWebSearchCall = item => item?.type === 'function_call' && item.name === webSearchFunction.name
+  && (item.namespace == null || item.namespace === '' || item.namespace === 'functions');
 
 // Some models write whole numbers in tool arguments as floats, such as
 // DeepSeek's `"timeout_ms": 60000.0`, and Codex rejects a float where it
