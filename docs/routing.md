@@ -127,7 +127,7 @@ The rule covers models on either route, and whole agent trees:
 
 The rule follows session IDs, not content, so three cases start a new record:
 
-- **Forked sessions:** `codex fork` copies a thread's history into a new session. Fork a thread that used native OpenAI or Claude models only onto a model outside the training tier, such as DeepSeek.
+- **Forked sessions:** `codex fork` copies a thread's history into a new session, which starts without a side, so its OpenRouter requests no longer carry `data_collection: "deny"`. Fork a thread that used native OpenAI or Claude models only onto a model outside the training tier that you pin to an endpoint that does not collect data, or start a new thread instead.
 - **Sessions from before this router version:** Their first request after the upgrade decides their side.
 - **Requests without a session ID:** Such as from clients other than Codex: not tracked.
 

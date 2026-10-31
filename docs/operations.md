@@ -208,7 +208,7 @@ logs | jq -c 'select(.event == "anthropic.refused")
 
 | To find out | Look for |
 | --- | --- |
-| Why was a request refused with HTTP 409? | `session.provider_isolation`: the recorded and requested sides; `session.forked_lead_context`: a spawned agent sent an Ultra Spark lead's tool call IDs to a training-tier model, with the model and the IDs |
+| Why was a request refused with HTTP 409? | `session.provider_isolation`: the recorded and requested sides; `session.forked_lead_context`: a spawned agent sent an Ultra Spark lead's tool call IDs to a training-tier model, with the model and the number of matching IDs (`forkedCallIds`) |
 | Were session records lost? | `session.isolation_persist_failed`, `session.isolation_load_failed`: sides not saved, or not read at startup, so sessions start without one; `claude.routes_persist_failed`, `claude.routes_load_failed`: the same for Claude routes, so sessions pick their route again |
 
 ```sh

@@ -35,7 +35,7 @@ Small loopback router that fits Codex's model picker and thread workflow. Prefer
 ## Preserve these behaviors
 
 - Loopback only. No credentials or request and response bodies in logs or commits.
-- Auth: OpenRouter requests use the OpenRouter key; Claude on Anthropic's API uses the Anthropic API key, never a Claude sign-in token; native OpenAI requests keep Codex's authentication.
+- Auth: OpenRouter requests replace Codex authentication with the OpenRouter key, and Claude requests on Anthropic's API replace it with the Anthropic API key, never a Claude sign-in token; native OpenAI requests keep Codex's authentication.
 - History: keep messages, tool calls and results, and encrypted reasoning. Strip unsupported plaintext reasoning from OpenAI requests, `additional_tools` items from OpenRouter requests, and Claude's signed thinking from every request outside Anthropic's API.
 - Messages translation is append-only, each request a prefix of the next, so Claude's cache and signed thinking stay valid.
 - Pre-stream OpenRouter or Anthropic 400: at most one bounded recovery, never HTTP 400 to Codex. Context overflow: streamed `response.failed` with `context_length_exceeded`, so Codex compacts. Failed recovery: completed router diagnostic; the real rejection is logged, bodies only with capture enabled.
