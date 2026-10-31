@@ -107,7 +107,7 @@ flowchart TB
     classDef router fill:#2e9e5b4d,stroke:#2e9e5b,stroke-width:2px
     classDef openrouter fill:#e3a0084d,stroke:#e3a008,stroke-width:2px
     classDef deepseek fill:#4d6bfe4d,stroke:#4d6bfe,stroke-width:2px
-    classDef openai fill:#ffffff40,stroke:#b5bcc6,stroke-width:2px
+    classDef openai fill:#b5bcc633,stroke:#b5bcc6,stroke-width:2px
     classDef anthropic fill:#d977574d,stroke:#d97757,stroke-width:2px
     classDef training fill:#c94a4a4d,stroke:#c94a4a,stroke-width:2px
     classDef trainingTier fill:#c94a4a14,stroke:#c94a4a,stroke-width:2px,stroke-dasharray:6 4
