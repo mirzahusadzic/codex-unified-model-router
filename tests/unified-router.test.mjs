@@ -317,6 +317,8 @@ test('routing capabilities and implementation revision are discoverable; unknown
   assert.equal(health.body.capabilities.providerIsolation, 'session-v3');
   assert.match(health.body.revision, /^[a-f0-9]{64}$/);
   assert.equal(health.body.capabilities.revisionPrecondition, true);
+  // The verifier matches it against the service's own process.
+  assert.equal(health.body.pid, process.pid);
   const count = forwarded.length;
   const result = await exchange(JSON.stringify({ model: 'deepseek/example' }),
     { 'x-codex-routing-policy': 'typo' });

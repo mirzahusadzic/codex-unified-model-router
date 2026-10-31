@@ -37,6 +37,22 @@ test('health verifier requires current source identity and capabilities, not jus
   }
 });
 
+test('health verifier accepts only the router process the service runs', () => {
+  const run = (value, option) => spawnSync(process.execPath, [verifier, source, option],
+    { input: JSON.stringify(value), encoding: 'utf8' });
+  const answering = { ...health, pid: 4242 };
+  assert.equal(run(answering, '--service-pid=4242').status, 0);
+  // A stray copy of the same code holds the port while the service's process restarts.
+  const stray = run(answering, '--service-pid=5151');
+  assert.notEqual(stray.status, 0);
+  assert.match(stray.stderr, /Router process 4242 answers instead of the service's process 5151/);
+  // The service runs no process at all, yet something answers on its port.
+  const none = run(answering, '--service-pid=');
+  assert.notEqual(none.status, 0);
+  assert.match(none.stderr, /no running process, yet router process 4242 answers/);
+  assert.notEqual(run(health, '--service-pid=4242').status, 0);
+});
+
 test('shared readiness probe rejects redirects without contacting their target', async t => {
   let targetContacts = 0;
   let redirect = null;

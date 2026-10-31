@@ -2,8 +2,13 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { routerRevision } from '../router/common.mjs';
 
-const [source, endpoint] = process.argv.slice(2);
-if (!source) throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url]');
+// --service-pid names the service's own router process: launchd's, systemd's,
+// or the Windows supervisor's child. Empty means the service runs none.
+const servicePidOption = process.argv.slice(2).find(arg => arg.startsWith('--service-pid='));
+const [source, endpoint] = process.argv.slice(2).filter(arg => arg !== servicePidOption);
+if (!source) {
+  throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url] [--service-pid=<pid>]');
+}
 const revision = routerRevision(source);
 
 async function fetchHealth(endpoint) {
@@ -47,4 +52,13 @@ if (!health || !['ok', 'openai', 'openrouter', 'clientAuth'].every(key => health
     || health.capabilities.providerIsolation !== 'session-v3'
     || health.capabilities.revisionPrecondition !== true || health.revision !== revision) {
   throw new Error('Router health, required capabilities or installed source revision do not match; update and restart the router');
+}
+if (servicePidOption !== undefined) {
+  const servicePid = Number(servicePidOption.slice('--service-pid='.length) || 0);
+  if (!Number.isInteger(servicePid) || servicePid <= 0) {
+    throw new Error(`The router service has no running process, yet router process ${health.pid ?? 'unknown'} answers; stop that process and restart the service`);
+  }
+  if (health.pid !== servicePid) {
+    throw new Error(`Router process ${health.pid ?? 'unknown'} answers instead of the service's process ${servicePid}; stop it and restart the service`);
+  }
 }

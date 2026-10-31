@@ -164,6 +164,7 @@ curl -s http://127.0.0.1:18766/health
 | `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v3`: `session-v2` added Claude to the protected side, and `session-v3` sends OpenRouter requests in protected sessions only to endpoints that do not collect data). |
 | `capabilities.revisionPrecondition` | Support for the `X-Codex-Router-Revision` header below. |
 | `revision` | SHA-256 over the running router's entry file and the modules beside it. |
+| `pid` | The router's process ID, which the verifier compares with the service's own process. |
 
 These fields do not attest upstream model identity, account access, or the whole runtime configuration. To hold a revision across requests, a client can send:
 
@@ -211,4 +212,4 @@ Requests are checked before anything is forwarded:
 The verifier checks the installation against this repository:
 
 - **Configuration:** Both configurations against the stored token, their managed settings, and private ownership and permissions.
-- **Router:** The installed router and every module beside it must match this repository, and reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v3"`, and the installed source's SHA-256, so a reachable older router does not pass; health redirects are rejected.
+- **Router:** The installed router and every module beside it must match this repository, and reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v3"`, and the installed source's SHA-256, so a reachable older router does not pass, and the process answering must be the service's own; health redirects are rejected.

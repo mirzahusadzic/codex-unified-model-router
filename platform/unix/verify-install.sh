@@ -52,14 +52,17 @@ require_config -xF 'supports_websockets = false'
 node "$script_dir/verify-catalog.mjs" "$codex_home/models.json"
 
 if [[ "$check_service" -eq 1 ]]; then
-  node "$script_dir/verify-health.mjs" "$codex_home/unified-router/router.mjs" http://127.0.0.1:18766/health
-  node "$script_dir/codex-daemon.mjs" --verify "$codex_home"
+  # The router answering health must be the service's own process, not a
+  # stray copy of the same code holding the port.
+  health_args=("$codex_home/unified-router/router.mjs" http://127.0.0.1:18766/health)
   case "$platform" in
     Darwin)
       if ! launchctl print "gui/$(id -u)/$service_label" >/dev/null; then
         printf 'The launch agent is not loaded.\n' >&2
         exit 1
       fi
+      service_pid="$(launchctl print "gui/$(id -u)/$service_label" | awk '$1 == "pid" && $2 == "=" { print $3; exit }')"
+      health_args+=("--service-pid=$service_pid")
       ;;
     Linux)
       if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -67,12 +70,16 @@ if [[ "$check_service" -eq 1 ]]; then
           printf 'The systemd user service is not active: %s\n' "$linux_service" >&2
           exit 1
         fi
+        service_pid="$(systemctl --user show -p MainPID --value "$linux_service")"
+        health_args+=("--service-pid=$service_pid")
       else
         printf 'systemd --user is unavailable, so automatic startup could not be verified. If the router was installed without a service, run: node install.mjs --verify --no-service\n' >&2
         exit 1
       fi
       ;;
   esac
+  node "$script_dir/verify-health.mjs" "${health_args[@]}"
+  node "$script_dir/codex-daemon.mjs" --verify "$codex_home"
 fi
 
 printf 'Install looks valid.\n'

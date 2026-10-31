@@ -223,6 +223,9 @@ const server = http.createServer((request, response) => {
       anthropic: Boolean(anthropicApiKey),
       clientAuth: true,
       revision: routerRevision,
+      // The verifier compares it with the service's own process, so a stray
+      // copy of the same code holding the port does not pass as the service.
+      pid: process.pid,
       capabilities: {
         routingPolicies: ['preserve-model-v1'],
         openrouterRejectionRecovery: 'completed-diagnostic-v1',

@@ -60,7 +60,15 @@ foreach ($Expected in @(
 if ($LASTEXITCODE -ne 0) { throw 'The installed model catalog does not match the repository.' }
 
 if (-not $NoService) {
-    & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health'
+    # The router answering health must be the supervisor's own child, not a
+    # stray copy of the same code holding the port.
+    $Supervisors = @(Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($StartCmd, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+        ForEach-Object { $_.ProcessId })
+    $ServicePid = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+        Where-Object { $Supervisors -contains $_.ParentProcessId } |
+        ForEach-Object { $_.ProcessId }) | Select-Object -First 1
+    & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health' "--service-pid=$ServicePid"
     if ($LASTEXITCODE -ne 0) {
         throw 'The Codex Unified Model Router health check failed.'
     }
