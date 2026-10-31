@@ -737,25 +737,34 @@ const server = http.createServer((request, response) => {
   });
 });
 
-// A taken port ends the process with one JSON event instead of an unhandled
-// error's stack trace, so the log stays one object per line; the service
-// manager starts the router again until the port is free.
-server.on('error', error => {
-  if (error.syscall !== 'listen') throw error;
+// A taken port, or an invalid one, ends the process with one JSON event
+// instead of an error's stack trace, so the log stays one object per line; the
+// service manager starts the router again until the port is free.
+function listenFailed(error) {
   logEvent('error', 'router.listen_failed', { host, port, errorCode: error.code ?? null });
   process.exitCode = 1;
   setTimeout(() => process.exit(1), 1000).unref();
+}
+
+server.on('error', error => {
+  if (error.syscall !== 'listen') throw error;
+  listenFailed(error);
 });
 
-server.listen(port, host, () => {
-  logEvent('info', 'router.ready', {
-    host,
-    port,
-    openrouterConfigured: Boolean(openrouterApiKey),
-    anthropicConfigured: Boolean(anthropicApiKey),
-    revision: routerRevision,
+try {
+  server.listen(port, host, () => {
+    logEvent('info', 'router.ready', {
+      host,
+      port,
+      openrouterConfigured: Boolean(openrouterApiKey),
+      anthropicConfigured: Boolean(anthropicApiKey),
+      revision: routerRevision,
+    });
   });
-});
+} catch (error) {
+  // An invalid port throws here instead of emitting 'error'.
+  listenFailed(error);
+}
 
 function shutdown(signal) {
   logEvent('info', 'router.shutdown', { signal });

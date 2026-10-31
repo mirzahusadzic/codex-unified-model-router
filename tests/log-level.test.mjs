@@ -109,3 +109,22 @@ test('a taken port ends the router with one JSON event, not an unhandled error',
   assert.deepEqual(records.map(record => [record.event, record.errorCode, record.port]),
     [['router.listen_failed', 'EADDRINUSE', port]]);
 });
+
+test('an invalid port ends the router with the same JSON event', () => {
+  for (const value of ['abc', '65536']) {
+    const env = {
+      ...process.env,
+      CODEX_ROUTER_ENV_FILE: fileURLToPath(new URL('./missing.env', import.meta.url)),
+      CODEX_ROUTER_TOKEN: 'a'.repeat(64),
+      OPENROUTER_API_KEY: 'test-openrouter-key',
+      CODEX_ROUTER_PORT: value,
+    };
+    delete env.CODEX_ROUTER_PROVIDER_ORDER;
+    delete env.CODEX_ROUTER_LOG_LEVEL;
+    const result = spawnSync(process.execPath, [routerSource], { encoding: 'utf8', env, timeout: 15000 });
+    assert.equal(result.status, 1, result.stderr);
+    const records = result.stderr.trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(records.map(record => [record.event, record.errorCode]),
+      [['router.listen_failed', 'ERR_SOCKET_BAD_PORT']], value);
+  }
+});
