@@ -1,69 +1,67 @@
 # Repository guide
 
-Keep this project a small local router that fits Codex's existing model picker and thread workflow. Prefer catalog changes and focused compatibility fixes over new CLI commands, frameworks, or runtime dependencies.
+Small loopback router that fits Codex's model picker and thread workflow. Prefer catalog changes and focused compatibility fixes; add no CLI commands, frameworks, or runtime dependencies.
 
-## Start here
+## Map
 
-- [README.md](README.md): installation and everyday usage.
-- [docs/setup.md](docs/setup.md): configuration, model catalogs, and context limits.
-- [docs/operations.md](docs/operations.md): services, logs, and rollback.
-- [CONTRIBUTING.md](CONTRIBUTING.md): project layout and what each script does.
-- Development needs Node.js 20+; no dependency install or build step is required. Run `node --test` from the repository root. Tests use fake upstreams and need no credentials or network.
+- Docs: `README.md` (install, use), `docs/setup.md` (configuration, models, limits), `docs/routing.md` (routing, Claude's routes, web search, isolation, credentials), `docs/operations.md` (services, logs, troubleshooting, rollback), `CONTRIBUTING.md` (layout, scripts).
+- Dev: Node.js 20+, no dependencies, no build. `node --test` runs offline, without credentials, against fake upstreams.
 
-## Common changes
-
-| Task | Source to edit |
+| Task | Source |
 | --- | --- |
 | Request handling, recovery flow, diagnostics, health | `router/unified-router.mjs` |
 | Routes, upstream headers and transport, error bodies, usage tap | `router/upstream.mjs` |
-| History normalization and request shaping per upstream, recovery payloads | `router/adapt.mjs` |
-| Router-run web search and the stream rewriter | `router/web-search.mjs` |
+| History normalization, request shaping per upstream, recovery payloads | `router/adapt.mjs` |
+| Router-run web search, stream rewriter | `router/web-search.mjs` |
 | Provider isolation, Claude routes, Ultra Spark lead call IDs | `router/sessions.mjs` |
 | Router settings, keys, logging | `router/config.mjs` |
 | Claude on Anthropic's API: Messages translation, refusals | `router/anthropic.mjs` |
-| Add or update an OpenRouter model | `catalog/*.json` |
+| OpenRouter models | `catalog/*.json` |
 | Shared OpenRouter prompts | `prompts/openrouter-instructions.md`, `prompts/openrouter-persistent.md` |
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
-| Catalog generation and prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
-| Managed Codex settings and TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
-| Installation or service startup | `install.mjs` (entry point), `platform/unix/install.sh`, `platform/windows/install.ps1` |
+| Catalog generation, prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
+| Managed Codex settings, TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
+| Installation, service startup | `install.mjs` (entry), `platform/unix/install.sh`, `platform/windows/install.ps1` |
 | Codex daemon restart and pinning | `scripts/codex-daemon.mjs` |
-| Tested Codex version | `testedCodexVersion` in `install.mjs` and the references in docs; see [Upgrade Codex](#upgrade-codex) |
+| Tested Codex version | `testedCodexVersion` in `install.mjs`, plus the docs' references; see [Upgrade Codex](#upgrade-codex) |
 
-For a new OpenRouter entry, copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review all capabilities: context limits, effective context percentage, reasoning levels, tool support, and prompts. A catalog entry alone does not establish upstream compatibility.
+## Catalog
 
-Native OpenAI models come from Codex's bundled catalog. New OpenRouter models normally need no router code change: `openrouter/` is stripped before forwarding, `deepseek/` is preserved, and the `ultra-spark/` alias forwards as `deepseek/` with the Ultra Spark prompt. `anthropic/<model ID>` runs Claude on Anthropic's API with `ANTHROPIC_API_KEY`, otherwise on OpenRouter's copy of the model, and a session keeps its first route. Other slugs route to the native Codex backend.
-
-After editing the maintained prompts or adding an OpenRouter entry, run `node scripts/render-openrouter-entries.mjs` and include the updated catalog entries. An entry can append one more prompt from `prompts/` by naming it in `router_instructions_suffix`; the generated Codex catalog omits that field. Keep model-specific context settings in the catalog; preserve native models' bundled limits.
+- Slugs: `openrouter/` is stripped; `deepseek/` is kept; `ultra-spark/` forwards as `deepseek/` with the Ultra Spark prompt; `anthropic/<model ID>` goes to Anthropic's API with `ANTHROPIC_API_KEY`, else to OpenRouter, and a session keeps its first route; anything else goes to the native Codex backend and its bundled models.
+- New OpenRouter entry: copy `catalog/deepseek-model.json`, slug `openrouter/<upstream-model-slug>`, review context limits, effective context percentage, reasoning levels, tool support, and prompts. An entry does not prove upstream compatibility.
+- After editing prompts or adding an entry: `node scripts/render-openrouter-entries.mjs`, and commit the updated entries. `router_instructions_suffix` appends one more `prompts/` file; the generated Codex catalog omits that field.
+- Model context settings live in the catalog; native models keep their bundled limits.
 
 ## Preserve these behaviors
 
-- Bind the router to loopback. Keep credentials and request/response bodies out of logs and committed files.
-- OpenRouter requests replace Codex authentication with the OpenRouter key, and Claude requests on Anthropic's API with the Anthropic key (an API key, never a Claude sign-in token); native OpenAI requests retain Codex authentication.
-- Mixed history preserves messages, tool calls, tool results, and encrypted reasoning while removing unsupported plaintext reasoning from OpenAI requests, native tool declarations (`additional_tools` items) from OpenRouter requests, and Claude's signed thinking from every request outside Anthropic's API. Keep the Messages translation append-only, so each request is a prefix of the next: that keeps Claude's cache and its signed thinking valid.
-- A pre-stream OpenRouter or Anthropic 400 may receive one bounded recovery attempt, but it must never escape as HTTP 400 to Codex. Anthropic refusals no retry fixes (credits, spend limits, the key, model access) move the request to OpenRouter, or end in a router diagnostic without an OpenRouter key; a 401 must never reach Codex, which would refresh its ChatGPT sign-in. Context-window rejections instead return a streamed `response.failed` with `context_length_exceeded` so Codex compacts the thread. If recovery fails, return a completed router diagnostic while preserving the real rejection in logs and keeping exact bodies out of logs unless capture is explicitly enabled.
-- Never substitute a model, and never send Anthropic's `fallbacks`; moving Claude between Anthropic's API and OpenRouter keeps the model. Structured output stays on the selected model; for DeepSeek, which rejects JSON schemas, send JSON mode with the schema appended as the final developer instruction, asking for the object at the top level without the response format's name.
-- Forward response chunks as they arrive and cancel unfinished upstream requests when the client disconnects.
-- Muse and the Ultra Spark workers send their inputs to Meta's contributor tier, which trains on them. Keep that explicit in docs and catalog descriptions, keep Ultra Spark spawning workers with `fork_context: false` (as a backstop, the router refuses Muse and other non-Ultra Spark training-tier requests from spawned agents that carry tool call IDs from an Ultra Spark main thread), and never let native OpenAI or Claude models share a session with training-tier models. After a native OpenAI or Claude model, a session's OpenRouter requests, the router's own searches included, carry `provider.data_collection: "deny"`, so their output never reaches an endpoint that may train on it, such as DeepSeek's own.
-- OpenRouter models search through the router: Codex's hosted `web_search` becomes a function the router runs through OpenRouter's web plugin, Codex sees a native `web_search_call`, and later requests carry the stored results as the call's output. Keep a step's calls together ahead of their outputs, so providers that require reasoning with tool calls (DeepSeek) see one assistant turn. Never log the query.
-- Keep Codex analytics and the OpenAI-hosted guardian reviewer off by default, and never send router data to third parties. Leave the sandbox's network setting to Codex unless the user opts in with `CODEX_ROUTER_SANDBOX_NETWORK=1`.
-- Keep Unix and Windows installation behavior aligned, including backups and preservation of unrelated configuration.
-- Pin the Codex app-server daemon to the CLI's Codex by default, and never restart it when Codex runs the installer or when restarts are turned off.
+- Loopback only. No credentials or request and response bodies in logs or commits.
+- Auth: OpenRouter requests use the OpenRouter key; Claude on Anthropic's API uses the Anthropic API key, never a Claude sign-in token; native OpenAI requests keep Codex's authentication.
+- History: keep messages, tool calls and results, and encrypted reasoning. Strip unsupported plaintext reasoning from OpenAI requests, `additional_tools` items from OpenRouter requests, and Claude's signed thinking from every request outside Anthropic's API.
+- Messages translation is append-only, each request a prefix of the next, so Claude's cache and signed thinking stay valid.
+- Pre-stream OpenRouter or Anthropic 400: at most one bounded recovery, never HTTP 400 to Codex. Context overflow: streamed `response.failed` with `context_length_exceeded`, so Codex compacts. Failed recovery: completed router diagnostic; the real rejection is logged, bodies only with capture enabled.
+- Anthropic refusals no retry fixes (credits, spend limits, the key, model access) go to OpenRouter, or end in a router diagnostic without an OpenRouter key. A 401 never reaches Codex, which would refresh its ChatGPT sign-in.
+- Never substitute a model, across Claude's routes included; never send Anthropic's `fallbacks`. Structured output stays on the selected model; DeepSeek, which rejects JSON schemas, gets JSON mode plus the schema as the final developer instruction: object at the top level, response format's name left out.
+- Stream chunks as they arrive; cancel unfinished upstream requests on client disconnect.
+- Training tier: Muse and the Ultra Spark workers send inputs to Meta's contributor tier, which trains on them; say so in docs and catalog descriptions. Ultra Spark spawns workers with `fork_context: false`. Backstop: refuse Muse and other non-Ultra Spark training-tier requests from spawned agents carrying tool call IDs from an Ultra Spark main thread.
+- Isolation: native OpenAI and Claude models never share a session with the training tier. After either, the session's OpenRouter requests, router searches included, carry `provider.data_collection: "deny"`, keeping their output off endpoints that may train, such as DeepSeek's own.
+- Web search for OpenRouter models and Claude: Codex's hosted `web_search` becomes a router function run through OpenRouter's web plugin; Codex sees a native `web_search_call`; later requests carry the stored results as its output. Keep a step's calls ahead of their outputs, so DeepSeek sees one assistant turn. Never log the query.
+- Defaults: Codex analytics and the OpenAI-hosted guardian reviewer off; no router data to third parties; the sandbox's network setting left to Codex unless `CODEX_ROUTER_SANDBOX_NETWORK=1`.
+- Unix and Windows installers stay aligned, backups and preservation of unrelated configuration included.
+- The Codex app-server daemon is pinned to the CLI's Codex by default, and never restarted when Codex runs the installer or restarts are turned off.
 
 ## Upgrade Codex
 
-The tested version is `testedCodexVersion` in `install.mjs`. The installer pins the app-server daemon to the CLI's Codex; unpinned, the daemon updates itself and can run a new release before the CLI does, so compare `codex --version` with `codex app-server daemon version`.
+The tested version is `testedCodexVersion` in `install.mjs`. An unpinned daemon can run a newer release than the CLI: compare `codex --version` with `codex app-server daemon version`.
 
-1. Diff `rust-v<old>..rust-v<new>` in `openai/codex` for what the router relies on: the `session-id` and `thread-id` headers (a main thread's ID equals its session ID), the native header allowlist in `upstreamHeaders`, request fields and input item types, `spawn_agent`'s `fork_context`, the keys `scripts/merge-config.mjs` writes, guardian gating, and the `codex app-server daemon` `version`, `restart`, and `update --from-cli` commands with the `auto-update-version` marker that `scripts/codex-daemon.mjs` checks.
-2. Compare `codex debug models --bundled` from both versions with `CODEX_HOME` set to a scratch directory. If templates changed, update the catalog entries, their `.license` files, and `NOTICE`.
-3. In a scratch `CODEX_HOME`, point a provider at a local capture server and compare what both versions send for a fresh OpenRouter thread and for a thread that switches from a native model to an OpenRouter model. Then send the same turns through the installed router with `codex exec -c model_provider=...`. Resume by session ID, because `resume --last` does not find a session recorded under another provider, and resume with the provider that recorded it: Codex 0.166.0 refuses another. Pass `-m` explicitly and keep test traffic off Muse and Ultra Spark.
-4. Fix incompatibilities in the router with a regression test. Update every tested-version reference, including escaped ones in test regexes such as `0\.163\.0` (`git grep -n 163` finds both forms), but keep statements about the version that introduced a behavior. With the new CLI installed, run `node --test`: `tests/prompt-budget.test.mjs` fails when Codex changes the tools, request size, or features it turns on for router models, so review each change before updating its expectations. Then run the installer and `node install.mjs --verify`.
-5. Tag the verified commit `codex-<new>` with `git tag -a`; it is the fallback in [Return to an earlier Codex version](docs/operations.md#return-to-an-earlier-codex-version). A tag marks the last commit verified with its Codex version, so move it with `git tag -f -a` when a later commit passes the same checks, and before raising the pin make sure `codex-<old>` points at the last commit verified with the old version. Tags stay local until pushed.
+1. Diff `rust-v<old>..rust-v<new>` in `openai/codex` for: the `session-id` and `thread-id` headers (a main thread's ID equals its session ID), the `upstreamHeaders` allowlist, request fields, input item types, `spawn_agent`'s `fork_context`, the keys `scripts/merge-config.mjs` writes, guardian gating, and the `codex app-server daemon` `version`, `restart`, and `update --from-cli` commands with the `auto-update-version` marker `scripts/codex-daemon.mjs` checks.
+2. Compare `codex debug models --bundled` from both versions, in a scratch `CODEX_HOME`. Template changes: update the catalog entries, their `.license` files, and `NOTICE`.
+3. In a scratch `CODEX_HOME`, point a provider at a local capture server and compare both versions' requests for a fresh OpenRouter thread and a native-to-OpenRouter switch. Replay the turns through the installed router with `codex exec -c model_provider=...`, resuming by session ID with the recording provider: `resume --last` misses other providers' sessions, and Codex 0.166.0 refuses another provider. Pass `-m`; keep test traffic off Muse and Ultra Spark.
+4. Fix incompatibilities with regression tests. Update every tested-version reference, escaped regex forms such as `0\.163\.0` included (`git grep -n 163`), but keep statements about the version that introduced a behavior. With the new CLI, run `node --test` (`tests/prompt-budget.test.mjs` flags changed tools, request size, or features for router models; review each change before updating expectations), the installer, and `node install.mjs --verify`.
+5. `git tag -a codex-<new>` on the verified commit; it is the fallback in `docs/operations.md`, "Return to an earlier Codex version". Move it with `git tag -f -a` when a later commit passes the same checks. Before raising the pin, `codex-<old>` must mark the last commit verified with the old version. Tags stay local until pushed.
 
 ## Validate and document
 
-For router behavior changes, add a focused regression test in `tests/unified-router.test.mjs` and run `node --test`. For shell edits, run `bash -n` on each changed script. `node --test` also checks that catalog entries carry the rendered prompts; CI additionally checks JavaScript and Windows PowerShell syntax and model JSON; see [.github/workflows/ci.yml](.github/workflows/ci.yml).
-
-Keep the README brief. Put detailed setup and troubleshooting in `docs/`. Documentation-only changes need link and factual checks, not a full test run.
-
-Edit repository sources first. The running router uses a separate installed copy under the Codex home directory; source edits do not update it. Run installers or restart services when deployment is part of the task. Installation changes live configuration and restarts the router and a running Codex app-server daemon, which interrupts active requests and sessions. Use the documented verifier afterward; local health does not prove upstream model access.
+- Router behavior change: focused regression test in `tests/unified-router.test.mjs`, then `node --test`, which also checks the rendered prompts in catalog entries.
+- Shell edits: `bash -n` on each changed script. CI (`.github/workflows/ci.yml`) also checks JavaScript and PowerShell syntax and the model JSON.
+- Docs: README brief, details in `docs/`; docs-only changes need link and fact checks, not a full test run. Shape: section leads of two or three sentences at most; tables only for tabular data, run-in lists otherwise; explanation before a code block, no comments inside; at most one alert per section; each link once per page.
+- Deploy only when the task includes it. Edit sources first; the running router is an installed copy under the Codex home. Installing changes live configuration and restarts the router and a running Codex daemon, interrupting active requests. Then run `node install.mjs --verify`; local health does not prove upstream model access.
