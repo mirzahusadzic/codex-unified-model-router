@@ -734,6 +734,16 @@ const server = http.createServer((request, response) => {
   });
 });
 
+// A taken port ends the process with one JSON event instead of an unhandled
+// error's stack trace, so the log stays one object per line; the service
+// manager starts the router again until the port is free.
+server.on('error', error => {
+  if (error.syscall !== 'listen') throw error;
+  logEvent('error', 'router.listen_failed', { host, port, errorCode: error.code ?? null });
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 1000).unref();
+});
+
 server.listen(port, host, () => {
   logEvent('info', 'router.ready', {
     host,

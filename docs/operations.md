@@ -125,6 +125,7 @@ Each table answers a question with the event and fields to look for, and each ex
 | --- | --- |
 | Did the router start, with which keys and code? | `router.ready`: listener address, which keys are set, the running source `revision` |
 | Why did the router stop? | `router.shutdown`: the signal |
+| Why did the router fail to start? | `router.listen_failed`: host, port, and `errorCode`, such as `EADDRINUSE` when another process holds the port; the service starts the router again until the port is free |
 
 ```sh
 logs | jq -c 'select(.event == "router.ready")

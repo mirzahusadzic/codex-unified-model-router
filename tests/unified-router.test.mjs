@@ -41,7 +41,7 @@ mock.method(console, 'log', line => logEntries.push(String(line)));
 mock.method(console, 'error', line => logEntries.push(String(line)));
 mock.method(http, 'createServer', handler => {
   handleRequest = handler;
-  return { listen: (_port, _host, ready) => ready() };
+  return { on() {}, listen: (_port, _host, ready) => ready() };
 });
 mock.method(https, 'request', (options, onResponse) => {
   const chunks = [];
