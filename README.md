@@ -35,6 +35,7 @@ config:
         padding: 20
     themeCSS: >-
         foreignObject { overflow: visible; }
+        [data-look="neo"] * { filter: none !important; }
         .node foreignObject, .node foreignObject *, .edgeLabel, .edgeLabel * {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif !important; line-height: 1.5 !important; }
         .node foreignObject, .node foreignObject * { white-space: nowrap !important; }
