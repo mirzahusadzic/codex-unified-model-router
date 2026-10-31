@@ -19,6 +19,9 @@ const sessionSidesFile = join(dirname(envFile), 'session-sides.json');
 const sessionSideRetentionMs = 30 * 24 * 60 * 60 * 1000;
 // Requests refresh a session's record at most daily, so active sessions never expire.
 const sessionSideRefreshMs = 24 * 60 * 60 * 1000;
+// A record older than the retention counts as absent, also in a router that has
+// run for longer than that; the next write prunes it.
+const current = entry => (entry && Date.now() - entry.at < sessionSideRetentionMs ? entry : undefined);
 
 function loadSessionSides() {
   try {
@@ -51,7 +54,7 @@ export function sessionSide(requestedModel, provider, upstreamModel) {
 // A session that used a native OpenAI or Claude model: its OpenRouter
 // requests go only to endpoints that do not collect data (see adaptForUpstream).
 export function protectedSession(sessionId) {
-  return ['openai', 'anthropic'].includes(sessionId ? sessionSides.get(sessionId)?.side : undefined);
+  return ['openai', 'anthropic'].includes(sessionId ? current(sessionSides.get(sessionId))?.side : undefined);
 }
 
 function recordSessionSide(sessionId, side) {
@@ -90,7 +93,7 @@ function loadClaudeRoutes() {
 
 export function recordClaudeRoute(sessionId, route) {
   if (!sessionId) return;
-  const recorded = claudeRoutes.get(sessionId);
+  const recorded = current(claudeRoutes.get(sessionId));
   if (recorded?.route === route && Date.now() - recorded.at < sessionSideRefreshMs) return;
   const cutoff = Date.now() - sessionSideRetentionMs;
   for (const [id, entry] of claudeRoutes) if (entry.at <= cutoff) claudeRoutes.delete(id);
@@ -101,7 +104,7 @@ export function recordClaudeRoute(sessionId, route) {
 // The session's route while it can still be used; otherwise Anthropic's API
 // when it has a key and has not refused recently, and OpenRouter after that.
 export function claudeRoute(sessionId) {
-  const recorded = sessionId ? claudeRoutes.get(sessionId)?.route : undefined;
+  const recorded = sessionId ? current(claudeRoutes.get(sessionId))?.route : undefined;
   if (recorded === 'openrouter' && openrouterApiKey) return 'openrouter';
   if ((anthropicApiKey && Date.now() >= anthropicUnavailableUntil) || !openrouterApiKey) return 'anthropic';
   return 'openrouter';
@@ -159,7 +162,7 @@ function forkedLeadCallIds(sessionId, input) {
 // training-tier worker may not carry an Ultra Spark lead's forked history.
 // Returns the refusal to send, or null after recording what the request shows.
 export function sessionRefusal({ requestId, sessionId, threadId, requestedModel, side, input }) {
-  const recorded = sessionId ? sessionSides.get(sessionId) : undefined;
+  const recorded = sessionId ? current(sessionSides.get(sessionId)) : undefined;
   if (side && sessionId) {
     if (recorded && (recorded.side === 'training') !== (side === 'training')) {
       logEvent('error', 'session.provider_isolation', {
