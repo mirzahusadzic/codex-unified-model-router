@@ -53,6 +53,20 @@ test('health verifier accepts only the router process the service runs', () => {
   assert.notEqual(run(health, '--service-pid=4242').status, 0);
 });
 
+test('health verifier refuses PID options it cannot read exactly', () => {
+  const run = args => spawnSync(process.execPath, [verifier, source, ...args],
+    { input: JSON.stringify({ ...health, pid: 4242 }), encoding: 'utf8' });
+  assert.equal(run(['--service-pid=4242']).status, 0);
+  // Each of these once compared equal to 4242, or let a second PID go unchecked.
+  for (const args of [['--service-pid=+4242'], ['--service-pid=4242.0'], ['--service-pid=0x1092'],
+    ['--service-pid=4.242e3'], ['--service-pid=04242'], ['--service-pid=4242', '--service-pid=5151'],
+    ['--service-pid', '4242'], ['--service-pids=4242']]) {
+    const result = run(args);
+    assert.notEqual(result.status, 0, args.join(' '));
+    assert.match(result.stderr, /Usage: verify-health\.mjs/, args.join(' '));
+  }
+});
+
 test('shared readiness probe rejects redirects without contacting their target', async t => {
   let targetContacts = 0;
   let redirect = null;

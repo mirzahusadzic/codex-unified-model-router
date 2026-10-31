@@ -3,12 +3,16 @@ import http from 'node:http';
 import { routerRevision } from '../router/common.mjs';
 
 // --service-pid names the service's own router process: launchd's, systemd's,
-// or the Windows supervisor's child. Empty means the service runs none.
-const servicePidOption = process.argv.slice(2).find(arg => arg.startsWith('--service-pid='));
-const [source, endpoint] = process.argv.slice(2).filter(arg => arg !== servicePidOption);
-if (!source) {
+// or the Windows supervisor's child; empty or 0 means the service runs none.
+// Any other argument shape is refused, so a typo cannot skip the check.
+const args = process.argv.slice(2);
+const options = args.filter(arg => arg.startsWith('-'));
+const [source, endpoint, ...extra] = args.filter(arg => !arg.startsWith('-'));
+if (!source || extra.length > 0 || options.length > 1
+    || options.some(arg => !/^--service-pid=(?:0|[1-9][0-9]*)?$/.test(arg))) {
   throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url] [--service-pid=<pid>]');
 }
+const servicePidOption = options[0];
 const revision = routerRevision(source);
 
 async function fetchHealth(endpoint) {
@@ -55,7 +59,7 @@ if (!health || !['ok', 'openai', 'openrouter', 'clientAuth'].every(key => health
 }
 if (servicePidOption !== undefined) {
   const servicePid = Number(servicePidOption.slice('--service-pid='.length) || 0);
-  if (!Number.isInteger(servicePid) || servicePid <= 0) {
+  if (!Number.isSafeInteger(servicePid) || servicePid <= 0) {
     throw new Error(`The router service has no running process, yet router process ${health.pid ?? 'unknown'} answers; stop that process and restart the service`);
   }
   if (health.pid !== servicePid) {
