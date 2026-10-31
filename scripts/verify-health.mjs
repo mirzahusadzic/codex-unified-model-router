@@ -2,15 +2,17 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { routerRevision } from '../router/common.mjs';
 
-// --service-pid names the service's own router process: launchd's, systemd's,
-// or the Windows supervisor's child; empty or 0 means the service runs none.
-// Any other argument shape is refused, so a typo cannot skip the check.
+// --service-pid lists the service's own processes, comma-separated: launchd's
+// or systemd's process and those it started, or the Windows supervisor's
+// children; a version manager's shim runs the real node as such a child. Empty
+// or 0 means the service runs none. Any other argument shape is refused, so a
+// typo cannot skip the check.
 const args = process.argv.slice(2);
 const options = args.filter(arg => arg.startsWith('-'));
 const [source, endpoint, ...extra] = args.filter(arg => !arg.startsWith('-'));
 if (!source || extra.length > 0 || options.length > 1
-    || options.some(arg => !/^--service-pid=(?:0|[1-9][0-9]*)?$/.test(arg))) {
-  throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url] [--service-pid=<pid>]');
+    || options.some(arg => !/^--service-pid=(?:0|[1-9][0-9]*(?:,[1-9][0-9]*)*)?$/.test(arg))) {
+  throw new Error('Usage: verify-health.mjs <installed-router-source> [local-health-url] [--service-pid=<pid>[,<pid>...]]');
 }
 const servicePidOption = options[0];
 const revision = routerRevision(source);
@@ -58,11 +60,12 @@ if (!health || !['ok', 'openai', 'openrouter', 'clientAuth'].every(key => health
   throw new Error('Router health, required capabilities or installed source revision do not match; update and restart the router');
 }
 if (servicePidOption !== undefined) {
-  const servicePid = Number(servicePidOption.slice('--service-pid='.length) || 0);
-  if (!Number.isSafeInteger(servicePid) || servicePid <= 0) {
+  const servicePids = servicePidOption.slice('--service-pid='.length).split(',').map(Number)
+    .filter(pid => Number.isSafeInteger(pid) && pid > 0);
+  if (servicePids.length === 0) {
     throw new Error(`The router service has no running process, yet router process ${health.pid ?? 'unknown'} answers; stop that process and restart the service`);
   }
-  if (health.pid !== servicePid) {
-    throw new Error(`Router process ${health.pid ?? 'unknown'} answers instead of the service's process ${servicePid}; stop it and restart the service`);
+  if (!servicePids.includes(health.pid)) {
+    throw new Error(`Router process ${health.pid ?? 'unknown'} answers instead of the service's process ${servicePids.join(', ')}; stop it and restart the service`);
   }
 }

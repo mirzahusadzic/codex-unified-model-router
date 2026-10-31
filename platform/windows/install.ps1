@@ -32,6 +32,7 @@ $ErrorActionPreference = 'Stop'
 $PlatformDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoDir = Split-Path -Parent (Split-Path -Parent $PlatformDir)
 . (Join-Path $PlatformDir 'private-path.ps1')
+. (Join-Path $PlatformDir 'service-pids.ps1')
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $BackupDir = Join-Path $CodexHome "backups\codex-unified-router-$Stamp-$PID"
@@ -290,7 +291,9 @@ goto run
         $Healthy = $false
         for ($Attempt = 0; $Attempt -lt 25; $Attempt += 1) {
             try {
-                & node (Join-Path $RepoDir 'scripts\verify-health.mjs') $RouterFile 'http://127.0.0.1:18766/health' 2>$null
+                # The router answering must be the supervisor's, not a stray copy.
+                $ServicePids = Get-RouterServicePids -StartCmd $StartCmd
+                & node (Join-Path $RepoDir 'scripts\verify-health.mjs') $RouterFile 'http://127.0.0.1:18766/health' "--service-pid=$ServicePids" 2>$null
                 if ($LASTEXITCODE -eq 0) {
                     $Healthy = $true
                     break

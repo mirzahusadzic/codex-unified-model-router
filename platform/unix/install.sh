@@ -223,16 +223,14 @@ if [[ -f "$codex_home/deepseek.config.toml" ]]; then
   mv "$codex_home/deepseek.config.toml" "$backup_dir/deepseek.config.toml.retired"
 fi
 
+# shellcheck source=service-pids.sh
+source "$repo_dir/platform/unix/service-pids.sh"
+
+# The router answering must be the service's own, not a stray copy holding the
+# port, which would otherwise pass while the service's router keeps failing.
 wait_for_router() {
-  local healthy=0
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-    if node "$repo_dir/scripts/verify-health.mjs" "$router_file" http://127.0.0.1:18766/health 2>/dev/null; then
-      healthy=1
-      break
-    fi
-    sleep 0.2
-  done
-  [[ "$healthy" -eq 1 ]]
+  wait_for_service_router "$platform" "$service_label" "$linux_service" \
+    "$repo_dir/scripts/verify-health.mjs" "$router_file" http://127.0.0.1:18766/health
 }
 
 systemd_environment_line() {

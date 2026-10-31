@@ -67,6 +67,16 @@ test('health verifier refuses PID options it cannot read exactly', () => {
   }
 });
 
+test('health verifier accepts a process the service started, such as node under a shim', () => {
+  const run = option => spawnSync(process.execPath, [verifier, source, option],
+    { input: JSON.stringify({ ...health, pid: 4243 }), encoding: 'utf8' });
+  assert.equal(run('--service-pid=4242,4243').status, 0);
+  assert.match(run('--service-pid=4242,5151').stderr, /Router process 4243 answers instead of the service's process 4242, 5151/);
+  for (const option of ['--service-pid=4242,', '--service-pid=,4243', '--service-pid=4242,,4243']) {
+    assert.match(run(option).stderr, /Usage: verify-health\.mjs/, option);
+  }
+});
+
 test('shared readiness probe rejects redirects without contacting their target', async t => {
   let targetContacts = 0;
   let redirect = null;

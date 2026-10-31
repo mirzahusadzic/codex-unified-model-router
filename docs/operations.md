@@ -19,7 +19,7 @@ The verifier checks four parts of the installation:
 
 - **Configuration:** The main and OpenRouter-only configurations, their matching local tokens and private permissions, and the managed apps and agent settings
 - **Catalog:** The entries and their rendered prompts
-- **Router:** The installed router and every module beside it match this repository; local health advertises the supported routing policy, the revision precondition, and the installed source's revision. The process answering health must be the service's own, so redirects, stale running copies, and stray copies of the same code fail.
+- **Router:** The installed router and every module beside it match this repository; local health advertises the supported routing policy, the revision precondition, and the installed source's revision. The process answering health must be the service's own or one it started, so redirects, stale running copies, and stray copies of the same code fail.
 - **Startup:** The platform's startup setup, and the Codex daemon pinned to the CLI's Codex
 
 The verifier does not check upstream keys or model access.
@@ -363,7 +363,7 @@ cp -p "$backup_dir/models.json" "$HOME/.codex/models.json"
 | Muse requests fail before reaching a model | Allow endpoints that may train on inputs in your OpenRouter privacy settings, and check that OpenRouter guardrails allow the Muse provider. |
 | A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
 | The local endpoint is unavailable | Check the service status and the router's error log. |
-| The verifier reports another router process answering | A router outside the service holds port 18766, and the service's own copy keeps failing with `router.listen_failed`. Stop the process the message names, then restart the service. |
+| The installer or verifier reports another router process answering | A router outside the service holds port 18766, and the service's own copy keeps failing with `router.listen_failed`. Stop the process the verifier names, then rerun the installer. |
 | HTTP 401 about the router token | The client has an older configuration: rerun the installer, restart other open Codex windows, and start a new thread. |
 | OpenRouter returns HTTP 401 | Replace the stored key with `node install.mjs --change-api-key`, or `--api-key-file <path>` without a terminal. |
 | Structured output from DeepSeek misses a field or is wrapped in another key | DeepSeek gets the schema as an instruction, not an enforced format: validate the JSON in the caller, and check `structuredOutputAdapted` in `request.forwarded`. Frequent wrapping in a key named after the response format means an older installed router: rerun the installer. |

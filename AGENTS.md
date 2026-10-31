@@ -21,7 +21,7 @@ Small loopback router that fits Codex's model picker and thread workflow. Prefer
 | Ultra Spark delegation policy | `prompts/ultra-spark.md` |
 | Catalog generation, prompt rendering | `scripts/build-catalog.mjs`, `scripts/openrouter-prompts.mjs` |
 | Managed Codex settings, TOML handling | `scripts/merge-config.mjs`, `scripts/toml-lines.mjs` |
-| Installation, service startup | `install.mjs` (entry), `platform/unix/install.sh`, `platform/windows/install.ps1` |
+| Installation, service startup | `install.mjs` (entry), `platform/unix/install.sh`, `platform/windows/install.ps1`; the service's process lookup in `platform/*/service-pids.*` |
 | Codex daemon restart and pinning | `scripts/codex-daemon.mjs` |
 | Tested Codex version | `testedCodexVersion` in `install.mjs`, plus the docs' references; see [Upgrade Codex](#upgrade-codex) |
 

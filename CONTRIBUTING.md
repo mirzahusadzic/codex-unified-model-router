@@ -59,6 +59,7 @@ Helpers the installers and verifiers call:
 | `scripts/codex-daemon.mjs [--verify] <codex-home>` | Restart Codex's app-server daemon after an installation and pin it to the CLI's Codex, or with `--verify`, check that it follows the CLI. Both installers and verifiers use it. |
 | `scripts/verify-catalog.mjs [--report] <models.json>` | Check that a generated or installed catalog carries every router entry with the repository's context limits and prompts, or with `--report`, print what `/model` lists. Both installers and verifiers use it. |
 | `platform/windows/private-path.ps1` | On Windows, restrict a file or directory to the current user. |
+| `platform/unix/service-pids.sh`, `platform/windows/service-pids.ps1` | Find the service's router process and the processes it started, which the installers' readiness wait and the verifiers pass to `verify-health.mjs`. |
 
 Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for OpenRouter entries, and `scripts/toml-lines.mjs` reads TOML line by line without mistaking strings or comments for keys, tables, or markers.
 
@@ -76,7 +77,8 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/native-models.test.mjs` | ChatGPT plan detection and hiding native models. | All |
 | `tests/install.test.mjs` | End-to-end installs without a service through `install.mjs` and the platform scripts, collision guards, key sources, setting validation, the closing summary and verifier report, the help text and argument errors, the daemon restart and pin step, and that the Unix scripts need no `jq`. Runs `platform/unix/install.sh` on macOS and Linux and `platform/windows/install.ps1` on Windows. | All, per-platform installer |
 | `tests/log-level.test.mjs` | Router startup settings: log levels, endpoint preferences, and a corrupt isolation record. | All |
-| `tests/verify-health.test.mjs` | The health verifier's capability, revision, and redirect checks. | All |
+| `tests/verify-health.test.mjs` | The health verifier's capability, revision, redirect, and service-process checks. | All |
+| `tests/service-pids.test.mjs` | The Unix service-process lookup and the installers' readiness wait, with fake `launchctl`, `systemctl`, and `pgrep`. | macOS, Linux |
 | `tests/prompt-budget.test.mjs` | What the installed Codex sends router models under the installer's configuration, through a local fake upstream: the tool list, request and tool-definition sizes, the features it turns on, and that apps and guardian stay off. Skips without the tested Codex CLI or reviewed expectations for the platform. | macOS (reviewed); others skip |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
 

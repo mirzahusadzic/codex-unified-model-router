@@ -17,6 +17,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'private-path.ps1')
+. (Join-Path $PSScriptRoot 'service-pids.ps1')
 $ScriptsDir = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'scripts'
 
 $CodexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
@@ -60,15 +61,8 @@ foreach ($Expected in @(
 if ($LASTEXITCODE -ne 0) { throw 'The installed model catalog does not match the repository.' }
 
 if (-not $NoService) {
-    # The router answering health must be the supervisor's own child, not a
-    # stray copy of the same code holding the port.
-    $Supervisors = @(Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" |
-        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($StartCmd, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |
-        ForEach-Object { $_.ProcessId })
-    $ServicePid = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-        Where-Object { $Supervisors -contains $_.ParentProcessId } |
-        ForEach-Object { $_.ProcessId }) | Select-Object -First 1
-    & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health' "--service-pid=$ServicePid"
+    $ServicePids = Get-RouterServicePids -StartCmd $StartCmd
+    & node (Join-Path $ScriptsDir 'verify-health.mjs') $RouterPath 'http://127.0.0.1:18766/health' "--service-pid=$ServicePids"
     if ($LASTEXITCODE -ne 0) {
         throw 'The Codex Unified Model Router health check failed.'
     }

@@ -3,6 +3,8 @@ set -euo pipefail
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)"
+# shellcheck source=service-pids.sh
+source "$(dirname "${BASH_SOURCE[0]}")/service-pids.sh"
 service_label="com.mirza.codex-unified-router"
 linux_service="codex-unified-router.service"
 platform="$(uname -s)"
@@ -61,8 +63,7 @@ if [[ "$check_service" -eq 1 ]]; then
         printf 'The launch agent is not loaded.\n' >&2
         exit 1
       fi
-      service_pid="$(launchctl print "gui/$(id -u)/$service_label" | awk '$1 == "pid" && $2 == "=" { print $3; exit }')"
-      health_args+=("--service-pid=$service_pid")
+      health_args+=("--service-pid=$(service_pids "$platform" "$service_label" "$linux_service")")
       ;;
     Linux)
       if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -70,8 +71,7 @@ if [[ "$check_service" -eq 1 ]]; then
           printf 'The systemd user service is not active: %s\n' "$linux_service" >&2
           exit 1
         fi
-        service_pid="$(systemctl --user show -p MainPID --value "$linux_service")"
-        health_args+=("--service-pid=$service_pid")
+        health_args+=("--service-pid=$(service_pids "$platform" "$service_label" "$linux_service")")
       else
         printf 'systemd --user is unavailable, so automatic startup could not be verified. If the router was installed without a service, run: node install.mjs --verify --no-service\n' >&2
         exit 1
