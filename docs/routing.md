@@ -8,7 +8,9 @@ What the router does with each request once it is [set up](setup.md): which upst
 - [Provider isolation](#provider-isolation): models that never share a session
 - [Routing policy](#routing-policy), [router capabilities](#router-capabilities), and [credentials and logging](#credentials-and-logging)
 
-## Routing and compatibility
+---
+
+### Routing and compatibility
 
 The same catalog serves main threads, spawned agents, and any interface that exposes a model field. The model slug picks the upstream:
 
@@ -37,7 +39,7 @@ On the way, the router adapts each request to its upstream:
 
 ---
 
-## Claude's two routes
+### Claude's two routes
 
 With `ANTHROPIC_API_KEY` set, Claude runs on Anthropic's Messages API, and the router translates between it and Codex's Responses API; without the key, Claude runs on OpenRouter's copy of the same model. The entries and the key are described in [Claude Sonnet 5.5 and Claude Opus 5.5](setup.md#claude-sonnet-55-and-claude-opus-55).
 
@@ -71,7 +73,7 @@ The breakpoint the router adds to Claude requests:
 { "cache_control": { "type": "ephemeral" } }
 ```
 
-### On Anthropic's API
+#### On Anthropic's API
 
 The translation keeps each request a prefix of the next, which keeps Claude's cache and signed thinking valid:
 
@@ -87,7 +89,7 @@ The translation keeps each request a prefix of the next, which keeps Claude's ca
 
 ---
 
-## Web search
+### Web search
 
 Native OpenAI models keep Codex's hosted search. For OpenRouter models and Claude, on either route, the router runs search itself through OpenRouter, so it needs the OpenRouter key; a search costs about one to two cents, depending on the model.
 
@@ -103,7 +105,7 @@ How a search runs, from the call to later turns:
 
 ---
 
-## Provider isolation
+### Provider isolation
 
 Native OpenAI and Claude models never share a tracked Codex session with models whose provider trains on their inputs; OpenAI and Claude may share one. Anthropic's terms bar using Claude's output to train competing models, so Claude is kept from the training tier as OpenAI is. Once a tracked session uses one side, the router refuses the other:
 
@@ -133,7 +135,7 @@ The rule follows session IDs, not content, so three cases start a new record:
 
 ---
 
-## Routing policy
+### Routing policy
 
 The router always forwards the model you selected and never substitutes another, structured output included:
 
@@ -149,7 +151,7 @@ X-Codex-Routing-Policy: preserve-model-v1
 
 ---
 
-## Router capabilities
+### Router capabilities
 
 `GET /health` (also `/v1/health`) reports the running router's capabilities, whether its OpenRouter and Anthropic keys are set (`openrouter`, `anthropic`), and `revision`, a SHA-256 over its source files. Clients can check compatibility and spot outdated installed copies without an inference request.
 
@@ -183,7 +185,7 @@ X-Codex-Router-Revision: <lowercase-sha256-from-health>
 
 ---
 
-## Credentials and logging
+### Credentials and logging
 
 The router binds only to `127.0.0.1`, and Codex's ChatGPT credentials never leave for OpenRouter or Anthropic. Logs never include request or response bodies, authorization headers, or API keys; see [Structured logs](operations.md#structured-logs).
 

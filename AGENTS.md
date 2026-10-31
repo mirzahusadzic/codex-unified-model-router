@@ -2,7 +2,9 @@
 
 Small loopback router that fits Codex's model picker and thread workflow. Prefer catalog changes and focused compatibility fixes; add no CLI commands, frameworks, or runtime dependencies.
 
-## Map
+---
+
+### Map
 
 - Docs: `README.md` (install, use), `docs/setup.md` (configuration, models, limits), `docs/routing.md` (routing, Claude's routes, web search, isolation, credentials), `docs/operations.md` (services, logs, troubleshooting, rollback), `CONTRIBUTING.md` (layout, scripts).
 - Dev: Node.js 20+, no dependencies, no build. `node --test` runs offline, without credentials, against fake upstreams.
@@ -25,14 +27,18 @@ Small loopback router that fits Codex's model picker and thread workflow. Prefer
 | Codex daemon restart and pinning | `scripts/codex-daemon.mjs` |
 | Tested Codex version | `testedCodexVersion` in `install.mjs`, plus the docs' references; see [Upgrade Codex](#upgrade-codex) |
 
-## Catalog
+---
+
+### Catalog
 
 - Slugs: `openrouter/` is stripped; `deepseek/` is kept; `ultra-spark/` forwards as `deepseek/` with the Ultra Spark prompt; `anthropic/<model ID>` goes to Anthropic's API with `ANTHROPIC_API_KEY`, else to OpenRouter, and a session keeps its first route; anything else goes to the native Codex backend and its bundled models.
 - New OpenRouter entry: copy `catalog/deepseek-model.json`, slug `openrouter/<upstream-model-slug>`, review context limits, effective context percentage, reasoning levels, tool support, and prompts. An entry does not prove upstream compatibility.
 - After editing prompts or adding an entry: `node scripts/render-openrouter-entries.mjs`, and commit the updated entries. `router_instructions_suffix` appends one more `prompts/` file; the generated Codex catalog omits that field.
 - Model context settings live in the catalog; native models keep their bundled limits.
 
-## Preserve these behaviors
+---
+
+### Preserve these behaviors
 
 - Loopback only. No credentials or request and response bodies in logs or commits.
 - Auth: OpenRouter requests replace Codex authentication with the OpenRouter key, and Claude requests on Anthropic's API replace it with the Anthropic API key, never a Claude sign-in token; native OpenAI requests keep Codex's authentication.
@@ -49,7 +55,9 @@ Small loopback router that fits Codex's model picker and thread workflow. Prefer
 - Unix and Windows installers stay aligned, backups and preservation of unrelated configuration included.
 - The Codex app-server daemon is pinned to the CLI's Codex by default, and never restarted when Codex runs the installer or restarts are turned off.
 
-## Upgrade Codex
+---
+
+### Upgrade Codex
 
 The tested version is `testedCodexVersion` in `install.mjs`. An unpinned daemon can run a newer release than the CLI: compare `codex --version` with `codex app-server daemon version`.
 
@@ -59,10 +67,12 @@ The tested version is `testedCodexVersion` in `install.mjs`. An unpinned daemon 
 4. Fix incompatibilities with regression tests. Update every tested-version reference, escaped regex forms such as `0\.163\.0` included (`git grep -n 163`), but keep statements about the version that introduced a behavior. With the new CLI, run `node --test` (`tests/prompt-budget.test.mjs` flags changed tools, request size, or features for router models; review each change before updating expectations), the installer, and `node install.mjs --verify`.
 5. `git tag -a codex-<new>` on the verified commit; it is the fallback in `docs/operations.md`, "Return to an earlier Codex version". Move it with `git tag -f -a` when a later commit passes the same checks. Before raising the pin, `codex-<old>` must mark the last commit verified with the old version. Tags stay local until pushed.
 
-## Validate and document
+---
+
+### Validate and document
 
 - Router behavior change: focused regression test in `tests/unified-router.test.mjs`, then `node --test`, which also checks the rendered prompts in catalog entries.
 - Shell edits: `bash -n` on each changed script. CI (`.github/workflows/ci.yml`) also checks JavaScript and PowerShell syntax and the model JSON.
-- Docs: README brief, details in `docs/`; docs-only changes need link and fact checks, not a full test run. Shape: section leads of two or three sentences at most; tables only for tabular data, run-in lists otherwise; explanation before a code block, no comments inside; at most one alert per section; each link once per page.
+- Docs: README brief, details in `docs/`; docs-only changes need link and fact checks, not a full test run. Shape: top-level sections are `###` headings under a `---` rule, since GitHub underlines `#` and `##`; section leads of two or three sentences at most; tables only for tabular data, run-in lists otherwise; explanation before a code block, no comments inside; at most one alert per section; each link once per page.
 - Commits: a Conventional Commits subject of at most 72 characters, a blank line, then a body hard-wrapped at 72; check with `git log --format=%B origin/main..main | awk 'length > 72'`.
 - Deploy only when the task includes it. Edit sources first; the running router is an installed copy under the Codex home. Installing changes live configuration and restarts the router and a running Codex daemon, interrupting active requests. Then run `node install.mjs --verify`; local health does not prove upstream model access.

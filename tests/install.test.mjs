@@ -257,7 +257,7 @@ test('install.mjs --help lists every installer setting in docs/setup.md, and err
   assert.equal(entry(['-h']).stdout, help.stdout);
   assert.match(help.stdout, /^Examples:$/m);
   const setup = readFileSync(join(root, 'docs', 'setup.md'), 'utf8');
-  const table = setup.slice(setup.indexOf('### Installer settings'), setup.indexOf('### Codex version'));
+  const table = setup.slice(setup.indexOf('#### Installer settings'), setup.indexOf('#### Codex version'));
   const settings = [...table.matchAll(/^\| `([^` ]+)/gm)].map(match => match[1]);
   assert.ok(settings.length >= 10, settings.join(' '));
   for (const setting of settings) assert.match(help.stdout, new RegExp(`^ {2}${setting}\\b`, 'm'), setting);

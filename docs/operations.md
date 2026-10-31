@@ -9,7 +9,9 @@ Run, check, debug, and roll back the router. The router and Codex's app-server d
 | Changing the router's installed code or service environment by hand | The router; see [Service management](#service-management) |
 | Switching models in a thread on the unified provider | Nothing |
 
-## Verify an installation
+---
+
+### Verify an installation
 
 ```sh
 node install.mjs --verify
@@ -26,7 +28,7 @@ The verifier does not check upstream keys or model access.
 
 ---
 
-## Service management
+### Service management
 
 | Platform | Status | Restart | Logs (`info`, `error`) |
 | --- | --- | --- | --- |
@@ -39,7 +41,7 @@ The verifier does not check upstream keys or model access.
 
 ---
 
-## Install without automatic startup
+### Install without automatic startup
 
 | Command | Does |
 | --- | --- |
@@ -50,7 +52,7 @@ Both still need Codex and an OpenRouter key; pass `--api-key-file` when no termi
 
 ---
 
-## Structured logs
+### Structured logs
 
 The router writes one JSON object per line, on every platform. Logs never include request or response bodies, authorization headers, API keys, the router token, cookies, or environment values.
 
@@ -63,7 +65,7 @@ The router writes one JSON object per line, on every platform. Logs never includ
 - **Where to set it:** `unified-router/openrouter.env`, which the installer keeps, or the service environment, which it regenerates.
 - **Correlation:** one request's events share a `requestId`; upstream events add `generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when the headers are present.
 
-### Read the logs
+#### Read the logs
 
 Each platform keeps the logs in its own place; see [Service management](#service-management). Define a `logs` function once, and the examples on this page run unchanged with [`jq`](https://jqlang.org/), which the router itself does not need; `info` events need `CODEX_ROUTER_LOG_LEVEL=info`.
 
@@ -115,11 +117,11 @@ logs | Where-Object {
 }
 ```
 
-### Events
+#### Events
 
 Each table answers a question with the event and fields to look for, and each example uses the `logs` function above.
 
-#### Router
+##### Router
 
 | To find out | Look for |
 | --- | --- |
@@ -133,7 +135,7 @@ logs | jq -c 'select(.event == "router.ready")
      revision}'
 ```
 
-#### Requests
+##### Requests
 
 | To find out | Look for |
 | --- | --- |
@@ -149,7 +151,7 @@ logs | jq -c 'select(.event == "request.forwarded")
      promptCachingAdded}'
 ```
 
-#### Upstream
+##### Upstream
 
 | To find out | Look for |
 | --- | --- |
@@ -162,7 +164,7 @@ logs | jq -c 'select(.event == "upstream.usage")
   | {model, usage}'
 ```
 
-#### Web search
+##### Web search
 
 | To find out | Look for |
 | --- | --- |
@@ -177,7 +179,7 @@ logs | jq -c 'select(.event == "web_search.executed")
   | {results, failed, durationMs, cost}'
 ```
 
-#### OpenRouter
+##### OpenRouter
 
 | To find out | Look for |
 | --- | --- |
@@ -190,7 +192,7 @@ logs | jq -c 'select(.event == "web_search.executed")
 logs | jq -c 'select(.event // "" | startswith("openrouter."))'
 ```
 
-#### Anthropic
+##### Anthropic
 
 | To find out | Look for |
 | --- | --- |
@@ -204,7 +206,7 @@ logs | jq -c 'select(.event == "anthropic.refused")
   | {model, reason, fallback}'
 ```
 
-#### Sessions
+##### Sessions
 
 | To find out | Look for |
 | --- | --- |
@@ -216,7 +218,7 @@ logs | jq -c 'select(.event == "session.provider_isolation")
   | {model, recordedSide, side}'
 ```
 
-### Rejected steps
+#### Rejected steps
 
 | Rejection | What happens |
 | --- | --- |
@@ -231,7 +233,7 @@ logs | jq -c 'select(.event == "session.provider_isolation")
 [router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.
 ```
 
-### Capture rejected requests
+#### Capture rejected requests
 
 Off by default. Set the directory in `~/.codex/unified-router/openrouter.env` or the service environment, and restart the router:
 
@@ -246,7 +248,7 @@ CODEX_ROUTER_REJECTED_REQUEST_DIR=<private directory>
 > [!WARNING]
 > The files can contain the whole conversation. Keep them out of synchronized folders such as Dropbox, iCloud Drive, OneDrive, or a network share, and out of commits and messages.
 
-### Cache and token accounting
+#### Cache and token accounting
 
 - **Source of truth:** Codex's session JSONL. Each `token_usage_record` holds `input_tokens`, `cached_input_tokens`, and `cache_write_input_tokens`, and the file names the active model.
 - **Correlation:** router events carry the same `sessionId` as the session file's `session_id` (Codex's `session-id` header, `session_id` in earlier versions). Keep the session file and the router logs together, but never append the logs to the session file.
@@ -265,14 +267,14 @@ jq -s '
 
 ---
 
-## Rollback
+### Rollback
 
 Each installer run prints its backup directory; stop the router and its automatic startup before restoring.
 
 > [!IMPORTANT]
 > Backups cover Codex's configuration and catalog, not the router's code (`unified-router/*.mjs`) or `unified-router/openrouter.env`. Copy those before upgrading if you may want them back.
 
-### Return to an earlier Codex version
+#### Return to an earlier Codex version
 
 Each `codex-<version>` tag marks the last commit verified with that Codex version; the [tags page](https://github.com/mirzahusadzic/codex-unified-model-router/tags) and `git tag -l 'codex-*'` list them.
 
@@ -288,7 +290,7 @@ node install.mjs --verify
 - **Kept:** the stored key, the local token, and the isolation records.
 - **To come back:** `git checkout main`, install the Codex version it is tested with, and rerun `node install.mjs`.
 
-### Stop automatic startup
+#### Stop automatic startup
 
 macOS:
 
@@ -328,7 +330,7 @@ $startupEntry = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Unifi
 Remove-Item -LiteralPath $startupEntry
 ```
 
-### Restore configuration
+#### Restore configuration
 
 Restore only files present in the backup; a missing one did not exist before that installation. On macOS and Linux, with the backup path the installer printed:
 
@@ -351,7 +353,7 @@ cp -p "$backup_dir/models.json" "$HOME/.codex/models.json"
 
 ---
 
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | Check |
 | --- | --- |

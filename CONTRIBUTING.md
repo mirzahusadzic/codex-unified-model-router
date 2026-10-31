@@ -2,7 +2,9 @@
 
 Thanks for helping improve the router. It is deliberately small: a local compatibility layer that fits Codex's existing model picker and thread workflow. Read [AGENTS.md](AGENTS.md) first; it lists where each kind of change belongs and the behaviors every change must preserve.
 
-## Development
+---
+
+### Development
 
 Node.js 20 or later is the only requirement; there are no dependencies to install and no build step.
 
@@ -14,7 +16,9 @@ Node.js 20 or later is the only requirement; there are no dependencies to instal
 
 The installed router is a separate copy under your Codex home directory. Run `node install.mjs` to try a change in Codex, and `node install.mjs --verify` afterward.
 
-## Project layout
+---
+
+### Project layout
 
 | Path | Contents |
 | --- | --- |
@@ -34,7 +38,7 @@ The installed router is a separate copy under your Codex home directory. Run `no
 | `tests/` | `node --test` suites, plus a Windows access-control test; see [Tests](#tests). |
 | `docs/` | [Setup and configuration](docs/setup.md), [how routing works](docs/routing.md), and [services and troubleshooting](docs/operations.md). |
 
-### Scripts
+#### Scripts
 
 Scripts you run:
 
@@ -63,7 +67,7 @@ Helpers the installers and verifiers call:
 
 Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for OpenRouter entries, and `scripts/toml-lines.mjs` reads TOML line by line without mistaking strings or comments for keys, tables, or markers.
 
-### Tests
+#### Tests
 
 `node --test` runs every `.test.mjs` file on macOS, Linux, and Windows. The tests use synthetic upstreams and need no credentials or network. `tests/prompt-budget.test.mjs` also needs the tested Codex CLI and skips without it, as in CI.
 
@@ -83,14 +87,18 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 | `tests/prompt-budget.test.mjs` | What the installed Codex sends router models under the installer's configuration, through a local fake upstream: the tool list, request and tool-definition sizes, the features it turns on, and that apps and guardian stay off. Skips without the tested Codex CLI or reviewed expectations for the platform. | macOS (reviewed); others skip |
 | `platform/windows/private-path.test.ps1` | Current-user-only access control lists on Windows. CI runs it in a separate step. | Windows |
 
-## Making changes
+---
+
+### Making changes
 
 - **Router behavior:** add a focused regression test in `tests/unified-router.test.mjs`.
 - **New OpenRouter model:** copy `catalog/deepseek-model.json`, use `openrouter/<upstream-model-slug>`, and review every capability: context limits, reasoning levels, tool support, and prompts. A catalog entry alone does not prove compatibility, so try the model in Codex before proposing it.
 - **Installers:** keep `platform/unix/install.sh` and `platform/windows/install.ps1` aligned, including backups and preservation of unrelated configuration.
 - **Documentation:** keep the README brief and put details in `docs/`.
 
-## Pull requests
+---
+
+### Pull requests
 
 - Keep each pull request to one focused change, with a [Conventional Commits](https://www.conventionalcommits.org/) message such as `fix:`, `feat:`, or `docs:`.
 - Describe how you verified the change, including any live run.

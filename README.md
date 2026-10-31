@@ -17,7 +17,9 @@ A loopback-only router that lets one Codex thread switch between OpenAI, DeepSee
 - **Local operations:** Loopback binding, token authentication, private credential storage, launchd/systemd/Windows startup, backups, verifiers, and daemon version pinning.
 - **Minimal footprint:** Node.js 20+, zero npm runtime dependencies.
 
-## How it works
+---
+
+### How it works
 
 Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI and Claude models never share a tracked Codex session with training-tier models; requests without a session ID are not tracked. [How routing works](docs/routing.md#routing-and-compatibility) has the details.
 
@@ -123,7 +125,9 @@ flowchart TB
 
 <p align="center"><em>All requests go through the router; labels show the route. A dotted line joins models the router never mixes in one session.</em></p>
 
-## Install
+---
+
+### Install
 
 Requires Codex CLI (tested with **0.166.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
 
@@ -137,7 +141,7 @@ node install.mjs
 node install.mjs --verify
 ```
 
-### Keys
+#### Keys
 
 | Key | Serves |
 | --- | --- |
@@ -161,7 +165,9 @@ On an existing Codex configuration, the installer asks before merging into it an
 
 **Start a new thread after installation.** The installer restarts a running Codex app-server daemon for you and pins it to the CLI's Codex, so it no longer updates itself to versions the router has not been tested with ([why](docs/setup.md#daemon-updates)); restart other open Codex windows yourself ([details](docs/setup.md#activate-the-provider)).
 
-## Use
+---
+
+### Use
 
 Start Codex with the default, DeepSeek V4.1 Flash 1017, or pick another model with `-m`:
 
@@ -186,7 +192,9 @@ Muse and the Ultra Spark workers use Meta's contributor tier, which trains on ev
 
 Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
-## Develop
+---
+
+### Develop
 
 ```sh
 node --test
