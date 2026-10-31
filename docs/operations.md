@@ -1,6 +1,13 @@
 # Services and troubleshooting
 
-The router and Codex's app-server daemon are separate processes. Restart the router after updating its installed code or service environment. The installer restarts a running Codex daemon so it reloads provider configuration and the catalog, and pins it to the CLI's Codex so it stops updating itself (see [Daemon updates](setup.md#daemon-updates)); restart it yourself after `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0`, or a manual configuration change.
+Run, check, debug, and roll back the router. The router and Codex's app-server daemon are separate processes, and restarting either interrupts its active requests.
+
+| After | Restart |
+| --- | --- |
+| Running the installer | Nothing: it restarts the router and a running Codex daemon, and pins the daemon to the CLI's Codex ([why](setup.md#daemon-updates)) |
+| `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0`, or a manual configuration change | The Codex daemon: `codex app-server daemon restart` |
+| Changing the router's installed code or service environment by hand | The router; see [Service management](#service-management) |
+| Switching models in a thread on the unified provider | Nothing |
 
 ## Verify an installation
 
@@ -8,87 +15,242 @@ The router and Codex's app-server daemon are separate processes. Restart the rou
 node install.mjs --verify
 ```
 
-The verifiers check both the main and OpenRouter-only configurations, matching local tokens, private permissions, the managed apps and agent settings, the catalog and its rendered prompts, that the installed router and every module beside it match this repository, local health, platform startup setup, and that the Codex daemon is pinned to the CLI's Codex. Readiness requires the supported routing policy and revision precondition, with the advertised revision matching the installed router source. Redirects and stale running copies fail verification. This does not validate upstream credentials or model access.
+The verifier checks four parts of the installation:
+
+- **Configuration:** The main and OpenRouter-only configurations, their matching local tokens and private permissions, and the managed apps and agent settings
+- **Catalog:** The entries and their rendered prompts
+- **Router:** The installed router and every module beside it match this repository; local health advertises the supported routing policy, the revision precondition, and the installed source's revision. Redirects and stale running copies fail.
+- **Startup:** The platform's startup setup, and the Codex daemon pinned to the CLI's Codex
+
+The verifier does not check upstream keys or model access.
+
+---
 
 ## Service management
 
-### macOS
+| Platform | Status | Restart | Logs (`info`, `error`) |
+| --- | --- | --- | --- |
+| macOS | `launchctl print "gui/$(id -u)/com.mirza.codex-unified-router"` | `launchctl kickstart -k "gui/$(id -u)/com.mirza.codex-unified-router"` | `~/Library/Logs/codex-unified-router.log`, `~/Library/Logs/codex-unified-router.error.log` |
+| Linux | `systemctl --user status codex-unified-router.service` | `systemctl --user restart codex-unified-router.service` | Both in the user journal: `journalctl --user -u codex-unified-router.service -f` |
+| Windows | None; check the log files | Rerun the installer | `router.log`, `router.error.log` in `%USERPROFILE%\.codex\unified-router` (or `%CODEX_HOME%\unified-router`) |
 
-```sh
-launchctl print "gui/$(id -u)/com.mirza.codex-unified-router"
-launchctl kickstart -k "gui/$(id -u)/com.mirza.codex-unified-router"
-```
+- **Linux after logout:** `loginctl enable-linger "$USER"` keeps the user service running, if your system policy allows it.
+- **Windows startup:** the installer puts `Codex Unified Router.vbs` in the current user's Startup folder; it starts a hidden supervisor from `unified-router/start-router.cmd`.
 
-Standard output (`info`) and standard error (`error`) logs:
+---
 
-```text
-~/Library/Logs/codex-unified-router.log
-~/Library/Logs/codex-unified-router.error.log
-```
+## Install without automatic startup
 
-### Linux
+| Command | Does |
+| --- | --- |
+| `node install.mjs --no-service` | Writes the configuration and router files, without registering or starting a service |
+| `node install.mjs --verify --no-service` | Checks those files |
 
-```sh
-systemctl --user status codex-unified-router.service
-systemctl --user restart codex-unified-router.service
-journalctl --user -u codex-unified-router.service -f
-```
+Both still need Codex and an OpenRouter key; pass `--api-key-file` when no terminal is available for the prompt.
 
-`journald` captures both standard output and standard error in the user journal. To keep the user service running after logout, enable lingering if your system policy allows it:
-
-```sh
-loginctl enable-linger "$USER"
-```
-
-### Windows
-
-The installer creates `Codex Unified Router.vbs` in the current user's Startup folder. It launches a hidden supervisor from `unified-router/start-router.cmd`. Rerun the installer to update and restart it.
-
-Standard output (`info`) and standard error (`error`) logs are under the installation directory, which defaults to:
-
-```text
-%USERPROFILE%\.codex\unified-router\router.log
-%USERPROFILE%\.codex\unified-router\router.error.log
-```
+---
 
 ## Structured logs
 
-The router emits newline-delimited JSON on every platform. Logging defaults to `error`; set `CODEX_ROUTER_LOG_LEVEL=info` in `unified-router/openrouter.env` (kept when you rerun the installer) or in the router service environment (regenerated by the installer) to record successful requests and timings. `debug` is also accepted for future diagnostic detail. `error` records are written to standard error, while `info` and `debug` records use standard output. Request-scoped events share a `requestId`, and upstream responses include `generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when those headers are present.
+The router writes one JSON object per line, on every platform. Logs never include request or response bodies, authorization headers, API keys, the router token, cookies, or environment values.
 
-- `router.ready` and `router.shutdown`: listener address, OpenRouter and Anthropic key availability, running source `revision`, and shutdown signal. `anthropic.sign_in_token_ignored` reports that `ANTHROPIC_API_KEY` held a Claude sign-in token, which the router does not use.
-- `request.forwarded`: model route, attempt, payload SHA-256, routing policy, `providerOrder` when an endpoint preference applies, `structuredOutputAdapted` when a DeepSeek schema request was sent as JSON mode, `promptCachingAdded` when the router added Claude's top-level `cache_control`, whether unsupported OpenRouter response state was reset, payload byte length, input item count, and any tool-history repair summary.
-- `tool_arguments.normalized`: a finished tool call from an OpenRouter model had whole-number floats in its arguments, which the router rewrote as integers; carries the tool name.
-- `web_search.executed`: a search the router ran for an OpenRouter model: result count, whether it failed, duration, and OpenRouter's `cost`; never the query. `web_search.continuation` reports the status of the request that continues a response with the results; `web_search.continuation_failed` that the continuation broke off, in which case Codex receives a `[router diagnostic]` completion; `web_search.stream_passthrough` that an oversized event switched the stream to plain pass-through; `web_search.limit_reached` that a step asked for more than eight searches and the rest were dropped; `web_search.persist_failed` that the results could not be saved; and `web_search.load_failed` that the saved results could not be read at startup, so the model sees earlier searches as no longer available.
-- `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records, and native tool declarations, normalized before an OpenRouter request.
-- `openrouter.request_rejected`: pre-stream HTTP 400 details from OpenRouter or Anthropic's API (`provider`), including payload hash, input count, generation and request identifiers, `contextOverflow`, and the response-body hash without the body itself.
-- `openrouter.refused`: OpenRouter answered HTTP 401, 402, 403, or 404, and Codex received a `[router diagnostic]` instead; `dataPolicy` is true when a session that used a native OpenAI or Claude model found no endpoint that does not collect data.
-- `anthropic.refused`: Anthropic's API refused a Claude request in a way no retry fixes; `reason` is the error type, `billing` for spent credits or a spend limit you set, or `enforced_spend_limit_reached`, and `fallback` says whether the request went on to OpenRouter; `continuation` marks a refusal of the step after a web search, which fails the response so Codex retries it on OpenRouter. New sessions use OpenRouter for an hour afterwards.
-- `anthropic.stop`: why Claude ended a response on Anthropic's API (`stopReason`, and the `category` of a refusal); `anthropic.stream_error` reports an error event in the middle of Claude's stream and the failure code Codex received.
-- `anthropic.thinking_dropped`: Anthropic's API left out earlier thinking blocks whose conversation had changed, such as after compaction or a model switch; carries the number of blocks and the reasons.
-- `claude.routes_persist_failed` and `claude.routes_load_failed`: the record of each session's Claude route could not be saved or read at startup, so sessions pick their route again.
-- `session.provider_isolation`: a request was refused because its session already used the other side; includes the recorded and requested sides. `session.isolation_persist_failed` reports that the side record could not be saved, and `session.isolation_load_failed` that it could not be read at startup, so every session starts again without a recorded side.
-- `openrouter.rejection_capture_failed` and `openrouter.rejection_capture_refused`: an opted-in body capture could not be written, or was refused because its Windows location is not the private router directory.
-- `openrouter.recovery_attempt`: the single bounded retry, its payload hash, compaction strategy, counts of retained, dropped, and dropped encrypted-reasoning items, and `omissionNotice` when the retry told the model that history was omitted. A retry runs only when the recovery payload differs from the rejected request.
-- `openrouter.fallback_completion`: the router returned a completed diagnostic response after recovery failed, allowing Codex to preserve the thread instead of aborting it.
-- `upstream.response_started`: upstream HTTP status, time to headers, and trace identifiers (`error` level when `status >= 400`).
-- `upstream.response_finished`: final upstream HTTP status, total upstream duration, and trace identifiers (`error` level when `status >= 400`).
-- `upstream.usage`: token counts from the final event of a successful stream (`info` level only), with the response status and trace identifiers. `usage` keeps only the numbers the provider reports, such as `input_tokens`, `input_tokens_details.cached_tokens` and `cache_write_tokens`, `output_tokens`, and OpenRouter's `cost` in credits; compare `cached_tokens` with `input_tokens` to see the cache hit rate.
-- `upstream.error`: upstream transport or stream failure code (`errorCode`) and duration.
-- `request.finished` and `request.aborted`: local HTTP status (`error` level when `status >= 400`) or client disconnect before completion, with total request duration.
+| `CODEX_ROUTER_LOG_LEVEL` | Records |
+| --- | --- |
+| `error` (default) | Errors, on standard error |
+| `info` | Also successful requests and timings, on standard output |
+| `debug` | Accepted, for future diagnostic detail |
 
-Logs never include request or response bodies, authorization headers, API keys, local router tokens, cookies, or environment values.
+- **Where to set it:** `unified-router/openrouter.env`, which the installer keeps, or the service environment, which it regenerates.
+- **Correlation:** one request's events share a `requestId`; upstream events add `generationId`, `providerName`, `upstreamRequestId`, and `cloudflareRayId` when the headers are present.
 
-For a pre-stream OpenRouter 400 that reports a context-window overflow, the router does not retry. Codex receives a streamed `response.failed` with code `context_length_exceeded` and compacts the thread as it would for a native model; `openrouter.request_rejected` records `contextOverflow: true`.
+### Read the logs
 
-The same rules apply to a pre-stream 400 from Anthropic's API, where the retry leaves out Claude's thinking blocks and the diagnostic names Anthropic. Refusals that no retry fixes, such as spent credits, move the request to OpenRouter instead; see [Claude Sonnet 5.5 and Claude Opus 5.5](setup.md#claude-sonnet-55-and-claude-opus-55).
+Each platform keeps the logs in its own place; see [Service management](#service-management). Define a `logs` function once, and the examples on this page run unchanged with [`jq`](https://jqlang.org/), which the router itself does not need; `info` events need `CODEX_ROUTER_LOG_LEVEL=info`.
 
-For any other pre-stream OpenRouter 400, the router retries once without encrypted reasoning items, which are bound to the provider that produced them. Histories over 80 items or 1 MiB are also compacted to Codex's context (the first developer message and the user and developer messages that follow it, up to 16; they carry injected `AGENTS.md` and environment context and, in a thread Codex has compacted, the summary), the current developer message, the latest user message, and the newest items that fit those limits; other earlier items are dropped for that retry. When it drops items, the retry adds a developer message starting `[router note]` right after that context, telling the model that earlier history was omitted and to re-check before relying on it. No retry runs if neither change applies. If the second request is also rejected, Codex receives a normal completed response containing `[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.` The upstream rejection remains visible in the error log; it is not represented as successful model output.
+The function keeps only the router's JSON lines, because a crashed Node process can leave a stack trace among them. On macOS, it reads both log files:
 
-To retain rejected request bodies and up to 256 KiB of each response body for diagnosis, opt in by setting `CODEX_ROUTER_REJECTED_REQUEST_DIR` in `unified-router/openrouter.env` or the router service environment and restarting the router. On macOS and Linux, the router creates that directory with mode `700` and writes each request/response pair with mode `600`. File modes do not restrict access on Windows, so there the directory must be `unified-router` itself, whose current-user-only access list new files inherit, not a subdirectory that could carry its own access list; the router refuses other locations and logs `openrouter.rejection_capture_refused`. Files are named `<requestId>-attempt-<n>.request.json` and `.response.json`. For Claude on Anthropic's API, the request file holds the Responses request as Codex sent it, before the router translated it into a Messages request; the logged payload hash and size describe the same body. This setting is off by default. Do not use a synchronized folder such as Dropbox, iCloud Drive, OneDrive, or a network share, and do not commit or share these files; they can contain the complete conversation.
+```sh
+logs() {
+  cat ~/Library/Logs/codex-unified-router{,.error}.log \
+    | grep '^{"'
+}
+```
 
-Codex's session JSONL remains the source of truth for cache and token accounting. Each `token_usage_record` contains `cached_input_tokens`, `input_tokens`, and `cache_write_input_tokens`; the same file identifies the active model. Router records include the same opaque `sessionId` from Codex's `session-id` header (`session_id` in earlier Codex versions), so retain the session file and the router logs together when investigating cache behavior. Do not append router logs to the session file.
+On Linux, it reads the user journal:
 
-The examples below use [`jq`](https://jqlang.org/), which the router itself does not need. For example, calculate a session's overall cache-read share:
+```sh
+logs() {
+  journalctl --user -u codex-unified-router.service -o cat \
+    | grep '^{"'
+}
+```
+
+Tool-history repairs and errors:
+
+```sh
+logs | jq -c 'select(.event == "history.repaired"
+  or .level == "error")'
+```
+
+Every event of one request:
+
+```sh
+logs | jq -c --arg id "<request-id>" \
+  'select(.requestId == $id)'
+```
+
+On Windows, a PowerShell `logs` returns the parsed events, which `Where-Object` filters:
+
+```powershell
+function logs {
+  $codexHome = $env:CODEX_HOME
+  if (-not $codexHome) { $codexHome = "$HOME\.codex" }
+  $dir = Join-Path $codexHome 'unified-router'
+  Get-Content "$dir\router.log", "$dir\router.error.log" |
+    Where-Object { $_.StartsWith('{"') } |
+    ForEach-Object { $_ | ConvertFrom-Json }
+}
+logs | Where-Object {
+  $_.event -eq 'history.repaired' -or $_.level -eq 'error'
+}
+```
+
+### Events
+
+Each table answers a question with the event and fields to look for, and each example uses the `logs` function above.
+
+#### Router
+
+| To find out | Look for |
+| --- | --- |
+| Did the router start, with which keys and code? | `router.ready`: listener address, which keys are set, the running source `revision` |
+| Why did the router stop? | `router.shutdown`: the signal |
+
+```sh
+logs | jq -c 'select(.event == "router.ready")
+  | {port, openrouterConfigured, anthropicConfigured,
+     revision}'
+```
+
+#### Requests
+
+| To find out | Look for |
+| --- | --- |
+| What went upstream? | `request.forwarded`: route, model, attempt, payload SHA-256, byte length, input item count, routing policy |
+| Did the router change the request? | `request.forwarded`: `providerOrder`, `dataCollection`, `structuredOutputAdapted` (DeepSeek JSON mode), `promptCachingAdded` (Claude's `cache_control`), `webSearchOverride`, a reset of OpenRouter response state, and tool-history repairs |
+| Which tool records were repaired? | `history.repaired`: invalid, duplicate, unanswered, or orphaned tool records, and native tool declarations, before an OpenRouter request |
+| Were numbers in tool arguments rewritten? | `tool_arguments.normalized`: the tool whose whole-number floats became integers |
+| How did the request end, and how long did it take? | `request.finished`: local HTTP status (`error` level when `status >= 400`) and total duration; `request.aborted`: the client disconnected first |
+
+```sh
+logs | jq -c 'select(.event == "request.forwarded")
+  | {model, attempt, providerOrder, dataCollection,
+     promptCachingAdded}'
+```
+
+#### Upstream
+
+| To find out | Look for |
+| --- | --- |
+| How fast did the upstream answer? | `upstream.response_started`: status and time to headers; `upstream.response_finished`: final status and total duration; both with trace identifiers, at `error` level when `status >= 400` |
+| How many tokens, and how many were cached? | `upstream.usage` (`info` level only): the provider's own counts, such as `input_tokens`, `input_tokens_details.cached_tokens`, `cache_write_tokens`, `output_tokens`, and OpenRouter's `cost` in credits; `cached_tokens` over `input_tokens` is the cache hit rate |
+| Did the connection fail? | `upstream.error`: `errorCode` and duration |
+
+```sh
+logs | jq -c 'select(.event == "upstream.usage")
+  | {model, usage}'
+```
+
+#### Web search
+
+| To find out | Look for |
+| --- | --- |
+| Did a search run, and what did it cost? | `web_search.executed`: result count, failure, duration, and OpenRouter's `cost`; never the query |
+| Did the response continue after the search? | `web_search.continuation`: its status; `web_search.continuation_failed`: it broke off, and Codex received a `[router diagnostic]` |
+| Were searches dropped? | `web_search.limit_reached`: a step asked for more than eight |
+| Why did the stream stop being rewritten? | `web_search.stream_passthrough`: an oversized event switched it to plain pass-through |
+| Were saved results lost? | `web_search.persist_failed`: not saved; `web_search.load_failed`: not read at startup, so earlier searches show as no longer available |
+
+```sh
+logs | jq -c 'select(.event == "web_search.executed")
+  | {results, failed, durationMs, cost}'
+```
+
+#### OpenRouter
+
+| To find out | Look for |
+| --- | --- |
+| Why was a step rejected? | `openrouter.request_rejected`: a pre-stream 400 from OpenRouter or Anthropic's API (`provider`), with payload hash, input count, generation and request identifiers, `contextOverflow`, and the response body's hash, never the body |
+| What did the retry send? | `openrouter.recovery_attempt`: payload hash, compaction strategy, counts of retained, dropped, and dropped encrypted-reasoning items, and `omissionNotice` |
+| Why did Codex get a diagnostic instead of an answer? | `openrouter.fallback_completion`: the retry failed too; `openrouter.refused`: HTTP 401, 402, 403, or 404, with `dataPolicy` true when, after a native OpenAI or Claude model, no endpoint that does not collect data was available |
+| Why is a captured body missing? | `openrouter.rejection_capture_failed`: it could not be written; `openrouter.rejection_capture_refused`: its Windows location is not the private router directory |
+
+```sh
+logs | jq -c 'select(.event // "" | startswith("openrouter."))'
+```
+
+#### Anthropic
+
+| To find out | Look for |
+| --- | --- |
+| Did Claude fall back to OpenRouter? | `anthropic.refused`: `reason` (`billing` for spent credits or your spend limit, `enforced_spend_limit_reached`, or another error type), `fallback`, and `continuation` for the step after a web search; Claude requests then use OpenRouter for an hour |
+| Why did Claude stop? | `anthropic.stop`: `stopReason`, and a refusal's `category`; `anthropic.stream_error`: an error in the middle of the stream, and the failure code Codex received |
+| Was earlier thinking dropped? | `anthropic.thinking_dropped`: block count and reasons, such as compaction or a model switch |
+| Is the key a sign-in token? | `anthropic.sign_in_token_ignored`: the router does not use it |
+
+```sh
+logs | jq -c 'select(.event == "anthropic.refused")
+  | {model, reason, fallback}'
+```
+
+#### Sessions
+
+| To find out | Look for |
+| --- | --- |
+| Why was a request refused with HTTP 409? | `session.provider_isolation`: the recorded and requested sides; `session.forked_lead_context`: a spawned agent sent an Ultra Spark lead's tool call IDs to a training-tier model, with the model and the IDs |
+| Were session records lost? | `session.isolation_persist_failed`, `session.isolation_load_failed`: sides not saved, or not read at startup, so sessions start without one; `claude.routes_persist_failed`, `claude.routes_load_failed`: the same for Claude routes, so sessions pick their route again |
+
+```sh
+logs | jq -c 'select(.event == "session.provider_isolation")
+  | {model, recordedSide, side}'
+```
+
+### Rejected steps
+
+| Rejection | What happens |
+| --- | --- |
+| Pre-stream 400 for a context-window overflow | No retry. Codex receives a streamed `response.failed` with `context_length_exceeded` and compacts, as for a native model; `openrouter.request_rejected` records `contextOverflow: true`. |
+| Any other pre-stream 400 | One retry without encrypted reasoning items, which are bound to the provider that produced them, and with a long history trimmed (next row). No retry when neither changes the request. |
+| A history over 80 items or 1 MiB | The retry keeps Codex's context (the first developer message and up to 16 user and developer messages after it, which carry `AGENTS.md`, environment context, and any compaction summary), the current developer message, the latest user message, and the newest items that fit. A `[router note]` after the context tells the model that earlier history was omitted. |
+| The retry is rejected too | Codex receives a completed response with the diagnostic below. The rejection stays in the error log, never as model output. |
+| A pre-stream 400 from Anthropic's API | The same rules; the retry leaves out Claude's thinking, and the diagnostic names Anthropic. |
+| An Anthropic refusal no retry fixes, such as spent credits | The request moves to OpenRouter; see [Claude's two routes](routing.md#claudes-two-routes). |
+
+```text
+[router diagnostic] OpenRouter rejected this step. The thread is intact; retry or start a new thread.
+```
+
+### Capture rejected requests
+
+Off by default. Set the directory in `~/.codex/unified-router/openrouter.env` or the service environment, and restart the router:
+
+```sh
+CODEX_ROUTER_REJECTED_REQUEST_DIR=<private directory>
+```
+
+- **What it keeps:** each rejected request body and up to 256 KiB of its response body, as `<requestId>-attempt-<n>.request.json` and `.response.json`. For Claude on Anthropic's API, the request file is Codex's Responses request before translation; the logged payload hash and size describe that body.
+- **macOS and Linux:** the router creates the directory with mode `700` and each file with mode `600`.
+- **Windows:** file modes do not restrict access, so only `unified-router` itself is accepted, and new files inherit its current-user-only access list. Other locations are refused with `openrouter.rejection_capture_refused`.
+
+> [!WARNING]
+> The files can contain the whole conversation. Keep them out of synchronized folders such as Dropbox, iCloud Drive, OneDrive, or a network share, and out of commits and messages.
+
+### Cache and token accounting
+
+- **Source of truth:** Codex's session JSONL. Each `token_usage_record` holds `input_tokens`, `cached_input_tokens`, and `cache_write_input_tokens`, and the file names the active model.
+- **Correlation:** router events carry the same `sessionId` as the session file's `session_id` (Codex's `session-id` header, `session_id` in earlier versions). Keep the session file and the router logs together, but never append the logs to the session file.
+
+A session's cache-read share:
 
 ```sh
 jq -s '
@@ -100,67 +262,18 @@ jq -s '
 ' ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
 ```
 
-Correlate router events with that session by filtering for its `sessionId`. The session file's `session_id` and router log's `sessionId` use the same value.
-
-Because `info` and `error` events use standard output and standard error respectively, macOS and Windows write them to separate `.log` and `.error.log` files, while Linux records both in `journald`. Pass both files when correlating a `requestId` across levels on file-based setups. The `info` examples below require `CODEX_ROUTER_LOG_LEVEL=info`:
-
-```sh
-# Inspect tool-history repairs (stdout) or error events (stderr) on macOS
-jq -c 'select(.event == "history.repaired")' ~/Library/Logs/codex-unified-router.log
-jq -c 'select(.level == "error")' ~/Library/Logs/codex-unified-router.error.log
-
-# Correlate all events for one requestId across stdout and stderr log files
-jq -c --arg id "<request-id>" 'select(.requestId == $id)' \
-  ~/Library/Logs/codex-unified-router.log \
-  ~/Library/Logs/codex-unified-router.error.log
-
-# Filter the combined stream from the Linux user journal
-journalctl --user -u codex-unified-router.service -o cat \
-  | jq -c 'select(.event == "history.repaired" or .level == "error")'
-```
-
-On Windows PowerShell, inspect `router.log` and `router.error.log` under `$HOME\.codex\unified-router` (or `$env:CODEX_HOME\unified-router`):
-
-```powershell
-Get-Content "$HOME\.codex\unified-router\router.log", "$HOME\.codex\unified-router\router.error.log" |
-  ForEach-Object { $_ | ConvertFrom-Json } |
-  Where-Object { $_.event -eq 'history.repaired' -or $_.level -eq 'error' }
-```
-
-## Troubleshooting
-
-| Symptom | Check |
-| --- | --- |
-| Something broke after a Codex update | Check `codex --version` and `codex app-server daemon version` against the tested version in [Codex version](setup.md#codex-version). Install it with `npm install -g @openai/codex@0.166.0`, then rerun `node install.mjs`, which also pins the daemon to that version. |
-| A new model is missing from `/model` | Rerun the installer to rebuild the catalog, then restart Codex. |
-| OpenAI models are missing from `/model` | They are hidden without an active ChatGPT plan. Install with `CODEX_ROUTER_NATIVE_MODELS=show` to list them anyway. |
-| Ultra Spark does not spawn workers | Select `ultra-spark/deepseek-v4.1-flash-1017` (shown as "· Ultra Spark") in a new thread, and rerun the installer so the catalog carries the current policy. Small single-step tasks run without workers by design. |
-| HTTP 409 `provider_isolation` | The session already used native OpenAI or Claude models, or Muse or Ultra Spark, and the router keeps the two sides apart. Start a new thread for the other side; see [Provider isolation](setup.md#provider-isolation). |
-| Muse requests fail before reaching a model | Allow endpoints that may train on inputs in your OpenRouter privacy settings, and check that OpenRouter guardrails allow the Muse provider. |
-| A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
-| The local endpoint is unavailable | Check the service status and router error log. |
-| Requests fail with HTTP 401 about the router token | The client still has an older configuration: rerun the installer, restart other open Codex windows, and start a new thread. |
-| OpenRouter returns HTTP 401 | Replace the stored key with `node install.mjs --change-api-key`, or `--api-key-file <path>` without a terminal. |
-| Structured output from DeepSeek misses a field or is wrapped in another key | DeepSeek receives the schema as an instruction, not an enforced format; check `structuredOutputAdapted` in `request.forwarded`, and validate the JSON in the caller. Answers often wrapped in a key named after the response format suggest an older installed router, which put that name in the instruction: rerun the installer. The current instruction makes wrapping rare but cannot rule it out. |
-| Switching to OpenAI produces a reasoning-content error | Update and restart the installed router so history normalization is active. |
-| OpenRouter rejects a step | Codex should remain in the thread and show a `[router diagnostic]` completion, or its context-window error if the rejection was an overflow; run `/compact` if Codex does not compact automatically. Correlate `openrouter.request_rejected`, `openrouter.recovery_attempt`, and `openrouter.fallback_completion` by `requestId`. Enable `CODEX_ROUTER_REJECTED_REQUEST_DIR` before reproducing if the body is required. |
-| Replies are slow | Inspect upstream header timings and request durations. Headers can arrive before model output; these timings do not measure first-token latency. |
-
-Restarting either service interrupts its active requests. Changing models inside a thread already using the unified provider does not require a service restart.
-
-## Install without automatic startup
-
-Use `node install.mjs --no-service`. These options write the configuration and router files but do not register or launch a background service.
-
-Use `node install.mjs --verify --no-service` to validate those files. The installer still requires Codex and an OpenRouter key; pass `--api-key-file` when no terminal is available for the prompt.
+---
 
 ## Rollback
 
-The installer prints the backup directory for each run. Stop the running router and its automatic startup before restoring files. The installer backs up Codex configuration and catalog files, but not the router's code (`unified-router/*.mjs`) or `unified-router/openrouter.env`; keep a copy of a router revision and its credentials before upgrading if you need to return to them.
+Each installer run prints its backup directory; stop the router and its automatic startup before restoring.
+
+> [!IMPORTANT]
+> Backups cover Codex's configuration and catalog, not the router's code (`unified-router/*.mjs`) or `unified-router/openrouter.env`. Copy those before upgrading if you may want them back.
 
 ### Return to an earlier Codex version
 
-Each `codex-<version>` tag marks the last router commit verified with that Codex version. The [tags page](https://github.com/mirzahusadzic/codex-unified-model-router/tags) lists them, as does `git tag -l 'codex-*'`. To fall back, install that Codex CLI, check out the matching tag, reinstall, and pin the daemon to the CLI:
+Each `codex-<version>` tag marks the last commit verified with that Codex version; the [tags page](https://github.com/mirzahusadzic/codex-unified-model-router/tags) and `git tag -l 'codex-*'` list them.
 
 ```sh
 npm install -g @openai/codex@0.163.0
@@ -170,18 +283,21 @@ codex app-server daemon update --from-cli --yes
 node install.mjs --verify
 ```
 
-Installers before `codex-0.164.0` do not pin the daemon, and a daemon pinned by a later installer otherwise keeps the later Codex; the `update --from-cli` step pins it to the CLI you installed. The stored key, local token, and isolation records stay in place. To return, run `git checkout main`, install the Codex version it is tested with, and rerun `node install.mjs`.
+- **The `update --from-cli` step** pins the daemon to the CLI you installed: installers before `codex-0.164.0` do not pin it, and a daemon pinned by a later installer keeps the later Codex.
+- **Kept:** the stored key, the local token, and the isolation records.
+- **To come back:** `git checkout main`, install the Codex version it is tested with, and rerun `node install.mjs`.
 
 ### Stop automatic startup
 
-On macOS:
+macOS:
 
 ```sh
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.mirza.codex-unified-router.plist
-mv ~/Library/LaunchAgents/com.mirza.codex-unified-router.plist ~/.Trash/
+plist=~/Library/LaunchAgents/com.mirza.codex-unified-router.plist
+launchctl bootout "gui/$(id -u)" "$plist"
+mv "$plist" ~/.Trash/
 ```
 
-On Linux:
+Linux:
 
 ```sh
 systemctl --user disable --now codex-unified-router.service
@@ -189,7 +305,7 @@ rm ~/.config/systemd/user/codex-unified-router.service
 systemctl --user daemon-reload
 ```
 
-On Windows, stop the running supervisor and router, then remove the Startup entry:
+Windows, stopping the supervisor and the router before removing the Startup entry:
 
 ```powershell
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
@@ -213,7 +329,7 @@ Remove-Item -LiteralPath $startupEntry
 
 ### Restore configuration
 
-For the default macOS/Linux installation, substitute the backup path printed by the installer:
+Restore only files present in the backup; a missing one did not exist before that installation. On macOS and Linux, with the backup path the installer printed:
 
 ```sh
 backup_dir="$HOME/.codex/backups/codex-unified-router-YYYYMMDD-HHMMSS-PID"
@@ -221,12 +337,34 @@ cp -p "$backup_dir/config.toml" "$HOME/.codex/config.toml"
 cp -p "$backup_dir/models.json" "$HOME/.codex/models.json"
 ```
 
-On Windows, copy `config.toml` and `models.json` from the backup into your Codex home directory. If you installed with a custom `CODEX_HOME`, restore files there.
+| File in the backup | Restore |
+| --- | --- |
+| `config.toml`, `models.json` | Always; on Windows or with a custom `CODEX_HOME`, copy them into that Codex home |
+| `unified-openrouter.config.toml` | If you use the OpenRouter-only profile |
+| `deepseek.config.toml.retired` | As `deepseek.config.toml`, only if you still use the old `--profile deepseek` setup |
 
-Restore `unified-openrouter.config.toml` as well if it is present in the chosen backup and you use that profile.
+- **Router threads:** threads keep their provider, and Codex 0.166.0 refuses to continue one under another. Continue a router thread with `-c model_provider=unified` while the router runs, or start a new thread.
+- **Back to before the router:** remove the generated counterpart of each file missing from the backup, and move `unified-router/` aside once the restored configuration no longer refers to it, so the stored key, local token, isolation records, and service files go with it.
+- **The daemon:** the installer pinned it to the CLI's Codex; `codex app-server daemon update` returns it to production updates.
+- **Then:** restart Codex and its daemon (`codex app-server daemon restart`), and start new threads.
 
-If the backup contains `deepseek.config.toml.retired`, restore it as `deepseek.config.toml` only if you still use the old `--profile deepseek` setup.
+---
 
-Threads keep the provider they were created with, and Codex 0.166.0 refuses to continue one under another provider. After restoring a configuration without the router, continue a router thread with `-c model_provider=unified` while the router still runs, or start a new thread.
+## Troubleshooting
 
-Only restore files present in the backup. A missing file did not exist before that installation; remove its generated counterpart if returning to that earlier state. When returning fully to the pre-router state, move `unified-router/` aside after confirming the restored configuration no longer references it, so the stored key, local token, isolation records, and generated service files are not left behind. The installer pinned Codex's daemon to the CLI's Codex; run `codex app-server daemon update` to return it to production updates. Restart Codex, including its shared daemon (`codex app-server daemon restart`), and start new threads to use the restored provider configuration.
+| Symptom | Check |
+| --- | --- |
+| Something broke after a Codex update | Compare `codex --version` and `codex app-server daemon version` with the tested version in [Codex version](setup.md#codex-version). Install it with `npm install -g @openai/codex@0.166.0`, then rerun `node install.mjs`, which also pins the daemon. |
+| A new model is missing from `/model` | Rerun the installer to rebuild the catalog, then restart Codex. |
+| OpenAI models are missing from `/model` | They are hidden without an active ChatGPT plan; install with `CODEX_ROUTER_NATIVE_MODELS=show` to list them anyway. |
+| Ultra Spark does not spawn workers | Select `ultra-spark/deepseek-v4.1-flash-1017` ("· Ultra Spark") in a new thread, and rerun the installer so the catalog carries the current policy. Small single-step tasks run without workers by design. |
+| HTTP 409 `provider_isolation` | The session already used the other side: native OpenAI or Claude, or Muse or Ultra Spark. Start a new thread; see [Provider isolation](routing.md#provider-isolation). |
+| Muse requests fail before reaching a model | Allow endpoints that may train on inputs in your OpenRouter privacy settings, and check that OpenRouter guardrails allow the Muse provider. |
+| A thread still uses the previous provider | [Activate the unified provider](setup.md#activate-the-provider) and start a new thread. |
+| The local endpoint is unavailable | Check the service status and the router's error log. |
+| HTTP 401 about the router token | The client has an older configuration: rerun the installer, restart other open Codex windows, and start a new thread. |
+| OpenRouter returns HTTP 401 | Replace the stored key with `node install.mjs --change-api-key`, or `--api-key-file <path>` without a terminal. |
+| Structured output from DeepSeek misses a field or is wrapped in another key | DeepSeek gets the schema as an instruction, not an enforced format: validate the JSON in the caller, and check `structuredOutputAdapted` in `request.forwarded`. Frequent wrapping in a key named after the response format means an older installed router: rerun the installer. |
+| Switching to OpenAI produces a reasoning-content error | Update and restart the installed router so history normalization is active. |
+| OpenRouter rejects a step | Codex should stay in the thread with a `[router diagnostic]`, or compact after a context-window error; run `/compact` if it does not. Follow `openrouter.request_rejected`, `openrouter.recovery_attempt`, and `openrouter.fallback_completion` by `requestId`, and [capture the body](#capture-rejected-requests) before reproducing if you need it. |
+| Replies are slow | Check upstream header timings and request durations. Headers can arrive before model output, so these do not measure first-token latency. |

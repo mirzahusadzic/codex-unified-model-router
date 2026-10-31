@@ -19,7 +19,7 @@ A loopback-only router that lets one Codex thread switch between OpenAI, DeepSee
 
 ## How it works
 
-Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI and Claude models never share a tracked Codex session with training-tier models; requests without a session ID are not tracked.
+Codex talks to the router as one model provider. The router picks the upstream from the model slug, adapts each request to that provider, and streams the response back. Native OpenAI and Claude models never share a tracked Codex session with training-tier models; requests without a session ID are not tracked. [How routing works](docs/routing.md#routing-and-compatibility) has the details.
 
 **Key:** 🟢 router · 🟡 OpenRouter · 🔵 DeepSeek · 🟠 Anthropic · ⚪ OpenAI · 🔴 training tier, where Meta trains on the inputs.
 
@@ -127,11 +127,13 @@ flowchart TB
 
 Requires Codex CLI (tested with **0.166.0**), **Node.js 20+**, and an **OpenRouter API key**. Windows also needs PowerShell 5.1 or later.
 
+Skip the first command if you already have Codex 0.166.0. The first install asks for your OpenRouter API key:
+
 ```sh
-npm install -g @openai/codex@0.166.0    # skip if you already have Codex 0.166.0
+npm install -g @openai/codex@0.166.0
 git clone https://github.com/mirzahusadzic/codex-unified-model-router.git
 cd codex-unified-model-router
-node install.mjs                        # asks for your OpenRouter API key on the first install
+node install.mjs
 node install.mjs --verify
 ```
 
@@ -140,20 +142,20 @@ node install.mjs --verify
 | Key | Serves |
 | --- | --- |
 | OpenRouter (required) | DeepSeek, Ultra Spark, Muse, and other OpenRouter models; Claude without an Anthropic key, or as its fallback; web search for every model except native OpenAI ones |
-| Anthropic (optional) | Claude on Anthropic's API first; a thread keeps the route it started on ([which key when](docs/setup.md#claude-sonnet-55-and-claude-opus-55)) |
+| Anthropic (optional) | Claude on Anthropic's API first; a thread keeps the route it started on ([which key when](docs/routing.md#claudes-two-routes)) |
 | ChatGPT login | Native OpenAI models |
 
 To add the Anthropic key, create an API key at [platform.claude.com](https://platform.claude.com/), put `ANTHROPIC_API_KEY=<the key>` in `~/.codex/unified-router/openrouter.env`, which the installer keeps, and rerun `node install.mjs`.
 
 `install.mjs` runs the installer for your platform from [`platform/`](platform/README.md). Common variations:
 
-```sh
-node install.mjs --change-api-key                    # replace the stored OpenRouter key; asks for the new one
-node install.mjs --api-key-file ~/openrouter.key     # read the key from a file instead of asking
-CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs     # hide native OpenAI models from /model
-CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs    # keep Codex analytics on
-CODEX_ROUTER_SANDBOX_NETWORK=1 node install.mjs      # let shell commands reach the network without asking
-```
+| To | Run |
+| --- | --- |
+| Replace the stored OpenRouter key; it asks for the new one | `node install.mjs --change-api-key` |
+| Read the key from a file instead of asking | `node install.mjs --api-key-file ~/openrouter.key` |
+| Hide native OpenAI models from `/model` | `CODEX_ROUTER_NATIVE_MODELS=hide node install.mjs` |
+| Keep Codex analytics on | `CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs` |
+| Let shell commands reach the network without asking | `CODEX_ROUTER_SANDBOX_NETWORK=1 node install.mjs` |
 
 On an existing Codex configuration, the installer asks before merging into it and backs it up first. By default, it also hides native OpenAI models when Codex's login shows no active ChatGPT plan, turns off Codex analytics, ChatGPT connector tools, and the guardian that sends transcripts to OpenAI for review, and allows 10 parallel agents. `node install.mjs --help` summarizes the options; [Installer settings](docs/setup.md#installer-settings) explains each one with its default.
 
@@ -161,12 +163,14 @@ On an existing Codex configuration, the installer asks before merging into it an
 
 ## Use
 
+Start Codex with the default, DeepSeek V4.1 Flash 1017, or pick another model with `-m`:
+
 ```sh
-codex                                                   # DeepSeek V4.1 Flash 1017
-codex -m ultra-spark/deepseek-v4.1-flash-1017           # Ultra Spark mode
-codex -m openrouter/meta/muse-spark-1.3-contributor     # Muse Spark 1.3 Contributor
-codex -m anthropic/claude-sonnet-5-5                    # Claude Sonnet 5.5
-codex -m anthropic/claude-opus-5-5                      # Claude Opus 5.5
+codex
+codex -m ultra-spark/deepseek-v4.1-flash-1017
+codex -m openrouter/meta/muse-spark-1.3-contributor
+codex -m anthropic/claude-sonnet-5-5
+codex -m anthropic/claude-opus-5-5
 ```
 
 | Model | Best for |
@@ -178,7 +182,7 @@ codex -m anthropic/claude-opus-5-5                      # Claude Opus 5.5
 | **Any `openrouter/<vendor>/<model>`** | Trying another model; [add a catalog entry](docs/setup.md#add-a-model) to list it in `/model`. |
 | **Native OpenAI**, such as `gpt-6-astra` | Requires a ChatGPT plan. |
 
-Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. DeepSeek's own endpoint may train on prompts too; after a native OpenAI or Claude model, a session's OpenRouter requests go only to endpoints that keep no data, so pin DeepSeek to one to use it there. The router refuses to mix them with native OpenAI or Claude models in a tracked Codex session; requests without a session ID are not tracked ([details](docs/setup.md#provider-isolation)).
+Muse and the Ultra Spark workers use Meta's contributor tier, which trains on everything it receives, so use them only for code you are willing to share. DeepSeek's own endpoint may train on prompts too; after a native OpenAI or Claude model, a session's OpenRouter requests go only to endpoints that keep no data, so pin DeepSeek to one to use it there. The router refuses to mix them with native OpenAI or Claude models in a tracked Codex session; requests without a session ID are not tracked ([details](docs/routing.md#provider-isolation)).
 
 Without a ChatGPT login, add `--profile unified-openrouter` to any of the commands above, Ultra Spark included ([details](docs/setup.md#openrouter-only-profile)). To prefer specific OpenRouter endpoints, set [`CODEX_ROUTER_PROVIDER_ORDER`](docs/setup.md#openrouter-endpoint-preferences).
 
@@ -192,4 +196,4 @@ CI tests Linux, macOS, and Windows, checks script syntax, and validates the mode
 
 ---
 
-[Setup & configuration](docs/setup.md) · [Services & troubleshooting](docs/operations.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Apache-2.0](LICENSE) · [Notices](NOTICE)
+[Configuration](docs/setup.md) · [How routing works](docs/routing.md) · [Services & troubleshooting](docs/operations.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Apache-2.0](LICENSE) · [Notices](NOTICE)

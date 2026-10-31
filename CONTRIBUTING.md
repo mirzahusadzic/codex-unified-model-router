@@ -6,11 +6,11 @@ Thanks for helping improve the router. It is deliberately small: a local compati
 
 Node.js 20 or later is the only requirement; there are no dependencies to install and no build step.
 
-```sh
-node --test                                # all tests; offline, no credentials needed
-bash -n platform/unix/*.sh                 # shell syntax
-node scripts/render-openrouter-entries.mjs # after editing prompts/ or adding a catalog entry
-```
+| To | Run |
+| --- | --- |
+| Run all tests, offline and without credentials | `node --test` |
+| Check shell syntax | `bash -n platform/unix/*.sh` |
+| Render the catalog entries after editing `prompts/` or adding an entry | `node scripts/render-openrouter-entries.mjs` |
 
 The installed router is a separate copy under your Codex home directory. Run `node install.mjs` to try a change in Codex, and `node install.mjs --verify` afterward.
 
@@ -32,7 +32,7 @@ The installed router is a separate copy under your Codex home directory. Run `no
 | `platform/` | Per-OS installers and verifiers in `unix/` and `windows/`, plus the Windows access-control helper; see the [platform index](platform/README.md). |
 | `scripts/` | Verifiers, installer helpers, and development tools; see [Scripts](#scripts). |
 | `tests/` | `node --test` suites, plus a Windows access-control test; see [Tests](#tests). |
-| `docs/` | [Setup and configuration](docs/setup.md) and [services and troubleshooting](docs/operations.md). |
+| `docs/` | [Setup and configuration](docs/setup.md), [how routing works](docs/routing.md), and [services and troubleshooting](docs/operations.md). |
 
 ### Scripts
 
@@ -64,7 +64,9 @@ Shared modules: `scripts/openrouter-prompts.mjs` holds the prompt rules for Open
 
 ### Tests
 
-`node --test` runs every `.test.mjs` file on macOS, Linux, and Windows; [CI](.github/workflows/ci.yml) covers all three. The tests use synthetic upstreams and need no credentials or network. `tests/prompt-budget.test.mjs` also needs the tested Codex CLI and skips without it, as in CI.
+`node --test` runs every `.test.mjs` file on macOS, Linux, and Windows. The tests use synthetic upstreams and need no credentials or network. `tests/prompt-budget.test.mjs` also needs the tested Codex CLI and skips without it, as in CI.
+
+[CI](.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch. It tests Linux with Node.js 20, 22, and 24, plus macOS and Windows with Node.js 24, checks JavaScript, Bash, and Windows PowerShell syntax, and validates the model JSON. Live provider compatibility and background-service installation need separate manual verification.
 
 | Test file | Covers | Platforms |
 | --- | --- | --- |

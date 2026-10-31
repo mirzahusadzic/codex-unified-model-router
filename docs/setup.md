@@ -1,22 +1,23 @@
 # Setup and configuration
 
-See the [README](../README.md) for installation commands. This page covers what the installer changes, every setting it reads, the models in the catalog, and how the router routes requests.
+The [README](../README.md) has the commands most installations need. This page covers what the installer changes, every setting it reads, and the models in the catalog; [How routing works](routing.md) covers what the router does with each request.
 
 - [Installation](#installation): what changes, [installer settings](#installer-settings), and [activating the provider](#activate-the-provider)
-- [Router settings](#router-settings): runtime options in `unified-router/openrouter.env`
-- [Managed Codex configuration](#managed-codex-configuration): the Codex settings the installer owns
-- [Models](#models): DeepSeek, Ultra Spark, Muse, and [adding a model](#add-a-model)
-- [Routing](#routing): compatibility, [provider isolation](#provider-isolation), structured output, and profiles
-- [Credentials and logging](#credentials-and-logging), [CI coverage](#ci-coverage), and [license](#license-and-template-provenance)
+- [Router settings](#router-settings): runtime options in `unified-router/openrouter.env`, including [endpoint preferences](#openrouter-endpoint-preferences)
+- [Managed Codex configuration](#managed-codex-configuration): the Codex settings the installer owns, and the [OpenRouter-only profile](#openrouter-only-profile)
+- [Models](#models): DeepSeek, Muse, Claude, Ultra Spark, and [adding a model](#add-a-model)
+- [License and template provenance](#license-and-template-provenance)
 
 ## Installation
+
+The [README](../README.md#install) has the commands. This section covers what the installer changes, the settings it reads, and how to start using the router.
 
 ### What the installer changes
 
 The installer configures `~/.codex`, or `CODEX_HOME` when set. Each run:
 
 1. Backs up the existing configuration and catalog files.
-2. Builds `models.json` from Codex's bundled models and every entry in [`catalog/`](../catalog/), hiding native OpenAI models [without an active ChatGPT plan](#native-openai-models).
+2. Builds `models.json` from Codex's bundled models and every entry in [`catalog/`](../catalog/), hiding native OpenAI models without an active ChatGPT plan.
 3. Merges its [managed settings](#managed-codex-configuration) into `config.toml`, preserving everything else.
 4. Merges transport settings into `unified-openrouter.config.toml`, the [OpenRouter-only profile](#openrouter-only-profile).
 5. Installs the router and stores the OpenRouter key under `unified-router/`.
@@ -26,11 +27,12 @@ The helper scripts behind these steps are listed in [CONTRIBUTING.md](../CONTRIB
 
 ### Installer settings
 
-Pass settings to `node install.mjs` as flags or environment variables on each run; the installer does not store them. `node install.mjs --help` prints a summary. An unknown flag or invalid value stops the installer before it asks anything or changes a file:
+Pass settings to `node install.mjs` as flags or environment variables on every run; the installer stores none of them, and `node install.mjs --help` summarizes them. An unknown flag or invalid value stops it before it asks anything or changes a file.
 
 ```sh
 node install.mjs --api-key-file ~/openrouter.key
-CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 node install.mjs
+CODEX_ROUTER_NATIVE_MODELS=hide CODEX_ROUTER_AGENT_THREADS=6 \
+  node install.mjs
 ```
 
 ```powershell
@@ -38,9 +40,8 @@ $env:CODEX_ROUTER_NATIVE_MODELS = 'hide'
 node install.mjs
 ```
 
-`install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; the Windows script spells them `-Force`, `-NoService`, `-ChangeApiKey`, and `-ApiKeyFile` when run directly.
-
-Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, `CODEX_ROUTER_AGENT_THREADS`, `CODEX_ROUTER_SANDBOX_NETWORK`, and `CODEX_ROUTER_PIN_DAEMON` values.
+- **Platform scripts:** `install.mjs` runs `platform/unix/install.sh` or `platform/windows/install.ps1` and translates its flags; run directly, the Windows script spells them `-Force`, `-NoService`, `-ChangeApiKey`, and `-ApiKeyFile`.
+- **Verifier:** run it with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABLE_GUARDIAN`, `CODEX_ROUTER_DISABLE_ANALYTICS`, `CODEX_ROUTER_AGENT_THREADS`, `CODEX_ROUTER_SANDBOX_NETWORK`, and `CODEX_ROUTER_PIN_DAEMON` values.
 
 | Setting | Values | Effect |
 | --- | --- | --- |
@@ -62,53 +63,77 @@ Run the verifier with the same `CODEX_ROUTER_DISABLE_APPS`, `CODEX_ROUTER_DISABL
 
 ### Codex version
 
-The router is tested with Codex **0.166.0**. Newer versions can change what it relies on, such as request headers, history items, and catalog templates: Codex 0.163.0 renamed the `session_id` header to `session-id`, Codex 0.164.0 began recording native models' tool declarations in thread history, and Codex 0.166.0 refuses to continue a thread under a provider other than the one it was created with. To install the tested version:
+The router is tested with Codex **0.166.0**, and newer versions can change what it relies on. `node install.mjs` warns, without stopping, when the CLI or the running daemon differs; `codex app-server daemon version` shows both.
 
-```sh
-npm install -g @openai/codex@0.166.0
-```
+| Codex | Changed for the router |
+| --- | --- |
+| 0.163.0 | Renamed the `session_id` header to `session-id` |
+| 0.164.0 | Began recording native models' tool declarations in thread history |
+| 0.166.0 | Refuses to continue a thread under a provider other than the one it was created with |
 
-`node install.mjs` warns, without stopping, when the Codex CLI or the running app-server daemon differs from the tested version; `codex app-server daemon version` shows both. To change Codex versions, install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, and then run `node install.mjs --verify`. Tags named `codex-<version>` mark the last router commit verified with each Codex version; see [Return to an earlier Codex version](operations.md#return-to-an-earlier-codex-version).
+| To | Do |
+| --- | --- |
+| Install the tested version | `npm install -g @openai/codex@0.166.0` |
+| Change Codex versions | Install the CLI version you want, rerun `node install.mjs`, which rebuilds the catalog from its bundled models and pins the daemon to it, then run `node install.mjs --verify` |
+| Go back to an earlier version | Use its `codex-<version>` tag, the last router commit verified with it; see [Return to an earlier Codex version](operations.md#return-to-an-earlier-codex-version) |
 
 #### Daemon updates
 
-The shared app-server daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home directory. Unless it is pinned, the daemon checks chatgpt.com hourly and replaces that copy with each new release, ahead of the CLI and of the version this router is tested with. A release can change what the router relies on, as 0.164.0 did for threads that switch from a native model to DeepSeek. The installer therefore pins the daemon to the CLI's Codex by default:
+The shared app-server daemon keeps its own copy of Codex under `packages/app-server-daemon/` in your Codex home. Unpinned, it checks chatgpt.com hourly and installs each release ahead of the CLI and the tested version, and a release can break what the router relies on, as 0.164.0 did for threads that switch from a native model to DeepSeek. So the installer pins it to the CLI's Codex by default:
 
 ```sh
 codex app-server daemon update --from-cli --yes
 ```
 
-This is the safe option: the daemon runs the same version as the CLI, never updates itself, and changes only when you update the CLI and rerun the installer. Pinning restarts a running daemon, so the installer skips it with `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0` while the daemon runs, and when Codex itself runs the installer, and prints the command to run instead. A stopped daemon is pinned without starting it. One that Codex has not installed yet is not pinned, and the installer and verifier say so; rerun the installer after Codex first starts it. Pinning needs a packaged CLI, such as the npm package; if it fails, the installer warns and restarts the daemon instead. The verifier fails while the daemon updates itself or runs a different version from the CLI.
+| Case | The installer |
+| --- | --- |
+| Default | Pins the daemon: it runs the CLI's version, never updates itself, and changes only when you update the CLI and rerun the installer. Pinning restarts a running daemon. |
+| `--no-service`, `CODEX_ROUTER_RESTART_DAEMON=0` while the daemon runs, or Codex running the installer | Skips pinning and prints the command to run instead |
+| The daemon is stopped | Pins it without starting it |
+| Codex has not installed the daemon yet | Does not pin it, and says so, as does the verifier; rerun the installer after Codex first starts it |
+| Pinning fails, for example without a packaged CLI such as the npm package | Warns and restarts the daemon instead |
 
-To let the daemon update itself again, install with `CODEX_ROUTER_PIN_DAEMON=0` and run `codex app-server daemon update`, which returns it to production updates. Run the verifier with the same setting.
+- **Verifier:** fails while the daemon updates itself or runs a different version from the CLI.
+- **Unpin:** install with `CODEX_ROUTER_PIN_DAEMON=0`, run `codex app-server daemon update` to return to production updates, and run the verifier with the same setting.
 
 ### Existing configuration
 
-When `config.toml` or `unified-openrouter.config.toml` exists but has no router settings yet, the installer lists the files and asks before merging into them; answering no, or running without a terminal and without `--force`, stops it before anything changes. Both files are backed up before merging, and later runs update the managed blocks without asking. In the profile, the managed blocks own only `model_provider`, `model_catalog_json`, and `[model_providers.unified]`; keep custom models, reasoning settings, instructions, and other tables outside them.
+When `config.toml` or `unified-openrouter.config.toml` exists without router settings, the installer lists the files and asks before merging into them. Both are backed up first, and later runs update the managed blocks without asking.
+
+- **Answering no, or no terminal without `--force`:** the installer stops before anything changes.
+- **In the profile:** the managed blocks own only `model_provider`, `model_catalog_json`, and `[model_providers.unified]`; keep custom models, reasoning settings, instructions, and other tables outside them.
 
 ### Automatic startup
 
-The router runs under launchd on macOS, `systemd --user` on Linux, and a hidden Startup-folder supervisor on Windows. If Linux has no working user service session, the installer prints a manual startup command. See [Services and troubleshooting](operations.md) to manage the service.
+| Platform | The router runs under |
+| --- | --- |
+| macOS | launchd |
+| Linux | `systemd --user`; without a working user service session, the installer prints a manual startup command |
+| Windows | A hidden Startup-folder supervisor |
+
+To manage the service, see [Service management](operations.md#service-management).
 
 ### Activate the provider
 
-Restart Codex windows that were open before installation and start a new thread; existing threads keep the provider they were created with. Codex 0.166.0 refuses to continue a thread under another provider ("This chat uses openai, but your current provider is unified"), so continue a thread from before the installation with its own provider, for example `codex resume <id> -c model_provider=openai`, or start a new one.
+Restart Codex windows that were open before installation, and start a new thread. Existing threads keep the provider they were created with, and Codex 0.166.0 refuses to continue one under another ("This chat uses openai, but your current provider is unified"), so resume an older thread with its own provider, such as `codex resume <id> -c model_provider=openai`.
 
-The shared Codex app-server daemon keeps the configuration and catalog it started with, so the installer restarts it when it is running, which interrupts work in its open sessions. It does so by pinning the daemon to the CLI's Codex; see [Daemon updates](#daemon-updates). The installer skips the restart with `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0`, and when Codex itself runs the installer, which the restart would interrupt. In those cases, restart it yourself once, or run `codex app-server daemon update --from-cli --yes` to pin and restart it:
+The shared app-server daemon keeps the configuration and catalog it started with, so the installer restarts a running one by pinning it, which interrupts its open sessions. With `--no-service`, with `CODEX_ROUTER_RESTART_DAEMON=0`, or when Codex itself runs the installer, it skips the restart: restart the daemon once yourself, or pin and restart it with `codex app-server daemon update --from-cli --yes`.
 
 ```sh
 codex app-server daemon restart
 ```
 
-Start a new thread afterward. Once a thread uses the unified provider, switching models does not require another restart.
+Once a thread uses the unified provider, switching models needs no restart.
+
+---
 
 ## Router settings
 
-The router reads these settings when it starts, from `unified-router/openrouter.env` under your Codex home directory or from its service environment. Prefer the file: the installer keeps extra settings there when you rerun it, while it regenerates the service environment. For example:
+The router reads these at startup from `unified-router/openrouter.env` in your Codex home, or from its service environment. Prefer the file: the installer keeps your additions there but regenerates the service environment. Restart the router after a change, for example by rerunning the installer.
+
+The installer writes the first two lines of `~/.codex/unified-router/openrouter.env`; add your settings below them:
 
 ```sh
-# ~/.codex/unified-router/openrouter.env
-# The installer writes the first two lines; add your settings below them.
 OPENROUTER_API_KEY=...
 CODEX_ROUTER_TOKEN=...
 CODEX_ROUTER_LOG_LEVEL=info
@@ -116,25 +141,40 @@ CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
 ANTHROPIC_API_KEY=<Anthropic API key>
 ```
 
-Put comments on their own lines; a `#` after a value becomes part of the value.
-
-Restart the router after a change, for example by rerunning the installer.
-
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | set by the installer | OpenRouter key. To replace it, run `node install.mjs --change-api-key`. |
 | `CODEX_ROUTER_TOKEN` | generated by the installer | Local token that Codex sends with each request. Do not edit; the installer keeps it in sync with the Codex configuration. |
-| `ANTHROPIC_API_KEY` | unset | Anthropic API key, never a Claude sign-in token. With it, Claude runs on Anthropic's API; see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55). Add it to the file yourself; the installer keeps it. |
+| `ANTHROPIC_API_KEY` | unset | Anthropic API key, never a Claude sign-in token. With it, Claude runs on Anthropic's API. Add it to the file yourself; the installer keeps it. |
 | `CODEX_ROUTER_LOG_LEVEL` | `error` | `error`, `info`, or `debug`. See [Structured logs](operations.md#structured-logs). |
-| `CODEX_ROUTER_REJECTED_REQUEST_DIR` | unset | Directory for private copies of OpenRouter-rejected request bodies and up to 256 KiB of each response body. On Windows, only `unified-router` itself is accepted. See [Structured logs](operations.md#structured-logs). |
+| `CODEX_ROUTER_REJECTED_REQUEST_DIR` | unset | Directory for private copies of OpenRouter-rejected request bodies and up to 256 KiB of each response body. On Windows, only `unified-router` itself is accepted. See [Capture rejected requests](operations.md#capture-rejected-requests). |
 | `CODEX_ROUTER_PROVIDER_ORDER` | unset | Preferred OpenRouter endpoints per model. See [OpenRouter endpoint preferences](#openrouter-endpoint-preferences). |
-| `CODEX_ROUTER_TRAINING_MODELS` | unset | Comma-separated upstream slugs to add to the training tier. See [Provider isolation](#provider-isolation). |
+| `CODEX_ROUTER_TRAINING_MODELS` | unset | Comma-separated upstream slugs to add to the training tier. See [Provider isolation](routing.md#provider-isolation). |
 
-The service environment also sets `CODEX_ROUTER_ENV_FILE`, `CODEX_MODEL_CATALOG`, and `CODEX_ROUTER_PORT` (`18766`). The managed Codex configuration expects port `18766`, so leave these to the installer.
+- **Comments:** put them on their own lines; a `#` after a value becomes part of the value.
+- **Left to the installer:** the service environment also sets `CODEX_ROUTER_ENV_FILE`, `CODEX_MODEL_CATALOG`, and `CODEX_ROUTER_PORT` (`18766`), which the managed Codex configuration expects.
+
+### OpenRouter endpoint preferences
+
+OpenRouter picks an endpoint for each request. To prefer particular endpoints for a model, set `CODEX_ROUTER_PROVIDER_ORDER` and restart the router:
+
+```sh
+CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
+```
+
+How the value is read and applied:
+
+- **Key:** The upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key
+- **Value:** Endpoint tags from `https://openrouter.ai/api/v1/models/<model>/endpoints`, separated by commas; separate models with `;`
+- **Request:** `provider: { order: [...] }`, added only when the request has no `provider` field; after a native OpenAI or Claude model, with `data_collection: "deny"` beside it. The router's own web searches follow the same order for their model.
+- **Fallbacks:** Stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn; OpenRouter's own sticky routing does not apply while an order is set
+- **Errors:** A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`
+
+---
 
 ## Managed Codex configuration
 
-The installer manages these settings in `config.toml`, between `# BEGIN/END codex-unified-router` markers, and supplies the real catalog path and a random local token. Rerunning it reapplies them and keeps the token. `model` and `model_reasoning_effort` are defaults for the first installation: later runs keep the values Codex saves when you pick a model with `/model`, and restore a default only if its line is missing.
+The installer manages these settings in `config.toml` between `# BEGIN/END codex-unified-router` markers, with the real catalog path and a random local token. Reruns reapply them and keep the token; `model` and `model_reasoning_effort` are first-install defaults, so later runs keep what Codex saves when you pick a model with `/model`, and restore a default only if its line is missing.
 
 ```toml
 model = "deepseek/deepseek-v4.1-flash-1017"
@@ -161,37 +201,112 @@ enabled = false
 max_concurrent_threads_per_session = 10
 ```
 
-With `CODEX_ROUTER_SANDBOX_NETWORK=1`, it also manages `network_access = true` in `[sandbox_workspace_write]`. The installer edits existing `[features]`, `[analytics]`, `[agents]`, and `[sandbox_workspace_write]` tables in place and keeps their other keys. Codex can write its own settings, such as project trust or MCP servers, between the markers; reruns keep everything the router does not own and move foreign tables out of its blocks. Move any top-level dotted keys, such as `features.apps`, into the table first. The OpenRouter-only profile inherits these settings.
+- **Sandbox network:** with `CODEX_ROUTER_SANDBOX_NETWORK=1`, the installer also manages `network_access = true` in `[sandbox_workspace_write]`.
+- **Existing tables:** it edits `[features]`, `[analytics]`, `[agents]`, and `[sandbox_workspace_write]` in place and keeps their other keys. Move top-level dotted keys, such as `features.apps`, into their table first.
+- **Codex's own settings** between the markers, such as project trust or MCP servers, survive reruns; tables the router does not own move out of its blocks.
+- **The OpenRouter-only profile** inherits these settings.
 
 ### ChatGPT apps
 
-Codex's ChatGPT apps feature adds connector tools, such as GitHub, Sites, and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and an account with apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request; without them, the request was 32 KB. OpenRouter bills those tokens on every uncached request, and they slow cold starts.
+Codex's apps feature adds ChatGPT connector tools, such as GitHub, Sites, and ChatGPT spaces, to every request, whatever the model. With Codex 0.163.0 and apps connected, they made up about 237,000 characters (roughly 65,000 tokens) of a 270 KB request that was 32 KB without them; OpenRouter bills them on every uncached request, and they slow cold starts.
 
-The installer therefore manages `apps = false`. To keep the apps, install with `CODEX_ROUTER_DISABLE_APPS=0`. For a single session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
+To keep the apps, install with:
+
+```sh
+CODEX_ROUTER_DISABLE_APPS=0 node install.mjs
+```
+
+For one session, `codex --enable apps` or `codex --disable apps` overrides the configuration.
 
 ### Codex guardian
 
-Codex 0.163.0 assesses some agent actions, such as writes outside the workspace, with a hidden guardian thread on `codex-auto-review`, a native OpenAI model. It does so even when `approvals_reviewer` is `user`, and sends that model the agent transcript, including tool calls and their results. In a session that used Muse or Ultra Spark, [provider isolation](#provider-isolation) refuses those requests, so the action stalls; in other sessions, the transcript goes to OpenAI and needs a ChatGPT plan.
+Codex 0.163.0 checks some agent actions, such as writes outside the workspace, with a hidden guardian thread on `codex-auto-review`, a native OpenAI model, even when `approvals_reviewer` is `user`. It sends that model the agent transcript, tool calls and results included.
 
-The installer therefore manages `guardian_approval = false` in `[features]`, so approval requests go to you as configured. Install with `CODEX_ROUTER_DISABLE_GUARDIAN=0` to keep the guardian, for example if you use `approvals_reviewer = "auto_review"`, which runs on the same guardian. For a single session, `codex --enable guardian_approval` overrides the configuration.
+- **Why it is off:** in a session that used Muse or Ultra Spark, provider isolation refuses those requests, so the action stalls; in other sessions, the transcript goes to OpenAI and needs a ChatGPT plan.
+- **Default:** `guardian_approval = false` in `[features]`, so approval requests go to you as configured.
+To keep the guardian, for example for `approvals_reviewer = "auto_review"`, which runs on it, install with:
+
+```sh
+CODEX_ROUTER_DISABLE_GUARDIAN=0 node install.mjs
+```
+
+For one session, `codex --enable guardian_approval` overrides the configuration.
 
 ### Codex analytics
 
-Codex sends usage analytics and metrics to OpenAI by default. The installer manages `enabled = false` in `[analytics]`, which also turns off Codex's default metrics exporter, so model choices and usage stay on your machine. Install with `CODEX_ROUTER_DISABLE_ANALYTICS=0` to leave analytics to Codex. `/feedback` still sends a report only when you submit one.
+Codex sends usage analytics and metrics to OpenAI by default. The installer manages `enabled = false` in `[analytics]`, which also turns off Codex's default metrics exporter, so model choices and usage stay on your machine.
+
+To leave analytics to Codex, install with:
+
+```sh
+CODEX_ROUTER_DISABLE_ANALYTICS=0 node install.mjs
+```
+
+`/feedback` still sends a report only when you submit one.
 
 ### Native OpenAI models
 
-Codex's bundled models are native OpenAI models and require a ChatGPT plan. With `CODEX_ROUTER_NATIVE_MODELS=auto`, the installer reads the plan claims in Codex's login (`auth.json`) locally and hides these models from `/model` when the login is missing or the plan has lapsed. The claims are a snapshot from Codex's last token refresh, so an unclear result keeps the models listed; `show` and `hide` override the check. Hidden models stay usable by name, for example `codex -m gpt-6-astra`. Rerun the installer after your plan changes.
+Codex's bundled models are native OpenAI models and need a ChatGPT plan. Hidden ones stay usable by name, such as `codex -m gpt-6-astra`; rerun the installer after your plan changes.
 
-Approval prompts do not depend on a plan: `approvals_reviewer` defaults to `user`, so you answer them yourself. Setting it to `auto_review` hands prompts to Codex's reviewer model, `codex-auto-review`, which is a native OpenAI model and fails without a plan. Full access is not needed to work without a plan.
+| `CODEX_ROUTER_NATIVE_MODELS` | `/model` lists native models |
+| --- | --- |
+| `auto` (default) | Unless Codex's login (`auth.json`, read locally) is missing or its plan has lapsed. The plan claims date from Codex's last token refresh, so an unclear result keeps them listed. |
+| `show` | Always |
+| `hide` | Never |
+
+To list them whatever the plan, install with:
+
+```sh
+CODEX_ROUTER_NATIVE_MODELS=show node install.mjs
+```
+
+- **Approvals need no plan:** `approvals_reviewer` defaults to `user`, so you answer prompts yourself. `auto_review` hands them to `codex-auto-review`, a native OpenAI model that fails without a plan; full access is not needed to work without one.
 
 ### Spawned-agent limit
 
-`max_concurrent_threads_per_session` limits how many spawned agents a session can keep open, excluding the main thread. The installer sets it to 10 so [Ultra Spark](#ultra-spark-mode) can run 10 workers in parallel, and replaces Codex's legacy `max_threads` alias. Install with `CODEX_ROUTER_AGENT_THREADS=<1-999>` for another limit, or `0` to leave it to Codex.
+`max_concurrent_threads_per_session` caps the spawned agents a session can keep open, not counting the main thread. The installer sets it to 10, so Ultra Spark can run 10 workers in parallel, and replaces Codex's legacy `max_threads` alias.
+
+For another limit, from 1 to 999, or `0` to leave it to Codex, install with:
+
+```sh
+CODEX_ROUTER_AGENT_THREADS=6 node install.mjs
+```
 
 ### Sandbox network access
 
-Codex's `workspace-write` sandbox keeps shell commands off the network: a command that needs it, such as `gh api` or a package download, asks for your approval and then runs outside the sandbox. Web search does not depend on it, because it is a tool, not a shell command. Install with `CODEX_ROUTER_SANDBOX_NETWORK=1` to let commands reach the network without asking; the installer then manages `network_access = true` in `[sandbox_workspace_write]`. It applies to every model, native OpenAI included, and a command written after reading a malicious page or file could then send data out without asking. Like the other settings, pass it on every run: a run without it removes the router's block and leaves the setting to you. For a single session, `codex -c sandbox_workspace_write.network_access=true` turns it on.
+Codex's `workspace-write` sandbox keeps shell commands off the network: a command that needs it, such as `gh api` or a package download, asks for your approval and then runs outside the sandbox. Web search does not depend on it, because it is a tool, not a shell command.
+
+To let commands reach the network without asking, pass the setting on every run:
+
+```sh
+CODEX_ROUTER_SANDBOX_NETWORK=1 node install.mjs
+```
+
+The installer then manages `network_access = true` in `[sandbox_workspace_write]`; a run without the setting removes the router's block and leaves the setting to you. For one session, `codex -c sandbox_workspace_write.network_access=true` turns it on.
+
+> [!WARNING]
+> It applies to every model, native OpenAI included: a command written after reading a malicious page or file can send data out without asking.
+
+### OpenRouter-only profile
+
+The installer writes `unified-openrouter.config.toml` beside `config.toml`, with the same local token and catalog. It sets `requires_openai_auth = false`, so OpenRouter models and Claude need no ChatGPT login, and sends the `preserve-model-v1` header.
+
+```sh
+codex --profile unified-openrouter \
+  --model deepseek/deepseek-v4.1-flash-1017
+codex --profile unified-openrouter \
+  --model ultra-spark/deepseek-v4.1-flash-1017
+codex --profile unified-openrouter \
+  --model openrouter/meta/muse-spark-1.3-contributor
+codex --profile unified-openrouter \
+  --model anthropic/claude-sonnet-5-5
+```
+
+- **Models:** any router model in the catalog, and Ultra Spark's Muse workers use the same profile; use the main configuration for native OpenAI models.
+- **Not a sandbox:** it supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings. Codex 0.166.0 does not load it with `--ignore-user-config`.
+- **Isolated execution:** clients that need it must manage their own Codex home, instructions, tools, permissions, and output validation.
+
+---
 
 ## Models
 
@@ -201,12 +316,21 @@ Codex's `workspace-write` sandbox keeps shell commands off the network: a comman
 | **DeepSeek V4.1 Flash 1017 · Ultra Spark** | `ultra-spark/deepseek-v4.1-flash-1017` | 960,000 tokens | Delegates to Muse workers; see [Ultra Spark mode](#ultra-spark-mode) |
 | **Muse Spark 1.3 Contributor** | `openrouter/meta/muse-spark-1.3-contributor` | 1,048,576 tokens | Meta trains on its inputs; see [Muse Spark 1.3 Contributor](#muse-spark-13-contributor) |
 | **Claude Sonnet 5.5** | `anthropic/claude-sonnet-5-5` | 1,000,000 tokens | Anthropic's API or OpenRouter; see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55) |
-| **Claude Opus 5.5** | `anthropic/claude-opus-5-5` | 1,000,000 tokens | Anthropic's API or OpenRouter; see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55) |
-| Native OpenAI models | for example `gpt-6-astra` | bundled limits | Require a ChatGPT plan; see [Native OpenAI models](#native-openai-models) |
+| **Claude Opus 5.5** | `anthropic/claude-opus-5-5` | 1,000,000 tokens | Anthropic's API or OpenRouter, as for Sonnet |
+| Native OpenAI models | for example `gpt-6-astra` | bundled limits | Require a ChatGPT plan |
 
 ### DeepSeek context window
 
-The entry for `deepseek/deepseek-v4.1-flash-1017` in [`catalog/deepseek-model.json`](../catalog/deepseek-model.json) preconfigures:
+[`catalog/deepseek-model.json`](../catalog/deepseek-model.json) preconfigures `deepseek/deepseek-v4.1-flash-1017`. The installer merges it into `models.json` and points `model_catalog_json` at it, so no manual context setting is needed.
+
+It is the default model; to select it in a thread that runs another one:
+
+```sh
+codex -m deepseek/deepseek-v4.1-flash-1017
+```
+
+> [!WARNING]
+> DeepSeek's own endpoint may train on prompts and completions, according to OpenRouter's data policy, and OpenRouter can route DeepSeek there unless you pin another endpoint. Codex sends file contents and command output with each step, so on that endpoint use DeepSeek only for code you are willing to share.
 
 | Catalog setting | Value | Meaning |
 | --- | --- | --- |
@@ -215,52 +339,58 @@ The entry for `deepseek/deepseek-v4.1-flash-1017` in [`catalog/deepseek-model.js
 | `effective_context_window_percent` | `95` | Effective budget of **912,000 tokens** (`960,000 × 95%`). |
 | `auto_compact_token_limit` | `null` | No explicit compaction threshold supplied by the catalog. |
 
-DeepSeek's own endpoint may train on prompts and completions, according to OpenRouter's data policy, and OpenRouter can route DeepSeek models there unless you pin another endpoint. Codex sends file contents and command output with each step, so on that endpoint use DeepSeek for code you are willing to share. In a session that used a native OpenAI or Claude model, DeepSeek runs only on an endpoint that does not collect data, such as one you pin with [`CODEX_ROUTER_PROVIDER_ORDER`](#openrouter-endpoint-preferences); see [Provider isolation](#provider-isolation).
-
-The installer merges this entry into `models.json` and points `model_catalog_json` at it, so no manual context setting is needed; native OpenAI models keep their bundled limits. The effective budget covers the whole conversation context, including instructions, messages, and tool results; it is not a maximum output length. These are the project's configured limits, not a live measurement of upstream capacity.
+- **The budget** covers the whole conversation context, including instructions, messages, and tool results; it is not a maximum output length. These are the project's configured limits, not a live measurement of upstream capacity, and native OpenAI models keep their bundled limits.
+- **After a native OpenAI or Claude model:** DeepSeek runs only on an endpoint that does not collect data, such as one you pin with `CODEX_ROUTER_PROVIDER_ORDER`.
 
 ### Muse Spark 1.3 Contributor
 
 [`catalog/muse-model.json`](../catalog/muse-model.json) adds `openrouter/meta/muse-spark-1.3-contributor` with OpenRouter's published **1,048,576-token** context and a 95% effective budget. Reasoning is mandatory upstream, so the entry offers `low` through `max` (default `medium`) and no `none`; it declares no parallel tool calls.
 
-This is Meta's contributor tier: the price is lower because Meta uses prompts and completions to improve its products, and Codex sends file contents and command output with each step. Use it only for code you are willing to share, such as public repositories. OpenRouter routes to it only after you allow endpoints that may train on inputs in your OpenRouter privacy settings.
+```sh
+codex -m openrouter/meta/muse-spark-1.3-contributor
+```
+
+> [!WARNING]
+> This is Meta's contributor tier, cheaper because Meta uses prompts and completions to improve its products, and Codex sends file contents and command output with each step. Use it only for code you are willing to share, such as public repositories.
+
+OpenRouter routes to it only after you allow endpoints that may train on inputs in your OpenRouter privacy settings.
 
 ### Claude Sonnet 5.5 and Claude Opus 5.5
 
-[`catalog/claude-sonnet-model.json`](../catalog/claude-sonnet-model.json) and [`catalog/claude-opus-model.json`](../catalog/claude-opus-model.json) add `anthropic/claude-sonnet-5-5` and `anthropic/claude-opus-5-5` with a **1,000,000-token** context and a 95% effective budget. Thinking cannot be turned off on these models, so the entries offer `low` through `max` (default `medium`) and no `none`.
+[`catalog/claude-sonnet-model.json`](../catalog/claude-sonnet-model.json) and [`catalog/claude-opus-model.json`](../catalog/claude-opus-model.json) add `anthropic/claude-sonnet-5-5` and `anthropic/claude-opus-5-5` with a **1,000,000-token** context and a 95% effective budget. Thinking cannot be turned off, so the entries offer `low` through `max` (default `medium`) and no `none`.
 
-Which key serves Claude:
+With `ANTHROPIC_API_KEY` in the [router settings](#router-settings), Claude runs on Anthropic's API; without it, Claude runs on OpenRouter's copy of the same model. Both routes charge the same per-token prices, but credits from a Claude plan work only on Anthropic's API, and only there does Claude's signed thinking carry from step to step. A thread keeps the route it started on, and moves to OpenRouter if Anthropic refuses the key, the credits, a spend limit, or the model; see [Claude's two routes](routing.md#claudes-two-routes).
 
-| Situation | Claude runs on |
-| --- | --- |
-| A new thread with `ANTHROPIC_API_KEY` set | Anthropic's API |
-| A new thread without it | OpenRouter |
-| A thread that already ran on OpenRouter | OpenRouter, even after you add the key |
-| A thread on Anthropic's API | Anthropic's API, while the key works |
-| Anthropic refuses the key, the credits, a spend limit, or the model | OpenRouter, for that thread from then on; for the next hour every Claude request goes there, and a thread that moves stays |
-| Anthropic rate-limits or is overloaded | Anthropic's API; Codex retries |
-| An `openrouter/anthropic/…` slug | OpenRouter |
-| Web search, on either route | OpenRouter, with its key |
+```sh
+codex -m anthropic/claude-sonnet-5-5
+codex -m anthropic/claude-opus-5-5
+```
 
-- **Route.** With `ANTHROPIC_API_KEY` set, Claude runs on Anthropic's Messages API (`https://api.anthropic.com/v1/messages`): the router translates Codex's Responses requests into Messages requests and Claude's streamed events back. Without it, Claude runs on OpenRouter's copy of the same model (`anthropic/claude-sonnet-5.5`, `anthropic/claude-opus-5.5`). The two routes charge the same per-token prices, but credits that come with a Claude plan can be spent only on Anthropic's API, and only there does Claude's signed thinking carry from step to step.
-- **Sessions keep their route.** Prompt caches and signed thinking stay with the route that made them, so moving a thread costs a full cache write and its earlier reasoning. A session's first Claude request picks the route, and later requests keep it, including after a router restart; the router records each session's route, without any content, in `unified-router/claude-routes.json` for 30 days after its last request. Threads that already ran on OpenRouter stay there.
-- **Falling back to OpenRouter.** When Anthropic's API refuses a request in a way no retry fixes (spent credits, a spend limit, a rejected key, or a model the organization cannot use), the router sends the same request to OpenRouter, keeps that session there, and for the next hour (or until the router restarts) sends every Claude request to OpenRouter, so other threads move there too and stay, before it tries Anthropic's API again for new threads. `anthropic.refused` records the reason. Without an OpenRouter key, Codex receives a `[router diagnostic]` naming the reason instead. Rate limits and overloads are not refusals: they reach Codex, which retries them. The model never changes; the router does not use Anthropic's server-side `fallbacks`, which can answer with another model.
-- **Prompt caching.** Claude caches a prompt only at an explicit breakpoint, so every Claude request carries a top-level `cache_control: { type: "ephemeral" }`, which places the breakpoint on the last cacheable block and moves it as the thread grows; `request.forwarded` logs `promptCachingAdded`. Cache writes cost 1.25 times the input price and cache reads 5% of it, and the cache expires after 5 minutes without a request. On OpenRouter, Codex's `prompt_cache_key` keeps a thread on one endpoint while the cache is warm. On Anthropic's API the translation keeps each request a prefix of the next: Codex's opening developer messages join the system prompt, a later one becomes a system message just before Claude's next turn, and each step's thinking, text, and calls form one assistant turn with its results in the next user turn.
-- **Thinking between steps.** On Anthropic's API, the router stores each of Claude's thinking blocks, signature included, in the reasoning item's `encrypted_content`, which Codex keeps and sends back, so Claude sees its earlier reasoning. Requests ask Anthropic to drop, rather than reject, a block whose conversation changed, such as after compaction; `anthropic.thinking_dropped` counts them. Requests to OpenAI and OpenRouter leave these blocks out. OpenRouter returns Claude's thinking signature in a field that Codex does not keep, so on that route earlier thinking may not reach Claude; its messages and tool results do.
-- **Reasoning effort.** `codex -m` keeps the effort in your configuration, and the installer's default is `xhigh`; pick a lower effort with `/model` or `-c model_reasoning_effort=medium` to spend less. On Anthropic's API, `none` and `minimal` become `low`.
-- **Tools.** Codex's grouped tools, such as `multi_agent_v1.spawn_agent`, reach Claude as `multi_agent_v1__spawn_agent` and return to Codex under their own names. Anthropic's API runs parallel tool calls, so the entries declare them; Claude 5.5 models reject a forced tool choice, so `required` asks without forcing. Web search runs through OpenRouter, as for OpenRouter models, so without an OpenRouter key the router does not offer it on Anthropic's API.
-- **Rejected steps.** A Messages request that exceeds the context window ends with `context_length_exceeded`, so Codex compacts; another 400 gets one retry without Claude's thinking, then a `[router diagnostic]`, as for OpenRouter.
-- **Older threads.** The OpenRouter-only entries `openrouter/anthropic/claude-sonnet-5.5` and `openrouter/anthropic/claude-opus-5.5` are hidden from `/model` but still work by name, for threads that started on them.
-- **API key only.** Use an Anthropic API key, the kind the Messages API and the Agent SDK use; create one at [platform.claude.com](https://platform.claude.com/). Anthropic does not allow Claude subscription sign-in tokens (`sk-ant-oat…`) in other tools: the router ignores one and logs `anthropic.sign_in_token_ignored`, and the verifier fails. The key bills the API credits of the organization it belongs to.
-- **Isolation.** Claude never shares a tracked session with Muse, Ultra Spark, or other training-tier models, on either route; see [Provider isolation](#provider-isolation).
+- **Reasoning effort:** `codex -m` keeps your configured effort, `xhigh` from the installer; to spend less, pick a lower one with `/model` or `-c model_reasoning_effort=medium`. On Anthropic's API, `none` and `minimal` become `low`.
+- **API key only:** use an Anthropic API key from [platform.claude.com](https://platform.claude.com/); it bills its organization's API credits. Anthropic does not allow Claude sign-in tokens (`sk-ant-oat…`) in other tools, so the router ignores one and logs `anthropic.sign_in_token_ignored`, and the verifier fails.
+- **Older threads:** `openrouter/anthropic/claude-sonnet-5.5` and `openrouter/anthropic/claude-opus-5.5` are hidden from `/model` but still work by name, for threads that started on them.
+- **Isolation:** Claude never shares a session with Muse, Ultra Spark, or other training-tier models, on either route.
 
 ### Ultra Spark mode
 
-**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) added, which makes delegation the default. It splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers, up to 10 at once, and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Design decisions, final edits, and verification stay in the DeepSeek thread, workers are spawned with `fork_context: false` so they see only their task, and the default reasoning effort is `max`.
+**DeepSeek V4.1 Flash 1017 · Ultra Spark** (`ultra-spark/deepseek-v4.1-flash-1017`) is the same upstream DeepSeek model with [`prompts/ultra-spark.md`](../prompts/ultra-spark.md) added, which makes delegation the default. Switch it on or off in a thread with `/model`.
 
-Switch it on or off in a thread with `/model`. Workers inherit the [Muse contributor terms](#muse-spark-13-contributor), so use the mode only for code you are willing to share. The router refuses it in a session that already used a native OpenAI or Claude model; see [Provider isolation](#provider-isolation).
+```sh
+codex -m ultra-spark/deepseek-v4.1-flash-1017
+```
 
-As a backstop, the router detects workers forked with the lead's history by their tool call IDs. Codex gives a session's main thread a thread ID equal to the session ID, and each spawned agent its own. The router remembers, in memory, the tool call IDs in Ultra Spark requests from a main thread. If a spawned agent in the same session sends one of them to Muse or another training-tier model other than Ultra Spark, the request gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed. The check matches tool call IDs only, so it misses:
+- **Workers:** it splits broad tasks such as reviews across parallel Muse Spark 1.3 Contributor workers, up to 10 at once, and hands them chores such as code searches, test runs, and mechanical edits through Codex's `spawn_agent` tool. Workers are spawned with `fork_context: false`, so they see only their task.
+- **The lead:** design decisions, final edits, and verification stay in the DeepSeek thread; the default reasoning effort is `max`.
+- **Isolation:** the router refuses it in a session that already used a native OpenAI or Claude model.
+
+> [!WARNING]
+> Workers inherit Muse's contributor terms, so use the mode only for code you are willing to share.
+
+#### Forked-context backstop
+
+The router also catches workers forked with the lead's history, by their tool call IDs. It remembers, in memory, the tool call IDs in Ultra Spark requests from a main thread, whose thread ID Codex sets equal to the session ID; a spawned agent in the same session that sends one of them to Muse or another training-tier model other than Ultra Spark gets HTTP 409 (`forked_lead_context`), and nothing is sent upstream. Switching the lead thread itself to Muse with `/model` is still allowed.
+
+The check matches tool call IDs only, so it misses:
 
 - a fork made before the lead's first tool call;
 - an Ultra Spark lead that is itself a spawned agent rather than a main thread;
@@ -269,139 +399,29 @@ As a backstop, the router detects workers forked with the lead's history by thei
 
 ### Add a model
 
-Native models come from Codex's bundled catalog; update Codex and rerun the installer to refresh them. For an OpenRouter model:
+Native models come from Codex's bundled catalog: update Codex and rerun the installer to refresh them. For an OpenRouter model:
 
-1. Copy [`catalog/deepseek-model.json`](../catalog/deepseek-model.json) to another JSON file in `catalog/`.
+1. Copy `catalog/deepseek-model.json` to another JSON file in `catalog/`.
 2. Set `slug` to `openrouter/<exact-openrouter-model-slug>`.
 3. Update the display name, description, context limits, reasoning levels, and other capabilities to match the model.
-4. Refresh the prompts with `node scripts/render-openrouter-entries.mjs`, then rerun the installer.
-
-The router removes the `openrouter/` prefix before forwarding. The catalog build fails on an unsupported slug prefix, a duplicate slug, a slug that matches a bundled Codex model, or a missing prompt file. Catalog entries must start with `anthropic/`, `deepseek/`, `openrouter/`, or `ultra-spark/`.
-
-Every `anthropic/`, `deepseek/`, `openrouter/`, and `ultra-spark/` entry uses the maintained instructions in [`prompts/`](../prompts/), which the installer also injects into its generated catalog. An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field.
-
-## Routing
-
-### Routing and compatibility
-
-| Requested model | Upstream service | Upstream model |
-| --- | --- | --- |
-| `gpt-6-astra` | Native Codex backend | `gpt-6-astra` |
-| `deepseek/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
-| `ultra-spark/deepseek-v4.1-flash-1017` | OpenRouter | `deepseek/deepseek-v4.1-flash-1017` |
-| `openrouter/meta/muse-spark-1.3-contributor` | OpenRouter | `meta/muse-spark-1.3-contributor` |
-| `anthropic/claude-sonnet-5-5` | Anthropic's API, or OpenRouter | `claude-sonnet-5-5`, or `anthropic/claude-sonnet-5.5` |
-| `anthropic/claude-opus-5-5` | Anthropic's API, or OpenRouter | `claude-opus-5-5`, or `anthropic/claude-opus-5.5` |
-| `openrouter/anthropic/claude-sonnet-5.5` | OpenRouter | `anthropic/claude-sonnet-5.5` |
-| `openrouter/anthropic/claude-opus-5.5` | OpenRouter | `anthropic/claude-opus-5.5` |
-| `openrouter/vendor/model` | OpenRouter | `vendor/model` |
-
-The same catalog serves main threads, spawned agents, and any interface that exposes a model field.
-
-- **Reasoning effort:** DeepSeek accepts only `low`, `high`, `max`, and `none`, so DeepSeek requests round other efforts up: `minimal` to `low`, `medium` to `high`, and values such as `xhigh` and `ultra` to `max`. Other OpenRouter requests keep the requested effort, which OpenRouter translates for each provider. Native OpenAI requests keep the requested effort.
-- **Mixed history:** OpenAI requests omit plaintext reasoning from OpenRouter history while preserving encrypted reasoning, chat messages, tool calls, and tool results. OpenAI and OpenRouter requests omit Claude's signed thinking from Anthropic's API, and requests to Anthropic's API omit other providers' reasoning. OpenRouter requests omit the tool declarations (`additional_tools` items) that Codex 0.164 records in history for native Responses Lite models, such as GPT-6; OpenRouter rejects them, and the request's `tools` field already lists the selected model's tools.
-- **Prompt caching:** Claude requests get a top-level `cache_control` (on OpenRouter, unless they set one); see [Claude Sonnet 5.5 and Claude Opus 5.5](#claude-sonnet-55-and-claude-opus-55). Other models keep their providers' implicit caching.
-- **Web search:** For OpenRouter models and Claude, on either route, the router runs web search itself, so it needs the OpenRouter key. It replaces Codex's hosted `web_search` tool with a `web_search` function, runs each call through OpenRouter's web plugin on the selected model with the Exa engine, which returns five results, each with an excerpt (10,000 characters among them, so a long excerpt keeps the room short ones leave), and streams Codex a native `web_search_call` item. When the model has no other call pending, the router continues the same response with the results; otherwise Codex runs its calls and the next request carries the search. Later requests from the same session carry each search back as a function call with its output, kept in `unified-router/web-search-results.json` for 30 days after the session last sends it (up to 1,000 searches), so the model sees what it found in every turn and an earlier search reads the same each time; a request without a session ID gets its results within the response, but none are kept. A step runs at most eight searches. A refused continuation ends as the first request would: one over the context window or too large fails with `context_length_exceeded` so Codex compacts, a rate limit or server error fails the response so Codex retries it, an Anthropic refusal no retry fixes moves the thread to OpenRouter and fails the response so Codex's retry runs there, and other refusals, or a continuation that breaks off, end with a `[router diagnostic]`. OpenRouter's own search returns results only as citations, which models do not treat as their own results in later turns, and for some models it fails the step. A search costs about one to two cents through OpenRouter, depending on the model; native OpenAI models keep Codex's hosted search.
-- **Tool arguments:** Some models write whole numbers in tool arguments as floats, such as DeepSeek's `"timeout_ms": 60000.0`, and Codex rejects a float where it expects an integer. Codex parses a call's finished arguments, so the router rewrites only that copy for OpenRouter models: a number like `60000.0` becomes `60000`, and strings, other numbers, and the streamed deltas stay as sent.
-- **Stateless continuation:** OpenRouter's Responses API does not support stored response state, so the router removes `previous_response_id` and disables `store: true`. Codex continues to send the full conversation history in `input`.
-- **Rejected-step recovery:** A pre-stream OpenRouter HTTP 400 that reports a context-window overflow becomes a streamed `context_length_exceeded` failure, so Codex compacts the thread. Other pre-stream 400s get one bounded retry without encrypted reasoning and, for large histories, with Codex's context (including `AGENTS.md` and any compaction summary), a bounded recent tail of the latest turn, and a `[router note]` telling the model that earlier items were omitted. If that also fails, the router returns a completed Codex diagnostic response instead of forwarding HTTP 400, preserving the thread. A request too large for the upstream (HTTP 413) or for the router's 64 MiB limit also ends with `context_length_exceeded`, since Codex would retry the same bytes. OpenRouter's HTTP 401, 402, 403, and 404 end with a `[router diagnostic]` naming the status: Codex answers a 401 by refreshing its ChatGPT sign-in, which cannot fix an OpenRouter key, and retries the others unchanged. A 404 because no endpoint keeps no data gets its own diagnostic; see [Provider isolation](#provider-isolation).
-- **Structured output:** Requests keep the selected model; see [Routing policy](#routing-policy).
-- **Streaming:** Responses are piped through as they arrive, and client disconnects cancel unfinished upstream requests.
-
-### Provider isolation
-
-Native OpenAI models and Claude models never share a tracked Codex session with models whose provider trains on their inputs; OpenAI and Claude may share one. Anthropic's terms bar using Claude's output to train competing models, so Claude is kept from the training tier the same way OpenAI is. Once a tracked session uses one side, the router refuses the other with HTTP 409 (`provider_isolation`) and a message to start a new thread:
-
-| A session that has used | Cannot use |
-| --- | --- |
-| A native OpenAI model or a Claude model | Muse Spark 1.3 Contributor, Ultra Spark, or another training-tier model |
-| Muse Spark 1.3 Contributor or Ultra Spark | A native OpenAI model or a Claude model |
-
-Claude counts on either route, by its upstream slug `anthropic/…` or the `anthropic/` catalog prefix. DeepSeek and other OpenRouter models work with either side, but in a session that used a native OpenAI or Claude model, OpenRouter requests, the router's own searches included, carry `provider.data_collection: "deny"`, so OpenRouter routes them only to endpoints that do not collect data, and that output never reaches an endpoint that may train on it. A model pinned to such an endpoint runs as usual; DeepSeek's own endpoint, which may train on prompts, is left out. When no endpoint your OpenRouter settings allow qualifies, Codex receives a `[router diagnostic]` instead of OpenRouter's HTTP 404: pin the model to another endpoint or start a new thread. `request.forwarded` logs `dataCollection`. Ultra Spark counts as training-tier because its workers run on Muse. Spawned agents share their parent's session, so the rule covers whole agent trees: if a native OpenAI thread spawns a Muse worker, the worker's requests are refused.
-
-The router keeps each session's side, without any content, in `unified-router/session-sides.json`, so the rule survives restarts. A record expires 30 days after the session's last request. There is no opt-out; `CODEX_ROUTER_TRAINING_MODELS` can only add models to the training tier.
-
-The rule follows session IDs, not content, so these start a new record:
-
-- **Forked sessions.** `codex fork` copies a thread's history into a new session. Fork a thread that used native OpenAI or Claude models only onto a model outside the training tier, such as DeepSeek.
-- **Sessions from before this router version.** Their first request after the upgrade decides their side.
-- **Requests without a session ID**, such as from clients other than Codex, are not tracked.
-
-### Routing policy
-
-The router always forwards the model you selected and never substitutes another, including for structured output. DeepSeek's endpoint rejects JSON schemas, so for DeepSeek a `json_schema` response format becomes JSON mode with the schema appended as the final developer instruction: replies follow the schema, but the provider does not enforce it, and the unchanged history keeps its cache hits. The instruction asks for the object at the top level and leaves out the response format's name, which DeepSeek otherwise took as a key to wrap some answers in. `request.forwarded` logs `structuredOutputAdapted`. Other OpenRouter models receive the schema unchanged.
-
-The `X-Codex-Routing-Policy: preserve-model-v1` header, which the OpenRouter-only profile sends, is still accepted and matches the default behavior. Unknown policy values receive HTTP 400. The policy header and the local token are never forwarded to providers.
-
-### OpenRouter endpoint preferences
-
-OpenRouter chooses an endpoint for each request. To prefer particular endpoints for a model, set `CODEX_ROUTER_PROVIDER_ORDER` in `unified-router/openrouter.env` and restart the router:
+4. Refresh the prompts, then rerun the installer:
 
 ```sh
-CODEX_ROUTER_PROVIDER_ORDER=deepseek/deepseek-v4.1-flash-1017=deepseek
+node scripts/render-openrouter-entries.mjs
+node install.mjs
 ```
 
-The key is the upstream model slug, without the `openrouter/` prefix; Ultra Spark shares DeepSeek's key. List several endpoints with commas, and separate models with `;`. Endpoint tags come from `https://openrouter.ai/api/v1/models/<model>/endpoints`. The router adds `provider: { order: [...] }` only when the request has no `provider` field, and in a session that used a native OpenAI or Claude model it adds `data_collection: "deny"` beside it. The router's own web search requests follow the same order for their model. Fallbacks stay enabled, so an outage of the preferred endpoint costs a cache miss instead of failing the turn, and OpenRouter's own sticky routing does not apply while an order is set. A malformed value stops the router at startup; `request.forwarded` logs the applied `providerOrder`.
+- **Slugs:** catalog entries must start with `anthropic/`, `deepseek/`, `openrouter/`, or `ultra-spark/`; the router removes `openrouter/` before forwarding.
+- **Build checks:** the catalog build fails on an unsupported slug prefix, a duplicate slug, a slug that matches a bundled Codex model, or a missing prompt file.
+- **Prompts:** every router entry uses the maintained instructions in [`prompts/`](../prompts/), which the installer also injects into its generated catalog. An entry can append one more prompt from that directory by naming it in `router_instructions_suffix`, as Ultra Spark does; the generated Codex catalog omits that field.
 
-### OpenRouter-only profile
-
-The installer writes `unified-openrouter.config.toml` beside `config.toml`, with the same local token and catalog. It sets `requires_openai_auth = false`, so OpenRouter models and Claude need no ChatGPT login, and sends the `preserve-model-v1` header. Select it with any router model in the catalog; Ultra Spark's Muse workers use the same profile:
-
-```sh
-codex --profile unified-openrouter --model deepseek/deepseek-v4.1-flash-1017
-codex --profile unified-openrouter --model ultra-spark/deepseek-v4.1-flash-1017
-codex --profile unified-openrouter --model openrouter/meta/muse-spark-1.3-contributor
-codex --profile unified-openrouter --model anthropic/claude-sonnet-5-5
-```
-
-Use the main configuration for native OpenAI models. The profile supplies transport settings, not prompts, plugins, or task policies, and still inherits your other user and project settings; it is not a sandbox. Codex 0.166.0 does not load it with `--ignore-user-config`. Clients that need isolated execution must manage their own Codex home, instructions, tools, permissions, and output validation.
-
-### Router capabilities
-
-`GET /health` (also `/v1/health`) reports the running router's capabilities, whether its OpenRouter and Anthropic keys are set (`openrouter`, `anthropic`), and `revision`, a SHA-256 over its source files, so clients can check compatibility and spot outdated installed copies without sending an inference request:
-
-| Field | Meaning |
-| --- | --- |
-| `capabilities.routingPolicies` | Supported routing policies (`preserve-model-v1`). |
-| `capabilities.openrouterRejectionRecovery` | The bounded OpenRouter 400 recovery contract. |
-| `capabilities.providerIsolation` | The [provider isolation](#provider-isolation) rule (`session-v3`: `session-v2` added Claude to the protected side, and `session-v3` sends OpenRouter requests in protected sessions only to endpoints that do not collect data). |
-| `capabilities.revisionPrecondition` | Support for the `X-Codex-Router-Revision` header below. |
-| `revision` | SHA-256 over the running router's entry file and the modules beside it. |
-
-These fields do not attest upstream model identity, account access, or the whole runtime configuration. Clients that need to hold a revision across requests can send:
-
-```http
-X-Codex-Router-Revision: <lowercase-sha256-from-health>
-```
-
-After local authentication, the router rejects a malformed digest with HTTP 400 and a mismatch with HTTP 409 (`router_revision_mismatch`) before contacting either upstream; a matching or absent header leaves routing unchanged, and the header is never forwarded. Check the capability first, since older routers may ignore the header. The precondition detects a changed source, not a restart of identical code or a service configuration change.
-
-## Credentials and logging
-
-The router binds only to `127.0.0.1`. OpenAI requests carry the incoming Codex authentication to `https://chatgpt.com/backend-api/codex/responses`; OpenRouter requests use the OpenRouter key and go to `https://openrouter.ai/api/v1/responses`; Claude requests on Anthropic's API use the Anthropic key and go to `https://api.anthropic.com/v1/messages`. Codex's ChatGPT credentials never leave for OpenRouter or Anthropic.
-
-The OpenRouter key, the optional Anthropic key, and the local token are stored in `unified-router/openrouter.env` under your Codex home directory, outside this repository. Codex sends the token through its provider `http_headers` setting, and the router removes it before forwarding. Model requests and model listings require the token; the health endpoint does not.
-
-Credential-bearing files, including the OpenRouter-only profile, are private: the Unix installer uses mode `600` and a private router directory, and the Windows installer replaces inherited and explicit access rules with a current-user-only access list before writing or reusing credentials. Backups and temporary installation directories are private too. These permissions do not isolate the files from software running as your own user or an administrator.
-
-The router rejects browser origins, unexpected Host headers, and non-JSON model requests, and its per-provider header allowlists keep unrelated credentials from being forwarded. Request bodies are limited to 64 MiB, and a larger one ends with `context_length_exceeded` so Codex compacts the thread; this is a local single-user service, not a shared network gateway.
-
-The verifier checks both configurations against the stored token, their managed settings, and private ownership and permissions. The installed router and every module beside it must match this repository; reinstalling removes modules it no longer has. Readiness requires the current capabilities, including `providerIsolation: "session-v3"`, and the installed source's SHA-256, so a reachable older router does not pass, and health redirects are rejected.
-
-Logs never include request or response bodies, authorization headers, or API keys. See [Structured logs](operations.md#structured-logs) for log levels, event names, and platform log locations.
-
-## CI coverage
-
-The [workflow](../.github/workflows/ci.yml) runs on pushes, pull requests, and manual dispatch. It tests Linux with Node.js 20, 22, and 24, plus macOS and Windows with Node.js 24, checks JavaScript, Bash, and Windows PowerShell syntax, and validates the model JSON. `node --test` also checks that catalog entries carry the rendered prompts.
-
-Tests use synthetic upstream responses and need no API credentials. Live provider compatibility and background-service installation require separate manual verification.
+---
 
 ## License and template provenance
 
-This project is licensed under [Apache-2.0](../LICENSE). [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. This is an independent community project.
+This project is licensed under [Apache-2.0](../LICENSE), and [NOTICE](../NOTICE) preserves the applicable OpenAI attribution. It is an independent community project.
 
-The DeepSeek catalog entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.166.0**, whose package metadata declares Apache-2.0. The [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse, Ultra Spark, and Claude entries derive from the same template, as recorded in their notices ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license), [Claude Sonnet](../catalog/claude-sonnet-model.json.license), [Claude Opus](../catalog/claude-opus-model.json.license), and the OpenRouter-only [Sonnet](../catalog/claude-sonnet-openrouter-model.json.license) and [Opus](../catalog/claude-opus-openrouter-model.json.license) entries). Keep the licenses and applicable notices when redistributing an entry or a modified copy, and record your own changes.
-
-The main and persistent instructions are maintained separately in [`prompts/`](../prompts/). They are not verbatim copies of the corresponding instructions in the installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
-
-The software license does not grant access to models or hosted services. Access to OpenAI, OpenRouter, and each model provider, including Meta's contributor tier, remains subject to their respective service terms.
+- **Catalog templates:** the DeepSeek entry includes model-message templates that match the bundled catalog of `@openai/codex` **0.166.0**, whose package metadata declares Apache-2.0; its [adjacent file notice](../catalog/deepseek-model.json.license) identifies those sections and the modifications. The Muse, Ultra Spark, and Claude entries derive from the same template, as their notices record ([Muse](../catalog/muse-model.json.license), [Ultra Spark](../catalog/deepseek-ultra-spark-model.json.license), [Claude Sonnet](../catalog/claude-sonnet-model.json.license), [Claude Opus](../catalog/claude-opus-model.json.license), and the OpenRouter-only [Sonnet](../catalog/claude-sonnet-openrouter-model.json.license) and [Opus](../catalog/claude-opus-openrouter-model.json.license) entries).
+- **Redistributing:** keep the licenses and applicable notices with an entry or a modified copy, and record your own changes.
+- **Prompts:** the main and persistent instructions in `prompts/` are maintained separately and are not verbatim copies of the corresponding instructions in the installed Codex catalog; this comparison does not establish originality against other sources. Native model entries are read from the user's installed Codex during installation.
+- **Service terms:** the software license does not grant access to models or hosted services. Access to OpenAI, OpenRouter, and each model provider, including Meta's contributor tier, remains subject to their respective service terms.
